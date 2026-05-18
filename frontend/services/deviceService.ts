@@ -9,7 +9,12 @@ export type Device = {
   location?: string;
   operationType: string;
   status: string;
+  areaId?: string;
   areaName: string;
+  lastSeenAt?: string;
+  lastHeartbeatAt?: string;
+  communicationFailures?: number;
+  onlineStatus?: string;
 };
 
 export type DevicePayload = {

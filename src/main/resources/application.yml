@@ -13,6 +13,17 @@ spring:
     port: 5672
     username: access_user
     password: access_pass
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${SMTP_AUTH:false}
+          starttls:
+            enable: ${SMTP_STARTTLS:false}
   flyway:
     enabled: true
   jpa:
@@ -38,6 +49,15 @@ logging:
     br.com.sport.accesscontrol: INFO
 
 app:
+  frontend:
+    public-base-url: ${FRONTEND_PUBLIC_BASE_URL:http://localhost:3000}
+  mail:
+    enabled: ${APP_MAIL_ENABLED:false}
+    from: ${APP_MAIL_FROM:no-reply@sport.local}
+  uploads:
+    faces-dir: ${FACE_UPLOAD_DIR:uploads/faces}
+  guests:
+    invite-expiration-hours: ${GUEST_INVITE_EXPIRATION_HOURS:72}
   security:
     jwt:
       secret: ${JWT_SECRET:dev-only-change-this-secret-please-keep-it-long}

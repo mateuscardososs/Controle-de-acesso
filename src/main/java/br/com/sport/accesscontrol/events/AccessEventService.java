@@ -3,6 +3,7 @@ package br.com.sport.accesscontrol.events;
 import br.com.sport.accesscontrol.audit.AuditService;
 import br.com.sport.accesscontrol.common.events.AccessEventReceivedEvent;
 import br.com.sport.accesscontrol.devices.DeviceService;
+import br.com.sport.accesscontrol.realtime.RealtimePublisherService;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,13 +18,16 @@ public class AccessEventService {
     private final DeviceService deviceService;
     private final ApplicationEventPublisher eventPublisher;
     private final AuditService auditService;
+    private final RealtimePublisherService realtimePublisherService;
 
     public AccessEventService(AccessEventRepository accessEventRepository, DeviceService deviceService,
-                              ApplicationEventPublisher eventPublisher, AuditService auditService) {
+                              ApplicationEventPublisher eventPublisher, AuditService auditService,
+                              RealtimePublisherService realtimePublisherService) {
         this.accessEventRepository = accessEventRepository;
         this.deviceService = deviceService;
         this.eventPublisher = eventPublisher;
         this.auditService = auditService;
+        this.realtimePublisherService = realtimePublisherService;
     }
 
     @Transactional
@@ -43,6 +47,7 @@ public class AccessEventService {
         var saved = accessEventRepository.save(accessEvent);
         auditService.record("ACCESS_EVENT_RECEIVED", "AccessEvent", saved.getId(),
                 Map.of("origin", saved.getOrigin(), "result", saved.getAccessResult()), Map.of(), Map.of("id", saved.getId()));
+        realtimePublisherService.publishAccessEvent(saved);
         eventPublisher.publishEvent(new AccessEventReceivedEvent(saved.getId()));
         return AccessEventResponse.from(saved);
     }

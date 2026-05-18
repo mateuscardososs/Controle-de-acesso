@@ -1,0 +1,89 @@
+import { api } from "@/lib/api";
+
+export type GuestStatus = "INVITED" | "PENDING_REGISTRATION" | "COMPLETED" | "EXPIRED" | "CANCELLED";
+
+export type Guest = {
+  id: string;
+  fullName: string;
+  cpf: string;
+  email?: string;
+  phone?: string;
+  company?: string;
+  visitReason: string;
+  hostName: string;
+  visitStart: string;
+  visitEnd: string;
+  status: GuestStatus;
+  facePhotoUrl?: string;
+  invitedAt?: string;
+  completedAt?: string;
+  inviteToken?: string;
+  inviteUrl?: string;
+  inviteExpiresAt?: string;
+  emailDeliveryStatus?: "SENT" | "SKIPPED" | "FAILED" | string;
+  emailDeliveryMessage?: string;
+};
+
+export type GuestPayload = {
+  fullName: string;
+  cpf: string;
+  email?: string;
+  phone?: string;
+  company?: string;
+  visitReason: string;
+  hostName: string;
+  visitStart: string;
+  visitEnd: string;
+  status?: GuestStatus;
+};
+
+export type PublicGuestRegistration = {
+  id: string;
+  fullName: string;
+  company?: string;
+  visitReason: string;
+  hostName: string;
+  visitStart: string;
+  visitEnd: string;
+  status: GuestStatus;
+  requiresFacePhoto: boolean;
+};
+
+export const guestService = {
+  async list() {
+    const { data } = await api.get<Guest[]>("/api/guests");
+    return data;
+  },
+  async today() {
+    const { data } = await api.get<Guest[]>("/api/guests", { params: { scope: "today" } });
+    return data;
+  },
+  async create(payload: GuestPayload) {
+    const { data } = await api.post<Guest>("/api/guests", payload);
+    return data;
+  },
+  async update(id: string, payload: GuestPayload) {
+    const { data } = await api.put<Guest>(`/api/guests/${id}`, payload);
+    return data;
+  },
+  async cancel(id: string) {
+    const { data } = await api.patch<Guest>(`/api/guests/${id}/cancel`);
+    return data;
+  },
+  async resendInvite(id: string) {
+    const { data } = await api.post<Guest>(`/api/guests/${id}/resend-invite`);
+    return data;
+  },
+  async publicRegistration(token: string) {
+    const { data } = await api.get<PublicGuestRegistration>(`/api/guest-registration/${token}`);
+    return data;
+  },
+  async completeRegistration(token: string, payload: { phone?: string; company?: string; facePhoto: File }) {
+    const formData = new FormData();
+    if (payload.phone) formData.append("phone", payload.phone);
+    if (payload.company) formData.append("company", payload.company);
+    formData.append("facePhoto", payload.facePhoto);
+    const { data } = await api.post<Guest>(`/api/guest-registration/${token}/complete`, formData);
+    return data;
+  }
+};

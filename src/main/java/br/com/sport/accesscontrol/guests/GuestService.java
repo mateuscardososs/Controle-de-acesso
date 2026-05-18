@@ -1,0 +1,226 @@
+package br.com.sport.accesscontrol.guests;
+
+import br.com.sport.accesscontrol.audit.AuditService;
+import br.com.sport.accesscontrol.common.ResourceNotFoundException;
+import br.com.sport.accesscontrol.guests.GuestDtos.GuestRequest;
+import br.com.sport.accesscontrol.guests.GuestDtos.GuestResponse;
+import br.com.sport.accesscontrol.guests.GuestDtos.PublicGuestRegistrationResponse;
+import br.com.sport.accesscontrol.mail.MailDeliveryResult;
+import br.com.sport.accesscontrol.mail.MailService;
+import br.com.sport.accesscontrol.realtime.RealtimePublisherService;
+import br.com.sport.accesscontrol.realtime.dto.SystemAlertMessage;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.security.SecureRandom;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Base64;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+@Service
+public class GuestService {
+
+    private final GuestRepository guestRepository;
+    private final GuestInviteRepository inviteRepository;
+    private final FaceStorageService faceStorageService;
+    private final AuditService auditService;
+    private final RealtimePublisherService realtimePublisherService;
+    private final MailService mailService;
+    private final String publicBaseUrl;
+    private final SecureRandom secureRandom = new SecureRandom();
+    private final Duration inviteTtl;
+
+    public GuestService(GuestRepository guestRepository, GuestInviteRepository inviteRepository,
+                        FaceStorageService faceStorageService, AuditService auditService,
+                        RealtimePublisherService realtimePublisherService, MailService mailService,
+                        @Value("${app.frontend.public-base-url:http://localhost:3000}") String publicBaseUrl,
+                        @Value("${app.guests.invite-expiration-hours:72}") long inviteExpirationHours) {
+        this.guestRepository = guestRepository;
+        this.inviteRepository = inviteRepository;
+        this.faceStorageService = faceStorageService;
+        this.auditService = auditService;
+        this.realtimePublisherService = realtimePublisherService;
+        this.mailService = mailService;
+        this.publicBaseUrl = publicBaseUrl;
+        this.inviteTtl = Duration.ofHours(inviteExpirationHours);
+    }
+
+    @Transactional
+    public GuestResponse create(GuestRequest request) {
+        validateVisitWindow(request.visitStart(), request.visitEnd());
+        var guest = guestRepository.save(new Guest(
+                request.fullName(), request.cpf(), request.email(), request.phone(), request.company(),
+                request.visitReason(), request.hostName(), request.visitStart(), request.visitEnd()
+        ));
+        var invite = createInvite(guest);
+        var inviteUrl = inviteUrl(invite);
+        var delivery = sendInviteEmail(guest, inviteUrl, false);
+        auditService.record("GUEST_CREATED", "Guest", guest.getId(), Map.of("status", guest.getStatus()), Map.of(), snapshot(guest));
+        realtimePublisherService.publishSystemAlert(SystemAlertMessage.warning(
+                "Novo visitante pendente",
+                "Visitante " + guest.getFullName() + " precisa completar o cadastro facial.",
+                "guest-workflow"
+        ));
+        return GuestResponse.from(guest, invite, inviteUrl, delivery.status(), delivery.message());
+    }
+
+    @Transactional(readOnly = true)
+    public List<GuestResponse> findAll() {
+        return guestRepository.findAll().stream().map(guest -> GuestResponse.from(guest, null)).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<GuestResponse> today() {
+        var now = Instant.now();
+        return guestRepository.findByVisitStartLessThanEqualAndVisitEndGreaterThanEqual(now, now)
+                .stream().map(guest -> GuestResponse.from(guest, null)).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public GuestResponse get(UUID id) {
+        return GuestResponse.from(getById(id), null);
+    }
+
+    @Transactional
+    public GuestResponse update(UUID id, GuestRequest request) {
+        validateVisitWindow(request.visitStart(), request.visitEnd());
+        var guest = getById(id);
+        var oldData = snapshot(guest);
+        guest.update(request.fullName(), request.cpf(), request.email(), request.phone(), request.company(),
+                request.visitReason(), request.hostName(), request.visitStart(), request.visitEnd(), request.status());
+        auditService.record("GUEST_UPDATED", "Guest", guest.getId(), Map.of(), oldData, snapshot(guest));
+        return GuestResponse.from(guest, null);
+    }
+
+    @Transactional
+    public GuestResponse cancel(UUID id) {
+        var guest = getById(id);
+        var oldData = snapshot(guest);
+        guest.cancel();
+        auditService.record("GUEST_CANCELLED", "Guest", guest.getId(), Map.of(), oldData, snapshot(guest));
+        realtimePublisherService.publishSystemAlert(SystemAlertMessage.warning(
+                "Convite cancelado",
+                "Convite de " + guest.getFullName() + " foi cancelado.",
+                "guest-workflow"
+        ));
+        return GuestResponse.from(guest, null);
+    }
+
+    @Transactional
+    public GuestResponse resendInvite(UUID id) {
+        var guest = getById(id);
+        guest.markInvited();
+        var invite = createInvite(guest);
+        var inviteUrl = inviteUrl(invite);
+        var delivery = sendInviteEmail(guest, inviteUrl, true);
+        auditService.record("GUEST_INVITE_RESENT", "Guest", guest.getId(), Map.of("expiresAt", invite.getExpiresAt()), Map.of(), snapshot(guest));
+        return GuestResponse.from(guest, invite, inviteUrl, delivery.status(), delivery.message());
+    }
+
+    @Transactional(readOnly = true)
+    public PublicGuestRegistrationResponse publicRegistration(String token) {
+        return PublicGuestRegistrationResponse.from(validInvite(token).getGuest());
+    }
+
+    @Transactional
+    public GuestResponse completeRegistration(String token, String phone, String company, MultipartFile facePhoto) {
+        var invite = validInvite(token);
+        var guest = invite.getGuest();
+        var oldData = snapshot(guest);
+        var facePhotoUrl = faceStorageService.store(facePhoto, guest.getId());
+        guest.completeRegistration(phone, company, facePhotoUrl);
+        invite.markUsed();
+        auditService.record("GUEST_FACE_UPLOADED", "Guest", guest.getId(), Map.of("facePhotoUrl", facePhotoUrl), oldData, snapshot(guest));
+        auditService.record("GUEST_REGISTRATION_COMPLETED", "Guest", guest.getId(), Map.of(), oldData, snapshot(guest));
+        var delivery = mailService.sendGuestRegistrationCompleted(guest);
+        auditMailResult(guest, "GUEST_REGISTRATION_CONFIRMATION_EMAIL", delivery);
+        realtimePublisherService.publishSystemAlert(new SystemAlertMessage(
+                UUID.randomUUID(),
+                SystemAlertMessage.Severity.INFO,
+                "Visitante cadastrado",
+                "Visitante " + guest.getFullName() + " concluiu o cadastro facial.",
+                "guest-workflow",
+                Instant.now()
+        ));
+        return GuestResponse.from(guest, null, null, delivery.status(), delivery.message());
+    }
+
+    @Transactional
+    public List<GuestResponse> expireOverdueGuests() {
+        var now = Instant.now();
+        return guestRepository.findByStatusNotAndVisitEndBefore(GuestStatus.CANCELLED, now).stream()
+                .filter(guest -> guest.getStatus() != GuestStatus.EXPIRED && guest.getStatus() != GuestStatus.COMPLETED)
+                .map(guest -> {
+                    guest.expire();
+                    auditService.record("GUEST_EXPIRED", "Guest", guest.getId(), Map.of(), Map.of(), snapshot(guest));
+                    realtimePublisherService.publishSystemAlert(SystemAlertMessage.warning(
+                            "Convite expirado",
+                            "Convite de " + guest.getFullName() + " expirou.",
+                            "guest-workflow"
+                    ));
+                    return GuestResponse.from(guest, null);
+                }).toList();
+    }
+
+    private Guest getById(UUID id) {
+        return guestRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException("Guest not found: " + id));
+    }
+
+    private GuestInvite validInvite(String token) {
+        var invite = inviteRepository.findByToken(token)
+                .orElseThrow(() -> new ResourceNotFoundException("Guest invite not found."));
+        if (!invite.isUsable(Instant.now()) || invite.getGuest().getStatus() == GuestStatus.CANCELLED) {
+            throw new IllegalArgumentException("Guest invite is expired or already used.");
+        }
+        return invite;
+    }
+
+    private GuestInvite createInvite(Guest guest) {
+        return inviteRepository.save(new GuestInvite(guest, token(), Instant.now().plus(inviteTtl)));
+    }
+
+    private String inviteUrl(GuestInvite invite) {
+        return publicBaseUrl.replaceAll("/+$", "") + "/guest-registration/" + invite.getToken();
+    }
+
+    private MailDeliveryResult sendInviteEmail(Guest guest, String inviteUrl, boolean resent) {
+        auditService.record(resent ? "GUEST_INVITE_EMAIL_RESEND_ATTEMPTED" : "GUEST_INVITE_EMAIL_ATTEMPTED",
+                "Guest", guest.getId(), Map.of("inviteUrl", inviteUrl), Map.of(), snapshot(guest));
+        var delivery = resent ? mailService.sendGuestInviteResent(guest, inviteUrl) : mailService.sendGuestInvite(guest, inviteUrl);
+        auditMailResult(guest, resent ? "GUEST_INVITE_EMAIL_RESEND" : "GUEST_INVITE_EMAIL", delivery);
+        return delivery;
+    }
+
+    private void auditMailResult(Guest guest, String actionPrefix, MailDeliveryResult delivery) {
+        var action = delivery.sent() ? actionPrefix + "_SENT" : actionPrefix + "_" + delivery.status();
+        auditService.record(action, "Guest", guest.getId(),
+                Map.of("status", delivery.status(), "message", delivery.message() == null ? "" : delivery.message()), Map.of(), snapshot(guest));
+    }
+
+    private String token() {
+        var bytes = new byte[32];
+        secureRandom.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    private void validateVisitWindow(Instant start, Instant end) {
+        if (end.isBefore(start) || end.equals(start)) {
+            throw new IllegalArgumentException("visitEnd must be after visitStart.");
+        }
+    }
+
+    private Map<String, Object> snapshot(Guest guest) {
+        return Map.of(
+                "id", guest.getId(),
+                "fullName", guest.getFullName(),
+                "status", guest.getStatus(),
+                "visitStart", guest.getVisitStart(),
+                "visitEnd", guest.getVisitEnd()
+        );
+    }
+}

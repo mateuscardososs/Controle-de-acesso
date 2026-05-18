@@ -1,0 +1,104 @@
+package br.com.sport.accesscontrol.guests;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
+import java.time.Instant;
+import java.util.UUID;
+
+public final class GuestDtos {
+    private GuestDtos() {
+    }
+
+    public record GuestRequest(
+            @NotBlank String fullName,
+            @NotBlank String cpf,
+            @Email String email,
+            String phone,
+            String company,
+            @NotBlank String visitReason,
+            @NotBlank String hostName,
+            @NotNull Instant visitStart,
+            @NotNull Instant visitEnd,
+            GuestStatus status
+    ) {
+    }
+
+    public record GuestResponse(
+            UUID id,
+            String fullName,
+            String cpf,
+            String email,
+            String phone,
+            String company,
+            String visitReason,
+            String hostName,
+            Instant visitStart,
+            Instant visitEnd,
+            GuestStatus status,
+            String facePhotoUrl,
+            Instant invitedAt,
+            Instant completedAt,
+            String inviteToken,
+            String inviteUrl,
+            Instant inviteExpiresAt,
+            String emailDeliveryStatus,
+            String emailDeliveryMessage
+    ) {
+        static GuestResponse from(Guest guest, GuestInvite invite) {
+            return from(guest, invite, null, null, null);
+        }
+
+        static GuestResponse from(Guest guest, GuestInvite invite, String inviteUrl, String emailDeliveryStatus,
+                                  String emailDeliveryMessage) {
+            return new GuestResponse(
+                    guest.getId(),
+                    guest.getFullName(),
+                    guest.getCpf(),
+                    guest.getEmail(),
+                    guest.getPhone(),
+                    guest.getCompany(),
+                    guest.getVisitReason(),
+                    guest.getHostName(),
+                    guest.getVisitStart(),
+                    guest.getVisitEnd(),
+                    guest.getStatus(),
+                    guest.getFacePhotoUrl(),
+                    guest.getInvitedAt(),
+                    guest.getCompletedAt(),
+                    invite == null ? null : invite.getToken(),
+                    inviteUrl,
+                    invite == null ? null : invite.getExpiresAt(),
+                    emailDeliveryStatus,
+                    emailDeliveryMessage
+            );
+        }
+    }
+
+    public record PublicGuestRegistrationResponse(
+            UUID id,
+            String fullName,
+            String company,
+            String visitReason,
+            String hostName,
+            Instant visitStart,
+            Instant visitEnd,
+            GuestStatus status,
+            boolean requiresFacePhoto
+    ) {
+        static PublicGuestRegistrationResponse from(Guest guest) {
+            return new PublicGuestRegistrationResponse(
+                    guest.getId(),
+                    guest.getFullName(),
+                    guest.getCompany(),
+                    guest.getVisitReason(),
+                    guest.getHostName(),
+                    guest.getVisitStart(),
+                    guest.getVisitEnd(),
+                    guest.getStatus(),
+                    guest.getFacePhotoUrl() == null || guest.getFacePhotoUrl().isBlank()
+            );
+        }
+    }
+}

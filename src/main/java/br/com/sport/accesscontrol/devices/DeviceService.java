@@ -4,6 +4,7 @@ import br.com.sport.accesscontrol.areas.AreaService;
 import br.com.sport.accesscontrol.audit.AuditService;
 import br.com.sport.accesscontrol.common.ResourceNotFoundException;
 import br.com.sport.accesscontrol.common.events.DeviceStatusChangedEvent;
+import br.com.sport.accesscontrol.realtime.RealtimePublisherService;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,13 +20,16 @@ public class DeviceService {
     private final AreaService areaService;
     private final ApplicationEventPublisher eventPublisher;
     private final AuditService auditService;
+    private final RealtimePublisherService realtimePublisherService;
 
     public DeviceService(DeviceRepository deviceRepository, AreaService areaService,
-                         ApplicationEventPublisher eventPublisher, AuditService auditService) {
+                         ApplicationEventPublisher eventPublisher, AuditService auditService,
+                         RealtimePublisherService realtimePublisherService) {
         this.deviceRepository = deviceRepository;
         this.areaService = areaService;
         this.eventPublisher = eventPublisher;
         this.auditService = auditService;
+        this.realtimePublisherService = realtimePublisherService;
     }
 
     @Transactional
@@ -59,6 +63,7 @@ public class DeviceService {
         device.setStatus(request.status());
         auditService.record("DEVICE_STATUS_CHANGED", "Device", device.getId(), Map.of("status", request.status()),
                 oldData, deviceSnapshot(device));
+        realtimePublisherService.publishDeviceStatus(device, "Device status changed");
         eventPublisher.publishEvent(new DeviceStatusChangedEvent(device.getId(), device.getStatus()));
         return DeviceResponse.from(device);
     }

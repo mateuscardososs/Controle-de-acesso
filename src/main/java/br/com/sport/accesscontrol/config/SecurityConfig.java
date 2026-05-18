@@ -51,6 +51,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/guest-registration/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/guest-registration/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/guests/*/complete-registration").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/auth/register").hasRole("ADMIN")
                         .requestMatchers("/api/health", "/actuator/health").permitAll()

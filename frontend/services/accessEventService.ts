@@ -7,7 +7,7 @@ export type AccessEvent = {
   deviceId: string;
   areaId: string;
   eventType: string;
-  accessResult: "ALLOWED" | "DENIED";
+  accessResult: "ALLOWED" | "DENIED" | "ERROR";
   eventTime: string;
   origin: string;
 };

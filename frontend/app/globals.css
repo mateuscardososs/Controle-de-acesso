@@ -4,15 +4,32 @@
 
 :root {
   color-scheme: light;
+  --sport-red: #8f1218;
+  --sport-red-strong: #6f0d13;
+  --sport-ink: #111827;
+  --surface: #ffffff;
+  --page: #f3f4f6;
 }
 
 body {
-  background: #f8fafc;
+  background:
+    radial-gradient(circle at top left, rgba(143, 18, 24, 0.08), transparent 32rem),
+    linear-gradient(180deg, #f8fafc 0%, var(--page) 100%);
   color: #111827;
 }
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
+}
+
+* {
+  min-width: 0;
+}
+
+*:focus-visible {
+  outline: 2px solid rgba(143, 18, 24, 0.8);
+  outline-offset: 2px;
 }

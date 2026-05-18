@@ -13,6 +13,8 @@ Backend base enterprise para controle de acesso do Sport Club do Recife, prepara
 
 ## Subir infraestrutura
 
+Guia completo para Mac: [docs/local-setup-mac.md](docs/local-setup-mac.md).
+
 ```bash
 docker compose up -d
 ```
@@ -194,6 +196,14 @@ Tópicos:
 - `/topic/system-alerts`
 
 Eventos simulados publicam realtime em `/topic/access-events`.
+
+Payloads ricos e exemplos de teste estão documentados em [`docs/realtime.md`](docs/realtime.md).
+
+## Visitantes
+
+O workflow de convidados com convite por token, cadastro publico e upload facial local está documentado em [`docs/guest-workflow.md`](docs/guest-workflow.md).
+
+Configuração de SMTP e modo dev sem envio estão em [`docs/mail-setup.md`](docs/mail-setup.md).
 
 ## Exemplos REST
 

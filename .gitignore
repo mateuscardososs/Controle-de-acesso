@@ -1,7 +1,44 @@
+# Codex/local agent state
 .codex/
-target/
 
+# Java/Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+.mvn/wrapper/maven-wrapper.jar
+
+# Logs and runtime files
+*.log
+logs/
+*.pid
+
+# Environment files
+.env
+.env.*
+!.env.example
+!frontend/.env.example
+
+# Next.js / Node
 frontend/.next/
 frontend/node_modules/
 frontend/out/
-frontend/.env.local
+frontend/.turbo/
+frontend/.vercel/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+
+# IDEs and OS files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Docker/local volumes
+docker-data/
+data/
+tmp/

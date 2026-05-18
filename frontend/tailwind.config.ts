@@ -6,7 +6,8 @@ const config: Config = {
     extend: {
       colors: {
         sport: {
-          red: "#b91c1c",
+          red: "#8f1218",
+          maroon: "#6f0d13",
           graphite: "#111827",
           green: "#15803d"
         }
