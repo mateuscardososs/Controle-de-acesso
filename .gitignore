@@ -1,0 +1,7 @@
+.codex/
+target/
+
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+frontend/.env.local

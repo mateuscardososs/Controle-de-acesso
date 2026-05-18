@@ -1,0 +1,117 @@
+@baseUrl = http://localhost:8080
+@adminEmail = admin@sport.local
+@adminPassword = Admin@123456
+@token =
+@areaId =
+@deviceId =
+@employeeId =
+@cpf = 10000000001
+
+### Health publico
+GET {{baseUrl}}/api/health
+
+### Login admin
+# Copie accessToken da resposta para a variavel @token.
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{adminEmail}}",
+  "password": "{{adminPassword}}"
+}
+
+### Usuario logado
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer {{token}}
+
+### Criar area
+# Copie id da resposta para @areaId.
+POST {{baseUrl}}/api/areas
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Ilha do Retiro - Social",
+  "description": "Acesso social"
+}
+
+### Listar areas
+GET {{baseUrl}}/api/areas
+Authorization: Bearer {{token}}
+
+### Criar dispositivo
+# Copie id da resposta para @deviceId.
+POST {{baseUrl}}/api/devices
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Catraca Social 01",
+  "model": "Intelbras SS 5530 MF FACE",
+  "serialNumber": "INTELBRAS-SMOKE-001",
+  "ipAddress": "192.168.10.50",
+  "location": "Entrada social",
+  "operationType": "ENTRY_EXIT",
+  "status": "UNKNOWN",
+  "areaId": "{{areaId}}"
+}
+
+### Listar dispositivos
+GET {{baseUrl}}/api/devices
+Authorization: Bearer {{token}}
+
+### Criar colaborador
+# Copie id da resposta para @employeeId.
+POST {{baseUrl}}/api/employees
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "fullName": "Leao da Ilha",
+  "cpf": "{{cpf}}",
+  "email": "leao.smoke@sport.com.br",
+  "phone": "81999990000",
+  "registrationNumber": "SCR-SMOKE-001",
+  "status": "ACTIVE"
+}
+
+### Listar colaboradores
+GET {{baseUrl}}/api/employees
+Authorization: Bearer {{token}}
+
+### Simular evento pelo endpoint Intelbras preparado
+POST {{baseUrl}}/api/simulator/access-event
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "cpf": "{{cpf}}",
+  "deviceId": "{{deviceId}}",
+  "eventType": "ENTRY",
+  "result": "ALLOWED"
+}
+
+### Simular evento pelo endpoint interno existente
+POST {{baseUrl}}/api/access-events/simulate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "personType": "EMPLOYEE",
+  "personId": "{{employeeId}}",
+  "deviceId": "{{deviceId}}",
+  "eventType": "ENTRY",
+  "accessResult": "ALLOWED",
+  "origin": "SMOKE_TEST",
+  "rawPayload": {
+    "source": "docs/http/access-control-smoke.http"
+  }
+}
+
+### Dashboard
+GET {{baseUrl}}/api/dashboard/summary
+Authorization: Bearer {{token}}
+
+### Eventos
+GET {{baseUrl}}/api/access-events
+Authorization: Bearer {{token}}
