@@ -54,6 +54,27 @@ export type PublicGuestRegistration = {
   requiresFacePhoto: boolean;
 };
 
+export type PublicVisitorRegistrationPayload = {
+  fullName: string;
+  cpf: string;
+  email: string;
+  phone?: string;
+  company?: string;
+  visitReason: string;
+  hostName: string;
+  visitStart: string;
+  visitEnd: string;
+  facePhoto?: File | null;
+};
+
+export type PublicVisitorRegistrationResponse = {
+  id: string;
+  fullName: string;
+  status: GuestStatus;
+  message: string;
+  facePhotoReceived: boolean;
+};
+
 export const guestService = {
   async list() {
     const { data } = await api.get<Guest[]>("/api/guests");
@@ -89,6 +110,21 @@ export const guestService = {
     if (payload.company) formData.append("company", payload.company);
     formData.append("facePhoto", payload.facePhoto);
     const { data } = await api.post<Guest>(`/api/guest-registration/${token}/complete`, formData);
+    return data;
+  },
+  async publicVisitorRegistration(payload: PublicVisitorRegistrationPayload) {
+    const formData = new FormData();
+    formData.append("fullName", payload.fullName);
+    formData.append("cpf", payload.cpf);
+    formData.append("email", payload.email);
+    if (payload.phone) formData.append("phone", payload.phone);
+    if (payload.company) formData.append("company", payload.company);
+    formData.append("visitReason", payload.visitReason);
+    formData.append("hostName", payload.hostName);
+    formData.append("visitStart", payload.visitStart);
+    formData.append("visitEnd", payload.visitEnd);
+    if (payload.facePhoto) formData.append("facePhoto", payload.facePhoto);
+    const { data } = await api.post<PublicVisitorRegistrationResponse>("/api/public/visitor-registration", formData);
     return data;
   }
 };

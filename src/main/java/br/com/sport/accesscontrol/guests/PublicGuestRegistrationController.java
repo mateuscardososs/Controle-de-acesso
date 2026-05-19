@@ -27,4 +27,5 @@ public class PublicGuestRegistrationController {
                            @RequestPart("facePhoto") MultipartFile facePhoto) {
         return guestService.completeRegistration(token, phone, company, facePhoto);
     }
+
 }

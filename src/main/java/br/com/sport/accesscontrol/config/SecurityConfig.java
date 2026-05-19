@@ -53,6 +53,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/guest-registration/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/guest-registration/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/public/visitor-registration").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/guests/*/complete-registration").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/auth/register").hasRole("ADMIN")

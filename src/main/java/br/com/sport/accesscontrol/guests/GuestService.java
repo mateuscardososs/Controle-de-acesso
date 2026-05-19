@@ -5,6 +5,7 @@ import br.com.sport.accesscontrol.common.ResourceNotFoundException;
 import br.com.sport.accesscontrol.guests.GuestDtos.GuestRequest;
 import br.com.sport.accesscontrol.guests.GuestDtos.GuestResponse;
 import br.com.sport.accesscontrol.guests.GuestDtos.PublicGuestRegistrationResponse;
+import br.com.sport.accesscontrol.guests.GuestDtos.PublicVisitorRegistrationResponse;
 import br.com.sport.accesscontrol.mail.MailDeliveryResult;
 import br.com.sport.accesscontrol.mail.MailService;
 import br.com.sport.accesscontrol.integration.sync.GuestReadyForSyncEvent;
@@ -23,6 +24,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Service
 public class GuestService {
@@ -37,6 +39,7 @@ public class GuestService {
     private final String publicBaseUrl;
     private final SecureRandom secureRandom = new SecureRandom();
     private final Duration inviteTtl;
+    private static final Pattern EMAIL = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
 
     public GuestService(GuestRepository guestRepository, GuestInviteRepository inviteRepository,
                         FaceStorageService faceStorageService, AuditService auditService,
@@ -72,6 +75,56 @@ public class GuestService {
                 "guest-workflow"
         ));
         return GuestResponse.from(guest, invite, inviteUrl, delivery.status(), delivery.message());
+    }
+
+    @Transactional
+    public PublicVisitorRegistrationResponse publicVisitorRegistration(
+            String fullName,
+            String cpf,
+            String email,
+            String phone,
+            String company,
+            String visitReason,
+            String hostName,
+            Instant visitStart,
+            Instant visitEnd,
+            MultipartFile facePhoto
+    ) {
+        validatePublicRegistration(fullName, cpf, email, visitReason, hostName, visitStart, visitEnd);
+        var guest = guestRepository.save(new Guest(
+                fullName.trim(),
+                onlyDigits(cpf),
+                normalize(email),
+                normalize(phone),
+                normalize(company),
+                visitReason.trim(),
+                hostName.trim(),
+                visitStart,
+                visitEnd
+        ));
+        createInvite(guest);
+
+        var oldData = snapshot(guest);
+        if (facePhoto != null && !facePhoto.isEmpty()) {
+            var facePhotoUrl = faceStorageService.store(facePhoto, guest.getId());
+            guest.completeRegistration(phone, company, facePhotoUrl);
+            auditService.record("PUBLIC_GUEST_FACE_UPLOADED", "Guest", guest.getId(), Map.of("facePhotoUrl", facePhotoUrl), oldData, snapshot(guest));
+            eventPublisher.publishEvent(new GuestReadyForSyncEvent(guest.getId()));
+        }
+
+        auditService.record("PUBLIC_GUEST_CREATED", "Guest", guest.getId(), Map.of("source", "public-home"), Map.of(), snapshot(guest));
+        realtimePublisherService.publishSystemAlert(new SystemAlertMessage(
+                UUID.randomUUID(),
+                SystemAlertMessage.Severity.INFO,
+                "Novo cadastro público de visitante",
+                "Novo visitante realizou cadastro público: " + guest.getFullName(),
+                "public-visitor-registration",
+                Instant.now()
+        ));
+        var message = guest.getStatus() == GuestStatus.COMPLETED
+                ? "Cadastro recebido com foto facial. A equipe responsável foi notificada."
+                : "Solicitação recebida. A equipe responsável foi notificada.";
+        return PublicVisitorRegistrationResponse.from(guest, message);
     }
 
     @Transactional(readOnly = true)
@@ -218,6 +271,33 @@ public class GuestService {
         if (end.isBefore(start) || end.equals(start)) {
             throw new IllegalArgumentException("visitEnd must be after visitStart.");
         }
+    }
+
+    private void validatePublicRegistration(String fullName, String cpf, String email, String visitReason,
+                                            String hostName, Instant visitStart, Instant visitEnd) {
+        if (isBlank(fullName) || isBlank(cpf) || isBlank(email) || isBlank(visitReason) || isBlank(hostName)
+                || visitStart == null || visitEnd == null) {
+            throw new IllegalArgumentException("Required visitor registration fields are missing.");
+        }
+        if (onlyDigits(cpf).length() != 11) {
+            throw new IllegalArgumentException("CPF must contain 11 digits.");
+        }
+        if (!EMAIL.matcher(email.trim()).matches()) {
+            throw new IllegalArgumentException("Email must be valid.");
+        }
+        validateVisitWindow(visitStart, visitEnd);
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private String normalize(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private String onlyDigits(String value) {
+        return value == null ? "" : value.replaceAll("\\D", "");
     }
 
     private Map<String, Object> snapshot(Guest guest) {

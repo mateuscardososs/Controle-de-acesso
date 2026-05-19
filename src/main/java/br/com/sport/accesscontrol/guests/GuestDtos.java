@@ -110,4 +110,22 @@ public final class GuestDtos {
             );
         }
     }
+
+    public record PublicVisitorRegistrationResponse(
+            UUID id,
+            String fullName,
+            GuestStatus status,
+            String message,
+            boolean facePhotoReceived
+    ) {
+        static PublicVisitorRegistrationResponse from(Guest guest, String message) {
+            return new PublicVisitorRegistrationResponse(
+                    guest.getId(),
+                    guest.getFullName(),
+                    guest.getStatus(),
+                    message,
+                    guest.getFacePhotoUrl() != null && !guest.getFacePhotoUrl().isBlank()
+            );
+        }
+    }
 }

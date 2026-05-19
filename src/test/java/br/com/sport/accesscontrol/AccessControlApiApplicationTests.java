@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -18,6 +19,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -95,6 +97,47 @@ class AccessControlApiApplicationTests {
     void protectedEndpointWithoutTokenReturnsUnauthorized() throws Exception {
         mockMvc.perform(get("/api/employees"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void publicVisitorRegistrationCreatesGuestWithoutToken() throws Exception {
+        mockMvc.perform(multipart("/api/public/visitor-registration")
+                        .param("fullName", "Visitante Publico")
+                        .param("cpf", "12345678901")
+                        .param("email", "visitante.publico@empresa.local")
+                        .param("phone", "81999990000")
+                        .param("company", "Empresa")
+                        .param("visitReason", "Reuniao")
+                        .param("hostName", "Recepcao")
+                        .param("visitStart", "2026-06-01T12:00:00Z")
+                        .param("visitEnd", "2026-06-01T13:00:00Z"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.fullName").value("Visitante Publico"))
+                .andExpect(jsonPath("$.status").value("PENDING_REGISTRATION"))
+                .andExpect(jsonPath("$.facePhotoReceived").value(false))
+                .andExpect(jsonPath("$.cpf").doesNotExist())
+                .andExpect(jsonPath("$.inviteToken").doesNotExist());
+    }
+
+    @Test
+    void publicVisitorRegistrationRejectsInvalidUpload() throws Exception {
+        var invalidFile = new MockMultipartFile(
+                "facePhoto",
+                "face.txt",
+                MediaType.TEXT_PLAIN_VALUE,
+                "not-an-image".getBytes()
+        );
+
+        mockMvc.perform(multipart("/api/public/visitor-registration")
+                        .file(invalidFile)
+                        .param("fullName", "Visitante Upload")
+                        .param("cpf", "12345678902")
+                        .param("email", "visitante.upload@empresa.local")
+                        .param("visitReason", "Reuniao")
+                        .param("hostName", "Recepcao")
+                        .param("visitStart", "2026-06-01T12:00:00Z")
+                        .param("visitEnd", "2026-06-01T13:00:00Z"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

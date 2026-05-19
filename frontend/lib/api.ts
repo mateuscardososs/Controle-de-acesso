@@ -20,8 +20,10 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (typeof window !== "undefined" && error.response?.status === 401) {
+      const publicPaths = ["/", "/login", "/guest-registration"];
+      const isPublicPage = publicPaths.some((path) => window.location.pathname === path || window.location.pathname.startsWith(`${path}/`));
       window.localStorage.removeItem(TOKEN_KEY);
-      if (!window.location.pathname.startsWith("/login")) {
+      if (!isPublicPage) {
         window.location.assign("/login");
       }
     }

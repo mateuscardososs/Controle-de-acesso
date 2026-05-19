@@ -1,8 +1,21 @@
 # Guest Workflow
 
-O fluxo de visitantes permite criar convites, receber cadastro publico por token e armazenar foto facial em ambiente de desenvolvimento, sem reconhecimento facial real e sem integrar Intelbras ainda.
+O fluxo de visitantes permite receber cadastro publico na pagina inicial, criar convites administrativos por token e armazenar foto facial em ambiente de desenvolvimento, sem reconhecimento facial real e sem integrar Intelbras ainda.
 
 ## Fluxo
+
+### Cadastro publico em `/`
+
+1. Visitante acessa `/`, rota publica do frontend.
+2. Visitante preenche dados, periodo da visita, responsavel/host e pode enviar foto facial.
+3. Frontend envia `multipart/form-data` para `POST /api/public/visitor-registration`.
+4. Backend valida campos obrigatorios, CPF, e-mail e janela da visita.
+5. Backend cria `Guest`, gera convite interno e, se a foto vier no envio, salva a imagem e marca o visitante como `COMPLETED`.
+6. Backend audita a criacao publica e publica alerta realtime em `/topic/system-alerts`.
+
+Essa rota nao exige login e nao retorna CPF, e-mail ou token de convite na resposta publica.
+
+### Convite administrativo por token
 
 1. RH/Admin cria visitante em `POST /api/guests`.
 2. Backend cria o visitante com status `PENDING_REGISTRATION`.
@@ -25,12 +38,20 @@ O fluxo de visitantes permite criar convites, receber cadastro publico por token
 - `POST /api/guests/{id}/resend-invite`
 - `POST /api/guests/{id}/complete-registration`
 
-## Endpoints publicos por token
+## Endpoints publicos
 
+- `POST /api/public/visitor-registration`
 - `GET /api/guest-registration/{token}`
 - `POST /api/guest-registration/{token}/complete`
 
-O endpoint publico retorna apenas dados necessarios para o cadastro do visitante, evitando expor CPF e email.
+Os endpoints publicos retornam apenas dados necessarios para o cadastro do visitante, evitando expor CPF, email e token.
+
+## Rotas frontend
+
+- `/`: cadastro publico de visitante.
+- `/login`: entrada administrativa.
+- `/guest-registration/{token}`: cadastro publico a partir de convite.
+- `/dashboard`, `/operations`, `/guests`, `/employees`, `/devices`, `/access-events`, `/areas`: rotas administrativas protegidas por JWT/RBAC.
 
 ## Upload facial
 
@@ -58,6 +79,8 @@ Convites possuem expiracao por token. Um scheduler tambem marca visitantes venci
 Eventos auditados:
 
 - `GUEST_CREATED`
+- `PUBLIC_GUEST_CREATED`
+- `PUBLIC_GUEST_FACE_UPLOADED`
 - `GUEST_UPDATED`
 - `GUEST_CANCELLED`
 - `GUEST_INVITE_RESENT`
