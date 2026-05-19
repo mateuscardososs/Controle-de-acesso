@@ -1,9 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { ChangeEvent, FormEvent, useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { ArrowRight, CheckCircle2, LockKeyhole, ShieldCheck, UploadCloud, X } from "lucide-react";
+import { ArrowRight, CheckCircle2, ShieldCheck, UploadCloud, X } from "lucide-react";
 import { apiErrorMessage } from "@/lib/errors";
 import { guestService } from "@/services/guestService";
 import { Input } from "@/src/components/ui/Input";
@@ -55,23 +54,12 @@ export default function PublicVisitorRegistrationPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#0B1020] px-4 py-4 sm:px-6">
-      <header className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.055] text-slate-100">
+    <main className="flex min-h-screen flex-col bg-[#0B1020] px-4 py-5 sm:px-6">
+      <section className="mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center py-6">
+        <div className="mb-7 text-center">
+          <div className="mx-auto mb-5 flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.055] text-slate-100">
             <ShieldCheck className="h-5 w-5" />
           </div>
-          <p className="text-sm font-semibold text-slate-100">Controle de Acesso</p>
-        </div>
-        <Link href="/login" className="inline-flex h-9 items-center justify-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-200 transition hover:border-white/20 hover:bg-white/[0.08] sm:px-4 sm:text-sm">
-          <LockKeyhole className="h-4 w-4" />
-          <span className="hidden sm:inline">Entrar como administrador</span>
-          <span className="sm:hidden">Admin</span>
-        </Link>
-      </header>
-
-      <section className="mx-auto flex w-full max-w-3xl flex-col items-center pb-8 pt-8 sm:pt-12">
-        <div className="mb-7 text-center">
           <h1 className="text-3xl font-semibold tracking-tight text-slate-50 sm:text-5xl">Cadastro de visitante</h1>
           <p className="mt-3 text-sm text-slate-400 sm:text-base">Preencha seus dados para solicitar acesso.</p>
         </div>
@@ -161,7 +149,7 @@ export default function PublicVisitorRegistrationPage() {
         </div>
       </section>
 
-      <footer className="pb-5 text-center text-xs text-slate-600">Controle de Acesso</footer>
+      <footer className="pb-2 text-center text-xs text-slate-700">Cadastro seguro</footer>
     </main>
   );
 }
