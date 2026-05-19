@@ -19,6 +19,7 @@ public class RabbitMqConfig {
     public static final String EMPLOYEE_SYNC_QUEUE = "employee.sync.queue";
     public static final String ACCESS_EVENT_QUEUE = "access.event.queue";
     public static final String AUDIT_QUEUE = "audit.queue";
+    public static final String INTELBRAS_SYNC_QUEUE = "intelbras.sync.queue";
 
     @Bean
     public TopicExchange accessEventsExchange() {
@@ -56,6 +57,11 @@ public class RabbitMqConfig {
     }
 
     @Bean
+    public Queue intelbrasSyncQueue() {
+        return queue(INTELBRAS_SYNC_QUEUE);
+    }
+
+    @Bean
     public Queue employeeSyncDlq() {
         return QueueBuilder.durable(EMPLOYEE_SYNC_QUEUE + ".dlq").build();
     }
@@ -68,6 +74,11 @@ public class RabbitMqConfig {
     @Bean
     public Queue auditDlq() {
         return QueueBuilder.durable(AUDIT_QUEUE + ".dlq").build();
+    }
+
+    @Bean
+    public Queue intelbrasSyncDlq() {
+        return QueueBuilder.durable("intelbras.sync.dlq").build();
     }
 
     @Bean
@@ -86,6 +97,11 @@ public class RabbitMqConfig {
     }
 
     @Bean
+    public Binding intelbrasSyncBinding(Queue intelbrasSyncQueue, TopicExchange integrationEventsExchange) {
+        return BindingBuilder.bind(intelbrasSyncQueue).to(integrationEventsExchange).with("intelbras.sync.*");
+    }
+
+    @Bean
     public Binding employeeSyncDlqBinding(Queue employeeSyncDlq, DirectExchange deadLetterExchange) {
         return BindingBuilder.bind(employeeSyncDlq).to(deadLetterExchange).with(EMPLOYEE_SYNC_QUEUE + ".dlq");
     }
@@ -98,6 +114,11 @@ public class RabbitMqConfig {
     @Bean
     public Binding auditDlqBinding(Queue auditDlq, DirectExchange deadLetterExchange) {
         return BindingBuilder.bind(auditDlq).to(deadLetterExchange).with(AUDIT_QUEUE + ".dlq");
+    }
+
+    @Bean
+    public Binding intelbrasSyncDlqBinding(Queue intelbrasSyncDlq, DirectExchange deadLetterExchange) {
+        return BindingBuilder.bind(intelbrasSyncDlq).to(deadLetterExchange).with(INTELBRAS_SYNC_QUEUE + ".dlq");
     }
 
     @Bean

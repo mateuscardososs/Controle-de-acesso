@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, MonitorCog, RadioTower, ShieldAlert, Tv } from "lucide-react";
+import { Activity, AlertTriangle, MonitorCog, RadioTower, RotateCcw, ShieldAlert, Tv } from "lucide-react";
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
@@ -50,6 +50,12 @@ export default function OperationsPage() {
   const pendingGuests = todayGuests.filter((guest) => guest.status === "PENDING_REGISTRATION" || guest.status === "INVITED");
   const expiredGuests = todayGuests.filter((guest) => guest.status === "EXPIRED");
   const guestsWithoutPhoto = todayGuests.filter((guest) => !guest.facePhotoUrl);
+  const pendingSync = todayGuests.filter((guest) => guest.syncStatus === "PENDING_SYNC" || guest.syncStatus === "SYNCING");
+  const failedSync = todayGuests.filter((guest) => guest.syncStatus === "SYNC_FAILED");
+  const latestSyncs = todayGuests
+    .filter((guest) => guest.lastSyncAt)
+    .sort((a, b) => new Date(b.lastSyncAt ?? 0).getTime() - new Date(a.lastSyncAt ?? 0).getTime())
+    .slice(0, 4);
 
   useEffect(() => {
     if (realtime.accessEvents.length === 0) return;
@@ -81,6 +87,7 @@ export default function OperationsPage() {
         <StatCard title="Dispositivos online" value={devicesWithRealtime.filter((device) => device.status === "ONLINE").length} icon={RadioTower} description="Status atual conhecido" />
         <StatCard title="Dispositivos atenção" value={offlineDevices.length} icon={MonitorCog} description="Offline ou desconhecidos" />
         <StatCard title="Visitantes hoje" value={todayGuests.length} icon={ShieldAlert} description="Convidados no periodo operacional" />
+        <StatCard title="Sync Intelbras" value={failedSync.length} icon={RotateCcw} description="Falhas de sincronizacao fake" />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
@@ -88,6 +95,35 @@ export default function OperationsPage() {
           {events.isLoading ? <LoadingState label="Carregando base de eventos..." /> : null}
           {events.isError ? <ErrorState label="Não foi possível carregar eventos." /> : null}
           {!events.isLoading && !events.isError ? <RealtimeFeed title="Feed ao vivo" events={liveEvents} /> : null}
+
+          <Card>
+            <CardHeader>
+              <h2 className="text-base font-semibold text-slate-950">Sincronização Intelbras</h2>
+            </CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pendentes</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-950">{pendingSync.length}</p>
+              </div>
+              <div className="rounded-xl border border-red-100 bg-red-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Falhadas</p>
+                <p className="mt-2 text-2xl font-semibold text-red-800">{failedSync.length}</p>
+              </div>
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Últimas syncs</p>
+                <p className="mt-2 text-2xl font-semibold text-emerald-800">{latestSyncs.length}</p>
+              </div>
+              {realtime.integrationSync.slice(0, 4).map((event, index) => (
+                <div key={`${event.personId}-${index}`} className="rounded-xl border border-slate-100 bg-white p-3 md:col-span-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-950">{event.personType} {event.personId.slice(0, 8)}</p>
+                    <StatusBadge value={event.syncStatus} />
+                  </div>
+                  {event.message ? <p className="mt-1 text-xs text-slate-500">{event.message}</p> : null}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader>
@@ -195,7 +231,11 @@ export default function OperationsPage() {
                     </div>
                     <StatusBadge value={guest.status} />
                   </div>
-                  <p className="mt-2 text-xs text-slate-500">{guest.facePhotoUrl ? "Foto facial enviada" : "Sem foto facial"}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <StatusBadge value={guest.syncStatus ?? "NOT_REQUIRED"} />
+                    <p className="text-xs text-slate-500">{guest.facePhotoUrl ? "Foto facial enviada" : "Sem foto facial"}</p>
+                  </div>
+                  {guest.lastSyncError ? <p className="mt-2 text-xs text-red-700">{guest.lastSyncError}</p> : null}
                 </div>
               ))}
             </CardContent>

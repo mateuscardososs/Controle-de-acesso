@@ -25,6 +25,11 @@ const labels: Record<string, string> = {
   SENT: "Enviado",
   SKIPPED: "Pulado",
   FAILED: "Falhou",
+  NOT_REQUIRED: "Nao requer",
+  PENDING_SYNC: "Pendente",
+  SYNCING: "Sincronizando",
+  SYNCED: "Sincronizado",
+  SYNC_FAILED: "Falha sync",
   ENTRY_EXIT: "Entrada/Saída",
   SIMULATED: "Simulado",
   DEVICE: "Dispositivo"
@@ -39,12 +44,14 @@ export function humanizeStatus(value?: string | boolean | null) {
 export function StatusBadge({ value }: { value?: string | boolean | null }) {
   const normalized = typeof value === "boolean" ? (value ? "ACTIVE" : "INACTIVE") : value;
   const tone =
-    normalized === "ACTIVE" || normalized === "ONLINE" || normalized === "ALLOWED" || normalized === "SENT"
+    normalized === "ACTIVE" || normalized === "ONLINE" || normalized === "ALLOWED" || normalized === "SENT" || normalized === "SYNCED"
       ? "green"
-      : normalized === "DENIED" || normalized === "BLOCKED" || normalized === "OFFLINE" || normalized === "ERROR" || normalized === "FAILED"
+      : normalized === "DENIED" || normalized === "BLOCKED" || normalized === "OFFLINE" || normalized === "ERROR" || normalized === "FAILED" || normalized === "SYNC_FAILED"
         ? "red"
         : normalized === "UNKNOWN"
           ? "amber"
+          : normalized === "PENDING_SYNC" || normalized === "SYNCING"
+            ? "amber"
           : normalized === "ENTRY" || normalized === "EXIT" || normalized === "ENTRY_EXIT"
             ? "blue"
             : "slate";

@@ -5,11 +5,11 @@ import java.util.UUID;
 
 public interface AccessControlProvider {
 
-    void syncPerson(ProviderPerson person);
+    ProviderSyncResult syncPerson(ProviderPerson person);
 
-    void removePerson(ProviderPerson person);
+    ProviderSyncResult removePerson(ProviderPerson person);
 
-    void updatePermission(ProviderPermission permission);
+    ProviderSyncResult updatePermission(ProviderPermission permission);
 
     ProviderDeviceStatus fetchDeviceStatus(UUID deviceId);
 

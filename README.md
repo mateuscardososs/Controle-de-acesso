@@ -205,6 +205,8 @@ O workflow de convidados com convite por token, cadastro publico e upload facial
 
 Configuração de SMTP e modo dev sem envio estão em [`docs/mail-setup.md`](docs/mail-setup.md).
 
+O pipeline fake/profissional de sincronização Intelbras está em [`docs/intelbras-sync-pipeline.md`](docs/intelbras-sync-pipeline.md).
+
 ## Exemplos REST
 
 Criar colaborador:

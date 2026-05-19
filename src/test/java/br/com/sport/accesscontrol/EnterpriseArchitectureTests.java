@@ -17,14 +17,20 @@ import br.com.sport.accesscontrol.integration.intelbras.scheduler.IntelbrasSyncS
 import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasIntegrationService;
 import br.com.sport.accesscontrol.integration.intelbras.simulator.IntelbrasAccessEventSimulatorRequest;
 import br.com.sport.accesscontrol.integration.intelbras.simulator.IntelbrasSimulatorService;
+import br.com.sport.accesscontrol.integration.provider.AccessControlProvider;
+import br.com.sport.accesscontrol.integration.provider.ProviderSyncResult;
+import br.com.sport.accesscontrol.integration.provider.ProviderSyncStatus;
+import br.com.sport.accesscontrol.integration.sync.*;
 import br.com.sport.accesscontrol.mail.MailDeliveryResult;
 import br.com.sport.accesscontrol.mail.MailService;
 import br.com.sport.accesscontrol.realtime.RealtimeAccessEventMapper;
 import br.com.sport.accesscontrol.realtime.RealtimePublisherService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.amqp.core.Queue;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -240,7 +246,8 @@ class EnterpriseArchitectureTests {
         var mailService = mock(MailService.class);
         when(mailService.sendGuestInvite(any(), any())).thenReturn(MailDeliveryResult.skipped("disabled"));
         var service = new GuestService(guestRepository, inviteRepository, mock(FaceStorageService.class),
-                auditService, realtimePublisher, mailService, "http://localhost:3000", 72);
+                auditService, realtimePublisher, mailService, mock(ApplicationEventPublisher.class),
+                "http://localhost:3000", 72);
         var response = service.create(guestRequest());
 
         assertThat(response.status()).isEqualTo(GuestStatus.PENDING_REGISTRATION);
@@ -263,7 +270,7 @@ class EnterpriseArchitectureTests {
         when(mailService.sendGuestInviteResent(eq(guest), any())).thenReturn(MailDeliveryResult.failed("smtp down"));
         var service = new GuestService(guestRepository, inviteRepository, mock(FaceStorageService.class),
                 mock(AuditService.class), mock(RealtimePublisherService.class), mailService,
-                "http://localhost:3000", 72);
+                mock(ApplicationEventPublisher.class), "http://localhost:3000", 72);
 
         var response = service.resendInvite(guest.getId());
 
@@ -278,7 +285,7 @@ class EnterpriseArchitectureTests {
         when(inviteRepository.findByToken("missing")).thenReturn(Optional.empty());
         var service = new GuestService(mock(GuestRepository.class), inviteRepository, mock(FaceStorageService.class),
                 mock(AuditService.class), mock(RealtimePublisherService.class), mock(MailService.class),
-                "http://localhost:3000", 72);
+                mock(ApplicationEventPublisher.class), "http://localhost:3000", 72);
 
         assertThatThrownBy(() -> service.publicRegistration("missing"))
                 .isInstanceOf(br.com.sport.accesscontrol.common.ResourceNotFoundException.class);
@@ -297,7 +304,7 @@ class EnterpriseArchitectureTests {
         when(faceStorage.store(any(), eq(guest.getId()))).thenReturn("/uploads/faces/photo.png");
         when(mailService.sendGuestRegistrationCompleted(guest)).thenReturn(MailDeliveryResult.delivered());
         var service = new GuestService(mock(GuestRepository.class), inviteRepository, faceStorage, auditService,
-                realtimePublisher, mailService, "http://localhost:3000", 72);
+                realtimePublisher, mailService, mock(ApplicationEventPublisher.class), "http://localhost:3000", 72);
 
         var response = service.completeRegistration("token", "81999990000", "Sport", png());
 
@@ -320,7 +327,8 @@ class EnterpriseArchitectureTests {
         when(guestRepository.findByStatusNotAndVisitEndBefore(eq(GuestStatus.CANCELLED), any()))
                 .thenReturn(List.of(guest()));
         var service = new GuestService(guestRepository, mock(GuestInviteRepository.class), mock(FaceStorageService.class),
-                auditService, realtimePublisher, mock(MailService.class), "http://localhost:3000", 72);
+                auditService, realtimePublisher, mock(MailService.class), mock(ApplicationEventPublisher.class),
+                "http://localhost:3000", 72);
 
         var cancelled = service.cancel(guest.getId());
         var expired = service.expireOverdueGuests();
@@ -343,6 +351,60 @@ class EnterpriseArchitectureTests {
         assertThat(stored).startsWith("/uploads/faces/" + guestId);
         assertThatThrownBy(() -> storage.store(new MockMultipartFile("facePhoto", "bad.txt", "text/plain", "bad".getBytes()), guestId))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void intelbrasSyncWorkerMarksEmployeeSyncedAndPublishesAuditAndRealtime() {
+        var employee = new Employee("Leao", "123", null, null, null, null, null, null, null);
+        ReflectionTestUtils.setField(employee, "id", UUID.randomUUID());
+        var employeeRepository = mock(EmployeeRepository.class);
+        var provider = mock(AccessControlProvider.class);
+        var auditService = mock(AuditService.class);
+        var realtime = mock(IntegrationSyncRealtimePublisher.class);
+        when(employeeRepository.findById(employee.getId())).thenReturn(Optional.of(employee));
+        when(provider.syncPerson(any())).thenReturn(new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "ok", java.time.Duration.ofMillis(10)));
+
+        worker(employeeRepository, mock(GuestRepository.class), provider, auditService, mock(IntegrationEventPublisher.class), realtime, 3)
+                .process(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.EMPLOYEE, employee.getId(), 1));
+
+        assertThat(employee.getSyncStatus()).isEqualTo(SyncStatus.SYNCED);
+        verify(auditService).record(eq("INTELBRAS_SYNC_STARTED"), eq("EMPLOYEE"), eq(employee.getId()), any(), any(), any());
+        verify(auditService).record(eq("INTELBRAS_SYNC_SUCCEEDED"), eq("EMPLOYEE"), eq(employee.getId()), any(), any(), any());
+        verify(realtime).publish(eq(br.com.sport.accesscontrol.common.PersonType.EMPLOYEE), eq(employee.getId()), eq(SyncStatus.SYNCED), any());
+    }
+
+    @Test
+    void intelbrasSyncWorkerRetriesThenSendsToDlqAfterMaxAttempts() {
+        var guest = guest();
+        guest.completeRegistration("81999990000", "Sport", "/uploads/faces/photo.png");
+        var guestRepository = mock(GuestRepository.class);
+        var provider = mock(AccessControlProvider.class);
+        var publisher = mock(IntegrationEventPublisher.class);
+        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+        when(provider.syncPerson(any())).thenReturn(new ProviderSyncResult(ProviderSyncStatus.FAILED, "down", java.time.Duration.ofMillis(5)));
+
+        var worker = worker(mock(EmployeeRepository.class), guestRepository, provider, mock(AuditService.class),
+                publisher, mock(IntegrationSyncRealtimePublisher.class), 2);
+        worker.process(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, guest.getId(), 1));
+
+        assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNC_FAILED);
+        verify(publisher).publishIntelbrasSync(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, guest.getId(), 2));
+        assertThatThrownBy(() -> worker.process(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, guest.getId(), 2)))
+                .isInstanceOf(AmqpRejectAndDontRequeueException.class);
+    }
+
+    @Test
+    void manualRetryEndpointQueuesSyncMessageAndAudits() {
+        var publisher = mock(IntegrationEventPublisher.class);
+        var auditService = mock(AuditService.class);
+        var id = UUID.randomUUID();
+        var controller = new IntegrationRetryController(publisher, auditService);
+
+        var response = controller.retry("guest", id);
+
+        assertThat(response).containsEntry("status", "queued");
+        verify(auditService).record(eq("INTELBRAS_SYNC_MANUAL_RETRY"), eq("GUEST"), eq(id), any(), any(), any());
+        verify(publisher).publishIntelbrasSync(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, id, 1));
     }
 
     private Area area() {
@@ -381,6 +443,14 @@ class EnterpriseArchitectureTests {
         ReflectionTestUtils.setField(event, "id", UUID.randomUUID());
         ReflectionTestUtils.setField(event, "createdAt", Instant.now());
         return event;
+    }
+
+    private IntelbrasSyncWorker worker(EmployeeRepository employeeRepository, GuestRepository guestRepository,
+                                       AccessControlProvider provider, AuditService auditService,
+                                       IntegrationEventPublisher publisher, IntegrationSyncRealtimePublisher realtime,
+                                       int maxAttempts) {
+        return new IntelbrasSyncWorker(employeeRepository, guestRepository, provider, auditService, publisher, realtime,
+                mock(RealtimePublisherService.class), new SimpleMeterRegistry(), maxAttempts);
     }
 
     private GuestDtos.GuestRequest guestRequest() {

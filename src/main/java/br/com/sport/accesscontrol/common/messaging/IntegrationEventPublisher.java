@@ -24,6 +24,10 @@ public class IntegrationEventPublisher {
         publish(RabbitMqConfig.INTEGRATION_EVENTS_EXCHANGE, "employee.sync", event);
     }
 
+    public void publishIntelbrasSync(Object event) {
+        publish(RabbitMqConfig.INTEGRATION_EVENTS_EXCHANGE, "intelbras.sync.requested", event);
+    }
+
     public void publishAccessEvent(Object event) {
         publish(RabbitMqConfig.ACCESS_EVENTS_EXCHANGE, "access.event.received", event);
     }

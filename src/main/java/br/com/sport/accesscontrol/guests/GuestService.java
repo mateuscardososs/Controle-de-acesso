@@ -7,9 +7,11 @@ import br.com.sport.accesscontrol.guests.GuestDtos.GuestResponse;
 import br.com.sport.accesscontrol.guests.GuestDtos.PublicGuestRegistrationResponse;
 import br.com.sport.accesscontrol.mail.MailDeliveryResult;
 import br.com.sport.accesscontrol.mail.MailService;
+import br.com.sport.accesscontrol.integration.sync.GuestReadyForSyncEvent;
 import br.com.sport.accesscontrol.realtime.RealtimePublisherService;
 import br.com.sport.accesscontrol.realtime.dto.SystemAlertMessage;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -31,6 +33,7 @@ public class GuestService {
     private final AuditService auditService;
     private final RealtimePublisherService realtimePublisherService;
     private final MailService mailService;
+    private final ApplicationEventPublisher eventPublisher;
     private final String publicBaseUrl;
     private final SecureRandom secureRandom = new SecureRandom();
     private final Duration inviteTtl;
@@ -38,6 +41,7 @@ public class GuestService {
     public GuestService(GuestRepository guestRepository, GuestInviteRepository inviteRepository,
                         FaceStorageService faceStorageService, AuditService auditService,
                         RealtimePublisherService realtimePublisherService, MailService mailService,
+                        ApplicationEventPublisher eventPublisher,
                         @Value("${app.frontend.public-base-url:http://localhost:3000}") String publicBaseUrl,
                         @Value("${app.guests.invite-expiration-hours:72}") long inviteExpirationHours) {
         this.guestRepository = guestRepository;
@@ -46,6 +50,7 @@ public class GuestService {
         this.auditService = auditService;
         this.realtimePublisherService = realtimePublisherService;
         this.mailService = mailService;
+        this.eventPublisher = eventPublisher;
         this.publicBaseUrl = publicBaseUrl;
         this.inviteTtl = Duration.ofHours(inviteExpirationHours);
     }
@@ -137,6 +142,7 @@ public class GuestService {
         invite.markUsed();
         auditService.record("GUEST_FACE_UPLOADED", "Guest", guest.getId(), Map.of("facePhotoUrl", facePhotoUrl), oldData, snapshot(guest));
         auditService.record("GUEST_REGISTRATION_COMPLETED", "Guest", guest.getId(), Map.of(), oldData, snapshot(guest));
+        eventPublisher.publishEvent(new GuestReadyForSyncEvent(guest.getId()));
         var delivery = mailService.sendGuestRegistrationCompleted(guest);
         auditMailResult(guest, "GUEST_REGISTRATION_CONFIRMATION_EMAIL", delivery);
         realtimePublisherService.publishSystemAlert(new SystemAlertMessage(

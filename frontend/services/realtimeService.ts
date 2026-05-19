@@ -1,7 +1,7 @@
 "use client";
 
 import { TOKEN_KEY } from "@/lib/api";
-import { RealtimeAccessEvent, RealtimeDeviceStatus, SystemAlert } from "./realtimeTypes";
+import { IntegrationSyncEvent, RealtimeAccessEvent, RealtimeDeviceStatus, SystemAlert } from "./realtimeTypes";
 
 type RealtimeStatus = "connecting" | "connected" | "offline" | "error";
 
@@ -9,6 +9,7 @@ type RealtimeHandlers = {
   onAccessEvent?: (event: RealtimeAccessEvent) => void;
   onDeviceStatus?: (status: RealtimeDeviceStatus) => void;
   onSystemAlert?: (alert: SystemAlert) => void;
+  onIntegrationSync?: (event: IntegrationSyncEvent) => void;
   onStatusChange?: (status: RealtimeStatus) => void;
 };
 
@@ -21,7 +22,8 @@ type Subscription = {
 const topics = {
   accessEvents: "/topic/access-events",
   deviceStatus: "/topic/device-status",
-  systemAlerts: "/topic/system-alerts"
+  systemAlerts: "/topic/system-alerts",
+  integrationSync: "/topic/integration-sync"
 };
 
 function apiBaseUrl() {
@@ -144,7 +146,8 @@ export class RealtimeClient {
     this.subscriptions = [
       { id: "access-events", destination: topics.accessEvents, callback: (payload) => this.handlers.onAccessEvent?.(payload as RealtimeAccessEvent) },
       { id: "device-status", destination: topics.deviceStatus, callback: (payload) => this.handlers.onDeviceStatus?.(payload as RealtimeDeviceStatus) },
-      { id: "system-alerts", destination: topics.systemAlerts, callback: (payload) => this.handlers.onSystemAlert?.(payload as SystemAlert) }
+      { id: "system-alerts", destination: topics.systemAlerts, callback: (payload) => this.handlers.onSystemAlert?.(payload as SystemAlert) },
+      { id: "integration-sync", destination: topics.integrationSync, callback: (payload) => this.handlers.onIntegrationSync?.(payload as IntegrationSyncEvent) }
     ];
 
     for (const subscription of this.subscriptions) {

@@ -1,6 +1,10 @@
 package br.com.sport.accesscontrol.common.events;
 
 import br.com.sport.accesscontrol.common.messaging.IntegrationEventPublisher;
+import br.com.sport.accesscontrol.common.PersonType;
+import br.com.sport.accesscontrol.integration.sync.EmployeeReadyForSyncEvent;
+import br.com.sport.accesscontrol.integration.sync.GuestReadyForSyncEvent;
+import br.com.sport.accesscontrol.integration.sync.IntelbrasSyncMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
@@ -49,5 +53,17 @@ public class DomainEventListeners {
     void on(AccessEventReceivedEvent event) {
         log.info("access_event_received_event access_event_id={}", event.accessEventId());
         publisher.publishAccessEvent(event);
+    }
+
+    @EventListener
+    void on(EmployeeReadyForSyncEvent event) {
+        log.info("employee_ready_for_sync_event employee_id={}", event.employeeId());
+        publisher.publishIntelbrasSync(new IntelbrasSyncMessage(PersonType.EMPLOYEE, event.employeeId(), 1));
+    }
+
+    @EventListener
+    void on(GuestReadyForSyncEvent event) {
+        log.info("guest_ready_for_sync_event guest_id={}", event.guestId());
+        publisher.publishIntelbrasSync(new IntelbrasSyncMessage(PersonType.GUEST, event.guestId(), 1));
     }
 }

@@ -1,5 +1,7 @@
 package br.com.sport.accesscontrol.employees;
 
+import br.com.sport.accesscontrol.integration.sync.SyncStatus;
+
 import java.time.Instant;
 import java.util.UUID;
 
@@ -14,6 +16,10 @@ public record EmployeeResponse(
         EmployeeStatus status,
         Instant accessValidFrom,
         Instant accessValidUntil,
+        SyncStatus syncStatus,
+        Instant lastSyncAt,
+        String lastSyncError,
+        int syncAttempts,
         Instant createdAt,
         Instant updatedAt
 ) {
@@ -29,6 +35,10 @@ public record EmployeeResponse(
                 employee.getStatus(),
                 employee.getAccessValidFrom(),
                 employee.getAccessValidUntil(),
+                employee.getSyncStatus(),
+                employee.getLastSyncAt(),
+                employee.getLastSyncError(),
+                employee.getSyncAttempts(),
                 employee.getCreatedAt(),
                 employee.getUpdatedAt()
         );

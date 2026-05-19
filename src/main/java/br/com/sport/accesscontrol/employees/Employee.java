@@ -1,6 +1,7 @@
 package br.com.sport.accesscontrol.employees;
 
 import br.com.sport.accesscontrol.common.TimestampedEntity;
+import br.com.sport.accesscontrol.integration.sync.SyncStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -45,6 +46,19 @@ public class Employee extends TimestampedEntity {
 
     @Column(name = "access_valid_until")
     private Instant accessValidUntil;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "sync_status", nullable = false)
+    private SyncStatus syncStatus = SyncStatus.PENDING_SYNC;
+
+    @Column(name = "last_sync_at")
+    private Instant lastSyncAt;
+
+    @Column(name = "last_sync_error")
+    private String lastSyncError;
+
+    @Column(name = "sync_attempts", nullable = false)
+    private int syncAttempts;
 
     protected Employee() {
     }
@@ -136,5 +150,43 @@ public class Employee extends TimestampedEntity {
 
     public void setAccessValidUntil(Instant accessValidUntil) {
         this.accessValidUntil = accessValidUntil;
+    }
+
+    public SyncStatus getSyncStatus() {
+        return syncStatus;
+    }
+
+    public Instant getLastSyncAt() {
+        return lastSyncAt;
+    }
+
+    public String getLastSyncError() {
+        return lastSyncError;
+    }
+
+    public int getSyncAttempts() {
+        return syncAttempts;
+    }
+
+    public void markPendingSync() {
+        syncStatus = SyncStatus.PENDING_SYNC;
+        lastSyncError = null;
+    }
+
+    public void markSyncing() {
+        syncStatus = SyncStatus.SYNCING;
+        syncAttempts++;
+    }
+
+    public void markSynced() {
+        syncStatus = SyncStatus.SYNCED;
+        lastSyncAt = Instant.now();
+        lastSyncError = null;
+    }
+
+    public void markSyncFailed(String error) {
+        syncStatus = SyncStatus.SYNC_FAILED;
+        lastSyncAt = Instant.now();
+        lastSyncError = error;
     }
 }

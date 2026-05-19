@@ -32,3 +32,11 @@ export type SystemAlert = {
   createdAt?: string;
   source?: string;
 };
+
+export type IntegrationSyncEvent = {
+  personType: "EMPLOYEE" | "GUEST" | string;
+  personId: string;
+  syncStatus: "NOT_REQUIRED" | "PENDING_SYNC" | "SYNCING" | "SYNCED" | "SYNC_FAILED" | string;
+  message?: string;
+  occurredAt?: string;
+};

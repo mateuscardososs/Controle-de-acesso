@@ -1,6 +1,7 @@
 import { api } from "@/lib/api";
 
 export type GuestStatus = "INVITED" | "PENDING_REGISTRATION" | "COMPLETED" | "EXPIRED" | "CANCELLED";
+export type SyncStatus = "NOT_REQUIRED" | "PENDING_SYNC" | "SYNCING" | "SYNCED" | "SYNC_FAILED";
 
 export type Guest = {
   id: string;
@@ -22,6 +23,10 @@ export type Guest = {
   inviteExpiresAt?: string;
   emailDeliveryStatus?: "SENT" | "SKIPPED" | "FAILED" | string;
   emailDeliveryMessage?: string;
+  syncStatus?: SyncStatus;
+  lastSyncAt?: string;
+  lastSyncError?: string;
+  syncAttempts?: number;
 };
 
 export type GuestPayload = {

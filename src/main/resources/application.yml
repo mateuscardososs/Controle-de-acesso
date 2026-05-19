@@ -58,6 +58,11 @@ app:
     faces-dir: ${FACE_UPLOAD_DIR:uploads/faces}
   guests:
     invite-expiration-hours: ${GUEST_INVITE_EXPIRATION_HOURS:72}
+    expiration-scan-delay-ms: ${GUEST_EXPIRATION_SCAN_DELAY_MS:300000}
+  integration:
+    intelbras:
+      sync:
+        max-attempts: ${INTELBRAS_SYNC_MAX_ATTEMPTS:3}
   security:
     jwt:
       secret: ${JWT_SECRET:dev-only-change-this-secret-please-keep-it-long}

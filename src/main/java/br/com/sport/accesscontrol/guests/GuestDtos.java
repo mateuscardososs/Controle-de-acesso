@@ -1,5 +1,6 @@
 package br.com.sport.accesscontrol.guests;
 
+import br.com.sport.accesscontrol.integration.sync.SyncStatus;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -44,7 +45,11 @@ public final class GuestDtos {
             String inviteUrl,
             Instant inviteExpiresAt,
             String emailDeliveryStatus,
-            String emailDeliveryMessage
+            String emailDeliveryMessage,
+            SyncStatus syncStatus,
+            Instant lastSyncAt,
+            String lastSyncError,
+            int syncAttempts
     ) {
         static GuestResponse from(Guest guest, GuestInvite invite) {
             return from(guest, invite, null, null, null);
@@ -71,7 +76,11 @@ public final class GuestDtos {
                     inviteUrl,
                     invite == null ? null : invite.getExpiresAt(),
                     emailDeliveryStatus,
-                    emailDeliveryMessage
+                    emailDeliveryMessage,
+                    guest.getSyncStatus(),
+                    guest.getLastSyncAt(),
+                    guest.getLastSyncError(),
+                    guest.getSyncAttempts()
             );
         }
     }

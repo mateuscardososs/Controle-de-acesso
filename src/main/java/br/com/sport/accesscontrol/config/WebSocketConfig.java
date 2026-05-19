@@ -13,6 +13,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public static final String ACCESS_EVENTS_TOPIC = "/topic/access-events";
     public static final String DEVICE_STATUS_TOPIC = "/topic/device-status";
     public static final String SYSTEM_ALERTS_TOPIC = "/topic/system-alerts";
+    public static final String INTEGRATION_SYNC_TOPIC = "/topic/integration-sync";
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {

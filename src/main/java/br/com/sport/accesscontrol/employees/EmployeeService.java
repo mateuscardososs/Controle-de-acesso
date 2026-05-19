@@ -5,6 +5,7 @@ import br.com.sport.accesscontrol.common.ResourceNotFoundException;
 import br.com.sport.accesscontrol.common.events.EmployeeCreatedEvent;
 import br.com.sport.accesscontrol.common.events.EmployeeDeactivatedEvent;
 import br.com.sport.accesscontrol.common.events.EmployeeUpdatedEvent;
+import br.com.sport.accesscontrol.integration.sync.EmployeeReadyForSyncEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +45,7 @@ public class EmployeeService {
         auditService.record("EMPLOYEE_CREATED", "Employee", saved.getId(), Map.of("cpf", saved.getCpf()),
                 Map.of(), employeeSnapshot(saved));
         eventPublisher.publishEvent(new EmployeeCreatedEvent(saved.getId()));
+        eventPublisher.publishEvent(new EmployeeReadyForSyncEvent(saved.getId()));
         return EmployeeResponse.from(saved);
     }
 
@@ -70,9 +72,11 @@ public class EmployeeService {
         employee.setStatus(request.status() == null ? employee.getStatus() : request.status());
         employee.setAccessValidFrom(request.accessValidFrom());
         employee.setAccessValidUntil(request.accessValidUntil());
+        employee.markPendingSync();
         auditService.record("EMPLOYEE_UPDATED", "Employee", employee.getId(), Map.of("cpf", employee.getCpf()),
                 oldData, employeeSnapshot(employee));
         eventPublisher.publishEvent(new EmployeeUpdatedEvent(employee.getId()));
+        eventPublisher.publishEvent(new EmployeeReadyForSyncEvent(employee.getId()));
         return EmployeeResponse.from(employee);
     }
 

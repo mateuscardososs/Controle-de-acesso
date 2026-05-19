@@ -1,6 +1,7 @@
 package br.com.sport.accesscontrol.guests;
 
 import br.com.sport.accesscontrol.common.TimestampedEntity;
+import br.com.sport.accesscontrol.integration.sync.SyncStatus;
 import jakarta.persistence.*;
 
 import java.time.Instant;
@@ -48,6 +49,19 @@ public class Guest extends TimestampedEntity {
 
     @Column(name = "completed_at")
     private Instant completedAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "sync_status", nullable = false)
+    private SyncStatus syncStatus = SyncStatus.NOT_REQUIRED;
+
+    @Column(name = "last_sync_at")
+    private Instant lastSyncAt;
+
+    @Column(name = "last_sync_error")
+    private String lastSyncError;
+
+    @Column(name = "sync_attempts", nullable = false)
+    private int syncAttempts;
 
     protected Guest() {
     }
@@ -154,6 +168,7 @@ public class Guest extends TimestampedEntity {
         this.facePhotoUrl = facePhotoUrl;
         this.status = GuestStatus.COMPLETED;
         this.completedAt = Instant.now();
+        markPendingSync();
     }
 
     public void cancel() {
@@ -162,5 +177,43 @@ public class Guest extends TimestampedEntity {
 
     public void expire() {
         this.status = GuestStatus.EXPIRED;
+    }
+
+    public SyncStatus getSyncStatus() {
+        return syncStatus;
+    }
+
+    public Instant getLastSyncAt() {
+        return lastSyncAt;
+    }
+
+    public String getLastSyncError() {
+        return lastSyncError;
+    }
+
+    public int getSyncAttempts() {
+        return syncAttempts;
+    }
+
+    public void markPendingSync() {
+        syncStatus = SyncStatus.PENDING_SYNC;
+        lastSyncError = null;
+    }
+
+    public void markSyncing() {
+        syncStatus = SyncStatus.SYNCING;
+        syncAttempts++;
+    }
+
+    public void markSynced() {
+        syncStatus = SyncStatus.SYNCED;
+        lastSyncAt = Instant.now();
+        lastSyncError = null;
+    }
+
+    public void markSyncFailed(String error) {
+        syncStatus = SyncStatus.SYNC_FAILED;
+        lastSyncAt = Instant.now();
+        lastSyncError = error;
     }
 }
