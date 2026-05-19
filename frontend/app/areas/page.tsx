@@ -46,7 +46,7 @@ export default function AreasPage() {
         description="Zonas fisicas usadas nas regras de permissao e na leitura operacional dos eventos."
         actions={<Button icon={Plus} onClick={() => setOpen(true)}>Nova area</Button>}
       />
-      {message ? <div className="mb-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-sm">{message}</div> : null}
+      {message ? <div className="mb-4 rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm font-medium text-slate-300 shadow-sm">{message}</div> : null}
       {areas.isLoading ? <LoadingState label="Carregando áreas..." /> : null}
       {areas.isError ? <ErrorState label="Não foi possível carregar as áreas." /> : null}
       {!areas.isLoading && !areas.isError && areas.data?.length === 0 ? (
@@ -59,12 +59,12 @@ export default function AreasPage() {
               <CardContent>
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-red-50 text-sport-red">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-red-300/20 bg-red-500/12 text-red-200">
                       <MapPinned className="h-5 w-5" />
                     </div>
                     <div>
-                      <p className="font-semibold text-slate-950">{area.name}</p>
-                      <p className="mt-2 text-sm leading-6 text-slate-600">{area.description ?? "Sem descricao"}</p>
+                      <p className="font-semibold text-slate-50">{area.name}</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-400">{area.description ?? "Sem descricao"}</p>
                     </div>
                   </div>
                   <StatusBadge value={area.active} />

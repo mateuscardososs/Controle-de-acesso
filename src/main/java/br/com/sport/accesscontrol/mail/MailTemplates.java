@@ -18,7 +18,7 @@ final class MailTemplates {
                 "Complete seu cadastro de visitante",
                 """
                         <p>Olá, <strong>%s</strong>.</p>
-                        <p>Você foi convidado para acessar uma área controlada do Sport Club do Recife.</p>
+                        <p>Você foi convidado para acessar uma área controlada.</p>
                         <div class="panel">
                           <p><strong>Visita:</strong> %s até %s</p>
                           <p><strong>Responsável:</strong> %s</p>
@@ -87,7 +87,7 @@ final class MailTemplates {
                         <h1>%s</h1>
                       </div>
                       <div class="content">%s</div>
-                      <div class="foot">Sport Club do Recife · Mensagem transacional automática</div>
+                      <div class="foot">Controle de Acesso · Mensagem transacional automática</div>
                     </div>
                   </div>
                 </body>

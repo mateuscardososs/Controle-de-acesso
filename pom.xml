@@ -15,7 +15,7 @@
     <artifactId>access-control-api</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>access-control-api</name>
-    <description>Backend base para controle de acesso Intelbras do Sport Club do Recife</description>
+    <description>Backend base para plataforma multiempresa de controle de acesso Intelbras</description>
 
     <properties>
         <java.version>21</java.version>

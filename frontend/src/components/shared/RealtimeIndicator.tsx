@@ -8,7 +8,7 @@ export function RealtimeIndicator({ status }: { status: RealtimeConnectionStatus
 
   return (
     <Badge tone={connected ? "green" : status === "error" ? "red" : "amber"} className="gap-2">
-      <span className={clsx("h-2 w-2 rounded-full", connected ? "animate-pulse bg-emerald-500" : "bg-current")} />
+      <span className={clsx("h-2 w-2 rounded-full", connected ? "animate-pulse bg-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.8)]" : "bg-current")} />
       {label}
     </Badge>
   );

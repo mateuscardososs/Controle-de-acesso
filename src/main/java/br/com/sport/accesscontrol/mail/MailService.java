@@ -21,22 +21,22 @@ public class MailService {
 
     public MailService(JavaMailSender mailSender,
                        @Value("${app.mail.enabled:false}") boolean enabled,
-                       @Value("${app.mail.from:no-reply@sport.local}") String from) {
+                       @Value("${app.mail.from:no-reply@empresa.local}") String from) {
         this.mailSender = mailSender;
         this.enabled = enabled;
         this.from = from;
     }
 
     public MailDeliveryResult sendGuestInvite(Guest guest, String inviteUrl) {
-        return send(guest, "Convite de visitante - Sport Club do Recife", MailTemplates.guestInvite(guest, inviteUrl));
+        return send(guest, "Convite de visitante - Controle de Acesso", MailTemplates.guestInvite(guest, inviteUrl));
     }
 
     public MailDeliveryResult sendGuestInviteResent(Guest guest, String inviteUrl) {
-        return send(guest, "Reenvio do convite de visitante - Sport Club do Recife", MailTemplates.guestInvite(guest, inviteUrl));
+        return send(guest, "Reenvio do convite de visitante - Controle de Acesso", MailTemplates.guestInvite(guest, inviteUrl));
     }
 
     public MailDeliveryResult sendGuestRegistrationCompleted(Guest guest) {
-        return send(guest, "Cadastro de visitante concluído - Sport Club do Recife", MailTemplates.guestRegistrationCompleted(guest));
+        return send(guest, "Cadastro de visitante concluído - Controle de Acesso", MailTemplates.guestRegistrationCompleted(guest));
     }
 
     private MailDeliveryResult send(Guest guest, String subject, String html) {

@@ -96,7 +96,7 @@ Acesse:
 
 Login inicial:
 
-- Email: `admin@sport.local`
+- Email: `admin@empresa.local`
 - Senha: `Admin@123456`
 
 ## 6. Atalhos opcionais

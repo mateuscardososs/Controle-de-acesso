@@ -1,5 +1,5 @@
 @baseUrl = http://localhost:8080
-@adminEmail = admin@sport.local
+@adminEmail = admin@empresa.local
 @adminPassword = Admin@123456
 @token =
 @areaId =
@@ -67,11 +67,11 @@ Authorization: Bearer {{token}}
 Content-Type: application/json
 
 {
-  "fullName": "Leao da Ilha",
+  "fullName": "Colaborador Exemplo",
   "cpf": "{{cpf}}",
-  "email": "leao.smoke@sport.com.br",
+  "email": "colaborador.smoke@empresa.local",
   "phone": "81999990000",
-  "registrationNumber": "SCR-SMOKE-001",
+  "registrationNumber": "EMP-SMOKE-001",
   "status": "ACTIVE"
 }
 

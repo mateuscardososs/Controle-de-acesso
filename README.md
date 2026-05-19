@@ -1,6 +1,6 @@
 # access-control-api
 
-Backend base enterprise para controle de acesso do Sport Club do Recife, preparado para integração operacional futura com controladoras Intelbras. Nesta etapa a comunicação Intelbras real ainda não foi implementada: eventos, sincronização e webhooks estão estruturados em modo preparado/simulado.
+Backend base enterprise para plataforma multiempresa de controle de acesso, preparado para integração operacional futura com controladoras Intelbras. Nesta etapa a comunicação Intelbras real ainda não foi implementada: eventos, sincronização e webhooks estão estruturados em modo preparado/simulado.
 
 ## Stack
 
@@ -48,7 +48,7 @@ curl http://localhost:8080/api/health
 
 Usuário inicial de desenvolvimento:
 
-- Email: `admin@sport.local`
+- Email: `admin@empresa.local`
 - Senha: `Admin@123456`
 - Role: `ADMIN`
 
@@ -65,7 +65,7 @@ Fluxo JWT:
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@sport.local","password":"Admin@123456"}' \
+  -d '{"email":"admin@empresa.local","password":"Admin@123456"}' \
   | jq -r '.accessToken')
 
 curl http://localhost:8080/api/auth/me \
@@ -136,7 +136,7 @@ cd frontend && npm run dev
 Roteiro recomendado:
 
 1. Abrir `http://localhost:3000/login`.
-2. Entrar com `admin@sport.local` e `Admin@123456`.
+2. Entrar com `admin@empresa.local` e `Admin@123456`.
 3. Criar uma área em `http://localhost:3000/areas`.
 4. Criar um dispositivo em `http://localhost:3000/devices`, vinculado à área criada.
 5. Criar um colaborador em `http://localhost:3000/employees`.
@@ -215,7 +215,7 @@ Criar colaborador:
 curl -X POST http://localhost:8080/api/employees \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"fullName":"Leao da Ilha","cpf":"00000000000","email":"leao@sport.com.br","status":"ACTIVE"}'
+  -d '{"fullName":"Colaborador Exemplo","cpf":"00000000000","email":"colaborador@empresa.local","status":"ACTIVE"}'
 ```
 
 Criar área:

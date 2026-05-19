@@ -64,10 +64,10 @@ export default function EmployeesPage() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Buscar por nome, CPF ou email"
-              className="h-10 w-full rounded-lg border border-slate-300 bg-white pl-10 pr-3 text-sm outline-none focus:border-sport-red"
+              className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.055] pl-10 pr-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-brand-wine focus:bg-white/[0.08]"
             />
           </div>
-          {message ? <p className="text-sm font-medium text-slate-700">{message}</p> : null}
+          {message ? <p className="text-sm font-medium text-slate-300">{message}</p> : null}
         </CardContent>
       </Card>
       {employees.isLoading ? <LoadingState label="Carregando colaboradores..." /> : null}
@@ -83,7 +83,7 @@ export default function EmployeesPage() {
           data={filteredEmployees}
           getRowKey={(employee) => employee.id}
           columns={[
-            { key: "name", header: "Nome", className: "px-4 py-3 font-semibold text-slate-950", render: (employee) => employee.fullName },
+            { key: "name", header: "Nome", className: "font-semibold text-slate-100", render: (employee) => employee.fullName },
             { key: "cpf", header: "CPF", render: (employee) => employee.cpf },
             { key: "email", header: "Email", render: (employee) => employee.email ?? "Nao informado" },
             { key: "status", header: "Status", render: (employee) => <StatusBadge value={employee.status} /> },

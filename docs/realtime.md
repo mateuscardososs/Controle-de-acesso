@@ -19,7 +19,7 @@ Eventos criados por `/api/access-events/simulate` ou `/api/simulator/access-even
   "id": "uuid",
   "personType": "EMPLOYEE",
   "personId": "uuid",
-  "personName": "Leao da Ilha",
+  "personName": "Colaborador Exemplo",
   "personCpf": "00000000000",
   "deviceId": "uuid",
   "deviceName": "Catraca Social 01",

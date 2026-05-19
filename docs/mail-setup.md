@@ -6,7 +6,7 @@ O envio de e-mails transacionais e opcional. Em desenvolvimento, o padrão e nã
 
 ```env
 APP_MAIL_ENABLED=false
-APP_MAIL_FROM=no-reply@sport.local
+APP_MAIL_FROM=no-reply@empresa.local
 FRONTEND_PUBLIC_BASE_URL=http://localhost:3000
 
 SMTP_HOST=localhost
@@ -45,7 +45,7 @@ Use o botão de copiar link na tela `/guests`.
 
 ```env
 APP_MAIL_ENABLED=true
-APP_MAIL_FROM=no-reply@sport.local
+APP_MAIL_FROM=no-reply@empresa.local
 SMTP_HOST=sandbox.smtp.mailtrap.io
 SMTP_PORT=2525
 SMTP_USERNAME=seu_usuario_mailtrap

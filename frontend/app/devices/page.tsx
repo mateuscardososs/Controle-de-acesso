@@ -51,7 +51,7 @@ export default function DevicesPage() {
         description="Catracas, controladoras e pontos de acesso vinculados as areas fisicas."
         actions={<Button icon={Plus} onClick={() => setOpen(true)}>Novo dispositivo</Button>}
       />
-      {message ? <div className="mb-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-sm">{message}</div> : null}
+      {message ? <div className="mb-4 rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm font-medium text-slate-300 shadow-sm">{message}</div> : null}
       {devices.isLoading ? <LoadingState label="Carregando dispositivos..." /> : null}
       {devices.isError ? <ErrorState label="Não foi possível carregar os dispositivos." /> : null}
       {!devices.isLoading && !devices.isError && devices.data?.length === 0 ? (
@@ -60,21 +60,21 @@ export default function DevicesPage() {
       {!devices.isLoading && !devices.isError && devices.data && devices.data.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {devices.data?.map((device) => (
-            <Card key={device.id} className={device.status === "OFFLINE" || device.status === "UNKNOWN" ? "border-amber-200" : undefined}>
+            <Card key={device.id} className={device.status === "OFFLINE" || device.status === "UNKNOWN" ? "border-amber-300/25" : undefined}>
               <CardContent>
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-700">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/[0.06] text-slate-300">
                       <Router className="h-5 w-5" />
                     </div>
                     <div>
-                      <p className="font-semibold text-slate-950">{device.name}</p>
+                      <p className="font-semibold text-slate-50">{device.name}</p>
                       <p className="mt-1 text-sm text-slate-500">{device.model ?? "Modelo nao informado"}</p>
                     </div>
                   </div>
                   <StatusBadge value={device.status} />
                 </div>
-                <div className="mt-5 grid gap-3 text-sm text-slate-600">
+                <div className="mt-5 grid gap-3 text-sm text-slate-400">
                   <p className="flex items-center gap-2"><Wifi className="h-4 w-4 text-slate-400" /> {device.ipAddress}</p>
                   <p className="flex items-center gap-2"><MapPin className="h-4 w-4 text-slate-400" /> {device.areaName} · {device.location ?? "Sem local"}</p>
                   <p className="flex items-center gap-2"><Cpu className="h-4 w-4 text-slate-400" /> Ultima comunicacao: nao informada</p>

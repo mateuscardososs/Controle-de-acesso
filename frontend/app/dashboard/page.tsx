@@ -17,6 +17,34 @@ import { useEffect } from "react";
 import { useRealtime } from "@/src/hooks/useRealtime";
 import { RealtimeIndicator } from "@/src/components/shared/RealtimeIndicator";
 import { RealtimeFeed } from "@/src/components/shared/RealtimeFeed";
+import { Area, AreaChart, ResponsiveContainer, Tooltip } from "recharts";
+
+function metricTrend(value: number) {
+  const safeValue = Math.max(value, 1);
+  return [0.38, 0.52, 0.48, 0.68, 0.61, 0.82, 1].map((factor, index) => ({
+    name: index,
+    value: Math.max(1, Math.round(safeValue * factor))
+  }));
+}
+
+function Sparkline({ value }: { value: number }) {
+  return (
+    <div className="h-12 w-24">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={metricTrend(value)}>
+          <defs>
+            <linearGradient id={`spark-${value}`} x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#B43A4B" stopOpacity={0.52} />
+              <stop offset="100%" stopColor="#B43A4B" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <Tooltip contentStyle={{ display: "none" }} cursor={false} />
+          <Area dataKey="value" stroke="#B43A4B" strokeWidth={2} fill={`url(#spark-${value})`} dot={false} isAnimationActive />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
 
 export default function DashboardPage() {
   const queryClient = useQueryClient();
@@ -51,16 +79,25 @@ export default function DashboardPage() {
       {!summary.isLoading && !summary.isError ? (
         <div className="space-y-6">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatCard title="Colaboradores ativos" value={summary.data?.totalEmployees ?? 0} icon={IdCard} description="Base cadastrada para regras de acesso" />
-            <StatCard title="Dispositivos cadastrados" value={summary.data?.totalDevices ?? 0} icon={MonitorCog} description="Catracas e controladoras integradas" />
-            <StatCard title="Eventos hoje" value={summary.data?.todayEvents ?? 0} icon={CalendarClock} description="Fluxo operacional do dia" />
-            <StatCard title="Acessos negados" value={summary.data?.deniedAccesses ?? 0} icon={ShieldAlert} description="Ocorrencias que pedem acompanhamento" />
+            {[
+              { title: "Colaboradores ativos", value: summary.data?.totalEmployees ?? 0, icon: IdCard, description: "Base cadastrada" },
+              { title: "Dispositivos", value: summary.data?.totalDevices ?? 0, icon: MonitorCog, description: "Catracas e controladoras" },
+              { title: "Eventos hoje", value: summary.data?.todayEvents ?? 0, icon: CalendarClock, description: "Movimento do dia" },
+              { title: "Acessos negados", value: summary.data?.deniedAccesses ?? 0, icon: ShieldAlert, description: "Requer acompanhamento" }
+            ].map((item) => (
+              <div key={item.title} className="relative">
+                <StatCard title={item.title} value={item.value} icon={item.icon} description={item.description} />
+                <div className="pointer-events-none absolute bottom-5 right-5">
+                  <Sparkline value={Number(item.value)} />
+                </div>
+              </div>
+            ))}
           </div>
 
           <div className="grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
             <section>
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-base font-semibold text-slate-950">Eventos recentes</h2>
+                <h2 className="text-base font-semibold text-slate-50">Eventos recentes</h2>
                 <Badge tone="slate">{recentEvents.length} registros</Badge>
               </div>
               {events.isLoading ? <LoadingState label="Carregando eventos recentes..." /> : null}
@@ -84,15 +121,15 @@ export default function DashboardPage() {
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
-                    <h2 className="text-base font-semibold text-slate-950">Status dos dispositivos</h2>
-                    <RadioTower className="h-5 w-5 text-sport-red" />
+                    <h2 className="text-base font-semibold text-slate-50">Status dos dispositivos</h2>
+                    <RadioTower className="h-5 w-5 text-brand-wine" />
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {(devices.data ?? []).slice(0, 5).map((device) => (
-                    <div key={device.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                    <div key={device.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.045] px-3 py-2">
                       <div>
-                        <p className="text-sm font-semibold text-slate-900">{device.name}</p>
+                        <p className="text-sm font-semibold text-slate-100">{device.name}</p>
                         <p className="text-xs text-slate-500">{device.areaName} · {device.ipAddress}</p>
                       </div>
                       <StatusBadge value={device.status} />
@@ -105,22 +142,22 @@ export default function DashboardPage() {
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
-                    <h2 className="text-base font-semibold text-slate-950">Alertas operacionais</h2>
-                    <Activity className="h-5 w-5 text-sport-red" />
+                    <h2 className="text-base font-semibold text-slate-50">Alertas operacionais</h2>
+                    <Activity className="h-5 w-5 text-brand-wine" />
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {offlineDevices.length > 0 ? (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-900">
+                    <div className="rounded-2xl border border-amber-300/20 bg-amber-400/12 p-3 text-sm font-medium text-amber-100">
                       {offlineDevices.length} dispositivo(s) offline ou sem status confirmado.
                     </div>
                   ) : (
-                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-800">
+                    <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/12 p-3 text-sm font-medium text-emerald-100">
                       Nenhum alerta critico identificado nos dados atuais.
                     </div>
                   )}
                   {(summary.data?.deniedAccesses ?? 0) > 0 ? (
-                    <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-800">
+                    <div className="rounded-2xl border border-red-300/20 bg-red-500/12 p-3 text-sm font-medium text-red-100">
                       Existem acessos negados acumulados para revisao da seguranca.
                     </div>
                   ) : null}

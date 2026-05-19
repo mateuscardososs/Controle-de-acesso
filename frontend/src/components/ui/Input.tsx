@@ -9,18 +9,18 @@ type InputProps = InputHTMLAttributes<HTMLInputElement> & {
 export function Input({ label, error, className, id, ...props }: InputProps) {
   const inputId = id ?? props.name ?? label.toLowerCase().replace(/\s+/g, "-");
   return (
-    <label htmlFor={inputId} className="block text-sm font-medium text-slate-700">
+    <label htmlFor={inputId} className="block text-sm font-medium text-slate-300">
       <span>{label}</span>
       <input
         id={inputId}
         className={clsx(
-          "mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-sport-red",
-          error && "border-red-300 bg-red-50/40",
+          "mt-1 h-10 w-full rounded-xl border border-white/10 bg-white/[0.055] px-3 text-sm text-slate-100 shadow-sm outline-none transition placeholder:text-slate-500 focus:border-brand-wine focus:bg-white/[0.08]",
+          error && "border-red-300/40 bg-red-500/10",
           className
         )}
         {...props}
       />
-      {error ? <span className="mt-1 block text-xs font-medium text-red-700">{error}</span> : null}
+      {error ? <span className="mt-1 block text-xs font-medium text-red-200">{error}</span> : null}
     </label>
   );
 }
@@ -32,11 +32,11 @@ type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & {
 export function Select({ label, className, id, children, ...props }: SelectProps) {
   const inputId = id ?? props.name ?? label.toLowerCase().replace(/\s+/g, "-");
   return (
-    <label htmlFor={inputId} className="block text-sm font-medium text-slate-700">
+    <label htmlFor={inputId} className="block text-sm font-medium text-slate-300">
       <span>{label}</span>
       <select
         id={inputId}
-        className={clsx("mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950 shadow-sm outline-none transition focus:border-sport-red", className)}
+        className={clsx("mt-1 h-10 w-full rounded-xl border border-white/10 bg-white/[0.055] px-3 text-sm text-slate-100 shadow-sm outline-none transition focus:border-brand-wine focus:bg-white/[0.08]", className)}
         {...props}
       >
         {children}
@@ -52,11 +52,11 @@ type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> & {
 export function Textarea({ label, className, id, ...props }: TextareaProps) {
   const inputId = id ?? props.name ?? label.toLowerCase().replace(/\s+/g, "-");
   return (
-    <label htmlFor={inputId} className="block text-sm font-medium text-slate-700">
+    <label htmlFor={inputId} className="block text-sm font-medium text-slate-300">
       <span>{label}</span>
       <textarea
         id={inputId}
-        className={clsx("mt-1 min-h-24 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-sport-red", className)}
+        className={clsx("mt-1 min-h-24 w-full rounded-xl border border-white/10 bg-white/[0.055] px-3 py-2 text-sm text-slate-100 shadow-sm outline-none transition placeholder:text-slate-500 focus:border-brand-wine focus:bg-white/[0.08]", className)}
         {...props}
       />
     </label>

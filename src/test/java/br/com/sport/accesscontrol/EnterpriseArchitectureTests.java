@@ -109,7 +109,7 @@ class EnterpriseArchitectureTests {
     void simulatorTranslatesCpfIntoAccessEventSimulation() {
         var employeeRepository = mock(EmployeeRepository.class);
         var accessEventService = mock(AccessEventService.class);
-        var employee = new Employee("Leao", "123", null, null, null, null, null, null, null);
+        var employee = new Employee("Colaborador", "123", null, null, null, null, null, null, null);
         var employeeId = UUID.randomUUID();
         ReflectionTestUtils.setField(employee, "id", employeeId);
         when(employeeRepository.findByCpf("123")).thenReturn(Optional.of(employee));
@@ -132,7 +132,7 @@ class EnterpriseArchitectureTests {
     @Test
     void realtimeAccessEventMessageIncludesEnrichedFields() {
         var employeeRepository = mock(EmployeeRepository.class);
-        var employee = new Employee("Leao", "123", null, null, null, null, null, null, null);
+        var employee = new Employee("Colaborador", "123", null, null, null, null, null, null, null);
         var employeeId = UUID.randomUUID();
         ReflectionTestUtils.setField(employee, "id", employeeId);
         when(employeeRepository.findById(employeeId)).thenReturn(Optional.of(employee));
@@ -145,7 +145,7 @@ class EnterpriseArchitectureTests {
         var message = mapper.toMessage(event);
 
         assertThat(message.id()).isEqualTo(event.getId());
-        assertThat(message.personName()).isEqualTo("Leao");
+        assertThat(message.personName()).isEqualTo("Colaborador");
         assertThat(message.personCpf()).isEqualTo("123");
         assertThat(message.deviceName()).isEqualTo("Catraca Social");
         assertThat(message.areaName()).isEqualTo("Social");
@@ -306,7 +306,7 @@ class EnterpriseArchitectureTests {
         var service = new GuestService(mock(GuestRepository.class), inviteRepository, faceStorage, auditService,
                 realtimePublisher, mailService, mock(ApplicationEventPublisher.class), "http://localhost:3000", 72);
 
-        var response = service.completeRegistration("token", "81999990000", "Sport", png());
+        var response = service.completeRegistration("token", "81999990000", "Empresa", png());
 
         assertThat(response.status()).isEqualTo(GuestStatus.COMPLETED);
         assertThat(response.facePhotoUrl()).isEqualTo("/uploads/faces/photo.png");
@@ -355,7 +355,7 @@ class EnterpriseArchitectureTests {
 
     @Test
     void intelbrasSyncWorkerMarksEmployeeSyncedAndPublishesAuditAndRealtime() {
-        var employee = new Employee("Leao", "123", null, null, null, null, null, null, null);
+        var employee = new Employee("Colaborador", "123", null, null, null, null, null, null, null);
         ReflectionTestUtils.setField(employee, "id", UUID.randomUUID());
         var employeeRepository = mock(EmployeeRepository.class);
         var provider = mock(AccessControlProvider.class);
@@ -376,7 +376,7 @@ class EnterpriseArchitectureTests {
     @Test
     void intelbrasSyncWorkerRetriesThenSendsToDlqAfterMaxAttempts() {
         var guest = guest();
-        guest.completeRegistration("81999990000", "Sport", "/uploads/faces/photo.png");
+        guest.completeRegistration("81999990000", "Empresa", "/uploads/faces/photo.png");
         var guestRepository = mock(GuestRepository.class);
         var provider = mock(AccessControlProvider.class);
         var publisher = mock(IntegrationEventPublisher.class);
@@ -457,9 +457,9 @@ class EnterpriseArchitectureTests {
         return new GuestDtos.GuestRequest(
                 "Visitante",
                 "123",
-                "visitante@sport.com.br",
+                "visitante@empresa.local",
                 "81999990000",
-                "Sport",
+                "Empresa",
                 "Reuniao",
                 "Host",
                 Instant.now().plusSeconds(3600),
@@ -469,7 +469,7 @@ class EnterpriseArchitectureTests {
     }
 
     private Guest guest() {
-        var guest = new Guest("Visitante", "123", "visitante@sport.com.br", null, "Sport", "Reuniao",
+        var guest = new Guest("Visitante", "123", "visitante@empresa.local", null, "Empresa", "Reuniao",
                 "Host", Instant.now().minusSeconds(7200), Instant.now().minusSeconds(3600));
         ReflectionTestUtils.setField(guest, "id", UUID.randomUUID());
         return guest;

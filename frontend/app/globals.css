@@ -3,19 +3,40 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
-  --sport-red: #8f1218;
-  --sport-red-strong: #6f0d13;
-  --sport-ink: #111827;
-  --surface: #ffffff;
-  --page: #f3f4f6;
+  color-scheme: dark;
+  --background: #0b1020;
+  --background-soft: #111827;
+  --surface: rgba(26, 34, 54, 0.82);
+  --surface-strong: rgba(17, 24, 39, 0.94);
+  --surface-hover: rgba(35, 45, 66, 0.78);
+  --border: rgba(148, 163, 184, 0.16);
+  --border-strong: rgba(226, 232, 240, 0.22);
+  --text: #f8fafc;
+  --muted: #94a3b8;
+  --muted-strong: #cbd5e1;
+  --brand-red: #9a1b2e;
+  --brand-red-strong: #7f1424;
+  --brand-wine: #b43a4b;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #fb7185;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --shadow-soft: 0 18px 60px rgba(0, 0, 0, 0.32);
+  --motion-fast: 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  --motion-base: 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 body {
   background:
-    radial-gradient(circle at top left, rgba(143, 18, 24, 0.08), transparent 32rem),
-    linear-gradient(180deg, #f8fafc 0%, var(--page) 100%);
-  color: #111827;
+    radial-gradient(circle at 16% 0%, rgba(154, 27, 46, 0.24), transparent 30rem),
+    radial-gradient(circle at 88% 12%, rgba(59, 130, 246, 0.11), transparent 28rem),
+    linear-gradient(180deg, #0b1020 0%, #0d1425 46%, #080d19 100%);
+  color: var(--text);
+  min-height: 100vh;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
 }
 
 button,
@@ -30,6 +51,28 @@ textarea {
 }
 
 *:focus-visible {
-  outline: 2px solid rgba(143, 18, 24, 0.8);
+  outline: 2px solid rgba(180, 58, 75, 0.9);
   outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(180, 58, 75, 0.45);
+}
+
+@layer utilities {
+  .enterprise-surface {
+    background: linear-gradient(180deg, rgba(26, 34, 54, 0.86), rgba(17, 24, 39, 0.86));
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-soft);
+    backdrop-filter: blur(18px);
+  }
+
+  .enterprise-panel {
+    background: rgba(15, 23, 42, 0.62);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
 }

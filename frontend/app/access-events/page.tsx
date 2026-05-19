@@ -86,16 +86,16 @@ export default function AccessEventsPage() {
           />
           <Card>
             <CardHeader>
-              <h2 className="text-base font-semibold text-slate-950">Feed recente</h2>
+              <h2 className="text-base font-semibold text-slate-50">Feed recente</h2>
             </CardHeader>
             <CardContent className="space-y-3">
               {filteredEvents.slice(0, 6).map((event) => (
-                <div key={event.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <div key={event.id} className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <StatusBadge value={event.accessResult} />
                     <span className="text-xs font-medium text-slate-500">{new Date(event.eventTime).toLocaleTimeString("pt-BR")}</span>
                   </div>
-                  <p className="text-sm font-semibold text-slate-950">{employeeById.get(event.personId) ?? "Pessoa nao identificada"}</p>
+                  <p className="text-sm font-semibold text-slate-100">{employeeById.get(event.personId) ?? "Pessoa nao identificada"}</p>
                   <p className="mt-1 text-xs text-slate-500">{deviceById.get(event.deviceId) ?? "Dispositivo"} · {areaById.get(event.areaId) ?? "Area"}</p>
                 </div>
               ))}

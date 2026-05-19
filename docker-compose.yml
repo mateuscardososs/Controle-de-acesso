@@ -45,7 +45,7 @@ services:
     profiles:
       - tools
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@sport.com.br
+      PGADMIN_DEFAULT_EMAIL: admin@empresa.local
       PGADMIN_DEFAULT_PASSWORD: access_pass
     ports:
       - "5050:80"

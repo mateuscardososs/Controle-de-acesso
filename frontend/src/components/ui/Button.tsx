@@ -11,10 +11,10 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const variants: Record<ButtonVariant, string> = {
-  primary: "bg-sport-red text-white shadow-sm shadow-red-950/10 hover:bg-sport-maroon",
-  secondary: "border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50",
-  ghost: "text-slate-700 hover:bg-slate-100",
-  danger: "bg-red-700 text-white shadow-sm hover:bg-red-800"
+  primary: "border border-red-300/20 bg-gradient-to-b from-brand-wine to-brand-maroon text-white shadow-lg shadow-red-950/20 hover:brightness-110",
+  secondary: "border border-white/10 bg-white/[0.055] text-slate-100 shadow-sm hover:border-white/20 hover:bg-white/[0.09]",
+  ghost: "text-slate-300 hover:bg-white/[0.07] hover:text-white",
+  danger: "border border-red-300/20 bg-red-500/16 text-red-100 shadow-sm hover:bg-red-500/24"
 };
 
 export function Button({ variant = "primary", loading, icon: Icon, className, children, disabled, type = "button", ...props }: ButtonProps) {
@@ -23,7 +23,7 @@ export function Button({ variant = "primary", loading, icon: Icon, className, ch
       type={type}
       disabled={disabled || loading}
       className={clsx(
-        "inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60",
+        "inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition duration-200 disabled:cursor-not-allowed disabled:opacity-50",
         variants[variant],
         className
       )}

@@ -14,6 +14,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const { data: user, isError, isLoading } = useQuery({
     queryKey: ["me"],
     queryFn: authService.me,
@@ -39,7 +40,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
   if (isLoading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100 p-4">
+      <main className="flex min-h-screen items-center justify-center p-4">
         <div className="w-full max-w-sm">
           <LoadingState label="Carregando sessão..." />
         </div>
@@ -48,11 +49,19 @@ export function AdminShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100">
-      <Sidebar items={visibleItems} pathname={pathname} role={user?.role} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-      <div className="lg:pl-72">
+    <div className="min-h-screen">
+      <Sidebar
+        items={visibleItems}
+        pathname={pathname}
+        role={user?.role}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        collapsed={collapsed}
+        onToggleCollapsed={() => setCollapsed((value) => !value)}
+      />
+      <div className={collapsed ? "transition-all duration-300 lg:pl-24" : "transition-all duration-300 lg:pl-72"}>
         <Topbar user={user} onMenu={() => setSidebarOpen(true)} onLogout={authService.logout} />
-        <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+        <main className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8">{children}</main>
       </div>
     </div>
   );

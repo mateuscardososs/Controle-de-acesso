@@ -68,7 +68,7 @@ class AccessControlApiApplicationTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "email": "admin@sport.local",
+                                  "email": "admin@empresa.local",
                                   "password": "Admin@123456"
                                 }
                                 """))
@@ -84,7 +84,7 @@ class AccessControlApiApplicationTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "email": "admin@sport.local",
+                                  "email": "admin@empresa.local",
                                   "password": "wrong"
                                 }
                                 """))
@@ -106,7 +106,7 @@ class AccessControlApiApplicationTests {
 
     @Test
     void hrAccessesEmployees() throws Exception {
-        var token = tokenForRegisteredUser("hr-" + UUID.randomUUID() + "@sport.local", "HR");
+        var token = tokenForRegisteredUser("hr-" + UUID.randomUUID() + "@empresa.local", "HR");
 
         mockMvc.perform(get("/api/employees")
                         .header("Authorization", "Bearer " + token))
@@ -115,7 +115,7 @@ class AccessControlApiApplicationTests {
 
     @Test
     void securityViewerDoesNotCreateEmployee() throws Exception {
-        var token = tokenForRegisteredUser("viewer-" + UUID.randomUUID() + "@sport.local", "SECURITY_VIEWER");
+        var token = tokenForRegisteredUser("viewer-" + UUID.randomUUID() + "@empresa.local", "SECURITY_VIEWER");
 
         mockMvc.perform(post("/api/employees")
                         .header("Authorization", "Bearer " + token)
@@ -126,7 +126,7 @@ class AccessControlApiApplicationTests {
 
     @Test
     void securityViewerAccessesDashboardSummary() throws Exception {
-        var token = tokenForRegisteredUser("viewer-" + UUID.randomUUID() + "@sport.local", "SECURITY_VIEWER");
+        var token = tokenForRegisteredUser("viewer-" + UUID.randomUUID() + "@empresa.local", "SECURITY_VIEWER");
 
         mockMvc.perform(get("/api/dashboard/summary")
                         .header("Authorization", "Bearer " + token))
@@ -192,7 +192,7 @@ class AccessControlApiApplicationTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(employeePayload()))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.fullName").value("Leao da Ilha"))
+                .andExpect(jsonPath("$.fullName").value("Colaborador Exemplo"))
                 .andExpect(jsonPath("$.status").value("ACTIVE"))
                 .andReturn();
 
@@ -203,11 +203,11 @@ class AccessControlApiApplicationTests {
         var cpf = "000" + Math.abs(UUID.randomUUID().hashCode());
         return """
                 {
-                  "fullName": "Leao da Ilha",
+                  "fullName": "Colaborador Exemplo",
                   "cpf": "%s",
-                  "email": "leao.%s@sport.com.br",
+                  "email": "colaborador.%s@empresa.local",
                   "phone": "81999990000",
-                  "registrationNumber": "SCR-%s",
+                  "registrationNumber": "EMP-%s",
                   "status": "ACTIVE"
                 }
                 """.formatted(cpf, cpf, cpf);
@@ -264,7 +264,7 @@ class AccessControlApiApplicationTests {
     }
 
     private String adminToken() throws Exception {
-        return login("admin@sport.local", "Admin@123456");
+        return login("admin@empresa.local", "Admin@123456");
     }
 
     private String tokenForRegisteredUser(String email, String role) throws Exception {

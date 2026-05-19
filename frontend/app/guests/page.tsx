@@ -109,7 +109,7 @@ export default function GuestsPage() {
         <CardContent className="grid gap-3 lg:grid-cols-[1fr_220px]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nome, CPF, empresa ou host" className="h-10 w-full rounded-lg border border-slate-300 bg-white pl-10 pr-3 text-sm outline-none focus:border-sport-red" />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nome, CPF, empresa ou host" className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.055] pl-10 pr-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-brand-wine focus:bg-white/[0.08]" />
           </div>
           <Select label="Status" value={status} onChange={(event) => setStatus(event.target.value as typeof status)}>
             {statuses.map((item) => <option key={item} value={item}>{item === "ALL" ? "Todos" : item}</option>)}
@@ -117,7 +117,7 @@ export default function GuestsPage() {
         </CardContent>
       </Card>
 
-      {message ? <div className="mb-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 shadow-sm">{message}</div> : null}
+      {message ? <div className="mb-4 rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm font-medium text-slate-300 shadow-sm">{message}</div> : null}
       {guests.isLoading ? <LoadingState label="Carregando visitantes..." /> : null}
       {guests.isError ? <ErrorState label="Não foi possível carregar visitantes." /> : null}
       {!guests.isLoading && !guests.isError && guests.data?.length === 0 ? <EmptyState label="Nenhum visitante cadastrado." description="Crie um convite para iniciar o cadastro facial." /> : null}
@@ -126,7 +126,7 @@ export default function GuestsPage() {
           data={filteredGuests}
           getRowKey={(guest) => guest.id}
           columns={[
-            { key: "name", header: "Visitante", className: "px-4 py-3 font-semibold text-slate-950", render: (guest) => guest.fullName },
+            { key: "name", header: "Visitante", className: "font-semibold text-slate-100", render: (guest) => guest.fullName },
             { key: "company", header: "Empresa", render: (guest) => guest.company ?? "Nao informada" },
             { key: "host", header: "Responsavel", render: (guest) => guest.hostName },
             { key: "visit", header: "Visita", render: (guest) => <span className="inline-flex items-center gap-2"><CalendarDays className="h-4 w-4 text-slate-400" />{new Date(guest.visitStart).toLocaleString("pt-BR")}</span> },
@@ -178,32 +178,32 @@ export default function GuestsPage() {
           <div className="space-y-4">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-950">{details.fullName}</h2>
+                <h2 className="text-lg font-semibold text-slate-50">{details.fullName}</h2>
                 <p className="text-sm text-slate-500">{details.company ?? "Sem empresa"} · {details.hostName}</p>
               </div>
               <StatusBadge value={details.status} />
             </div>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <Mail className="h-4 w-4 text-slate-500" />
-                  <p className="text-sm font-semibold text-slate-900">{emailStatusLabel(details)}</p>
+                  <p className="text-sm font-semibold text-slate-100">{emailStatusLabel(details)}</p>
                 </div>
                 {details.emailDeliveryStatus ? <StatusBadge value={details.emailDeliveryStatus} /> : null}
               </div>
               {details.emailDeliveryMessage ? <p className="mt-1 text-xs text-slate-500">{details.emailDeliveryMessage}</p> : null}
             </div>
             <div className="grid gap-3 text-sm sm:grid-cols-2">
-              <p><span className="font-semibold text-slate-700">CPF:</span> {details.cpf}</p>
-              <p><span className="font-semibold text-slate-700">Email:</span> {details.email ?? "Nao informado"}</p>
-              <p><span className="font-semibold text-slate-700">Inicio:</span> {new Date(details.visitStart).toLocaleString("pt-BR")}</p>
-              <p><span className="font-semibold text-slate-700">Fim:</span> {new Date(details.visitEnd).toLocaleString("pt-BR")}</p>
+              <p><span className="font-semibold text-slate-300">CPF:</span> {details.cpf}</p>
+              <p><span className="font-semibold text-slate-300">Email:</span> {details.email ?? "Nao informado"}</p>
+              <p><span className="font-semibold text-slate-300">Inicio:</span> {new Date(details.visitStart).toLocaleString("pt-BR")}</p>
+              <p><span className="font-semibold text-slate-300">Fim:</span> {new Date(details.visitEnd).toLocaleString("pt-BR")}</p>
             </div>
             {details.inviteToken ? (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <p className="mb-2 text-sm font-semibold text-slate-900">Link de convite</p>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
+                <p className="mb-2 text-sm font-semibold text-slate-100">Link de convite</p>
                 <div className="flex gap-2">
-                  <input readOnly value={inviteUrl(details)} className="h-10 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-sm" />
+                  <input readOnly value={inviteUrl(details)} className="h-10 flex-1 rounded-xl border border-white/10 bg-white/[0.055] px-3 text-sm text-slate-100" />
                   <Button icon={Copy} onClick={() => navigator.clipboard.writeText(inviteUrl(details))}>Copiar</Button>
                 </div>
                 {details.inviteExpiresAt ? <p className="mt-2 text-xs text-slate-500">Expira em {new Date(details.inviteExpiresAt).toLocaleString("pt-BR")}</p> : null}

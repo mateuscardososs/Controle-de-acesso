@@ -12,7 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class AdminUserSeeder implements ApplicationRunner {
 
-    static final String ADMIN_EMAIL = "admin@sport.local";
+    static final String ADMIN_EMAIL = "admin@empresa.local";
     static final String ADMIN_PASSWORD = "Admin@123456";
 
     private final UserRepository userRepository;
@@ -30,7 +30,7 @@ public class AdminUserSeeder implements ApplicationRunner {
             return;
         }
         userRepository.save(new User(
-                "Administrador Sport",
+                "Administrador",
                 ADMIN_EMAIL,
                 passwordEncoder.encode(ADMIN_PASSWORD),
                 UserRole.ADMIN,

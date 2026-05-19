@@ -42,30 +42,30 @@ export default function GuestRegistrationPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-10">
+    <main className="flex min-h-screen items-center justify-center px-4 py-10">
       <Card className="w-full max-w-2xl overflow-hidden">
-        <div className="bg-slate-950 px-6 py-7 text-white">
-          <p className="text-sm font-bold uppercase tracking-wide text-red-200">Cadastro de visitante</p>
+        <div className="border-b border-white/10 bg-[#070B15]/80 px-6 py-7 text-white">
+          <p className="text-sm font-bold uppercase tracking-[0.18em] text-red-200">Cadastro de visitante</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">Controle de Acesso</h1>
-          <p className="mt-2 text-sm text-slate-300">Sport Club do Recife</p>
+          <p className="mt-2 text-sm text-slate-300">Plataforma multiempresa</p>
         </div>
         <CardContent>
           {registration.isLoading ? <LoadingState label="Validando convite..." /> : null}
           {registration.isError ? <ErrorState label="Convite inválido, expirado ou já utilizado." /> : null}
           {registration.data && complete.isSuccess ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
-              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full border border-emerald-300/20 bg-emerald-400/12 text-emerald-200">
                 <CheckCircle2 className="h-7 w-7" />
               </div>
-              <h2 className="text-xl font-semibold text-slate-950">Cadastro concluido</h2>
+              <h2 className="text-xl font-semibold text-slate-50">Cadastro concluido</h2>
               <p className="mt-2 text-sm text-slate-500">{message}</p>
             </div>
           ) : null}
           {registration.data && !complete.isSuccess ? (
             <form onSubmit={submit} className="grid gap-5">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <h2 className="text-lg font-semibold text-slate-950">{registration.data.fullName}</h2>
-                <p className="mt-1 text-sm text-slate-600">{registration.data.visitReason} · Responsavel: {registration.data.hostName}</p>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-4">
+                <h2 className="text-lg font-semibold text-slate-50">{registration.data.fullName}</h2>
+                <p className="mt-1 text-sm text-slate-400">{registration.data.visitReason} · Responsavel: {registration.data.hostName}</p>
                 <p className="mt-2 text-xs font-medium text-slate-500">
                   {new Date(registration.data.visitStart).toLocaleString("pt-BR")} ate {new Date(registration.data.visitEnd).toLocaleString("pt-BR")}
                 </p>
@@ -75,15 +75,15 @@ export default function GuestRegistrationPage() {
                 <Input label="Empresa" value={company} onChange={(event) => setCompany(event.target.value)} />
               </div>
               <label className="block">
-                <span className="mb-2 block text-sm font-semibold text-slate-700">Foto facial</span>
-                <div className="flex min-h-52 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center transition hover:border-sport-red hover:bg-red-50/30">
+                <span className="mb-2 block text-sm font-semibold text-slate-300">Foto facial</span>
+                <div className="flex min-h-52 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-white/15 bg-white/[0.045] p-6 text-center transition hover:border-brand-wine/70 hover:bg-red-500/10">
                   <input className="sr-only" type="file" accept="image/png,image/jpeg,image/webp" onChange={onFile} />
                   {preview ? (
                     <img src={preview} alt="Preview da foto facial" className="h-44 w-44 rounded-2xl object-cover shadow-sm" />
                   ) : (
                     <>
                       <UploadCloud className="h-10 w-10 text-slate-400" />
-                      <p className="mt-3 text-sm font-semibold text-slate-800">Clique para enviar uma imagem</p>
+                      <p className="mt-3 text-sm font-semibold text-slate-100">Clique para enviar uma imagem</p>
                       <p className="mt-1 text-xs text-slate-500">PNG, JPG ou WEBP ate 5MB</p>
                     </>
                   )}

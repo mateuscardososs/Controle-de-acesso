@@ -37,8 +37,8 @@ export function AccessEventSimulator({ onSuccess }: { onSuccess?: () => void }) 
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
-          <PlayCircle className="h-5 w-5 text-sport-red" />
-          <h2 className="text-base font-semibold text-slate-950">Simular evento</h2>
+          <PlayCircle className="h-5 w-5 text-brand-wine" />
+          <h2 className="text-base font-semibold text-slate-50">Simular evento</h2>
         </div>
       </CardHeader>
       <CardContent>
@@ -66,7 +66,7 @@ export function AccessEventSimulator({ onSuccess }: { onSuccess?: () => void }) 
             </Select>
           </div>
           {simulate.isError ? <ErrorState label={message} /> : null}
-          {simulate.isSuccess ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">{message}</div> : null}
+          {simulate.isSuccess ? <div className="rounded-xl border border-emerald-300/20 bg-emerald-400/12 px-3 py-2 text-sm font-medium text-emerald-100">{message}</div> : null}
           <Button type="submit" loading={simulate.isPending} disabled={devices.isLoading}>
             Simular evento
           </Button>
