@@ -1,94 +1,91 @@
 package br.com.sport.accesscontrol.integration.intelbras.service;
 
-import br.com.sport.accesscontrol.common.PersonType;
-import br.com.sport.accesscontrol.employees.EmployeeRepository;
 import br.com.sport.accesscontrol.events.AccessEventService;
-import br.com.sport.accesscontrol.guests.GuestRepository;
 import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasCgiClient;
+import br.com.sport.accesscontrol.integration.intelbras.config.IntelbrasProperties;
 import br.com.sport.accesscontrol.integration.intelbras.mapper.IntelbrasEventMapper;
-import br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasPersonIdentity;
+import br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasDeviceConnection;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 @Service
 public class IntelbrasEventImportService {
 
+    private static final Logger log = LoggerFactory.getLogger(IntelbrasEventImportService.class);
+
     private final IntelbrasDeviceConnectionService connectionService;
     private final IntelbrasCgiClient cgiClient;
+    private final IntelbrasProperties properties;
     private final IntelbrasEventMapper eventMapper;
+    private final IntelbrasPersonResolver personResolver;
     private final AccessEventService accessEventService;
-    private final EmployeeRepository employeeRepository;
-    private final GuestRepository guestRepository;
 
     public IntelbrasEventImportService(IntelbrasDeviceConnectionService connectionService, IntelbrasCgiClient cgiClient,
-                                       IntelbrasEventMapper eventMapper, AccessEventService accessEventService,
-                                       EmployeeRepository employeeRepository, GuestRepository guestRepository) {
+                                       IntelbrasProperties properties, IntelbrasEventMapper eventMapper, AccessEventService accessEventService,
+                                       IntelbrasPersonResolver personResolver) {
         this.connectionService = connectionService;
         this.cgiClient = cgiClient;
+        this.properties = properties;
         this.eventMapper = eventMapper;
+        this.personResolver = personResolver;
         this.accessEventService = accessEventService;
-        this.employeeRepository = employeeRepository;
-        this.guestRepository = guestRepository;
     }
 
     @Transactional
     public IntelbrasEventImportResult importAccessControlEvents(UUID deviceId) {
         var connection = connectionService.connectionFor(deviceId);
+        return importAccessControlEvents(connection);
+    }
+
+    @Transactional
+    public IntelbrasEventImportResult importOnlineAccessControlEvents() {
+        if (properties.getMode() != IntelbrasProperties.Mode.REAL) {
+            log.info("event_polling_started enabled=false reason=mode_not_real mode={}", properties.getMode());
+            return new IntelbrasEventImportResult(null, 0, 0, 0, 0);
+        }
+        var connections = connectionService.onlineConfiguredDevices();
+        log.info("event_polling_started devices={}", connections.size());
+
+        var received = 0;
+        var imported = 0;
+        var skipped = 0;
+        for (var connection : connections) {
+            var result = importAccessControlEvents(connection);
+            received += result.received();
+            imported += result.imported();
+            skipped += result.skipped();
+        }
+        log.info("events_imported devices={} received={} imported={} skipped={}",
+                connections.size(), received, imported, skipped);
+        return new IntelbrasEventImportResult(null, received, imported, skipped, connections.size());
+    }
+
+    private IntelbrasEventImportResult importAccessControlEvents(IntelbrasDeviceConnection connection) {
         if (!connection.configured()) {
             throw new IllegalArgumentException("Intelbras device credentials are not configured.");
         }
         var records = cgiClient.findAccessControlEvents(connection.host(), connection.username(), connection.password());
+        log.info("events_found device_id={} count={}", connection.device().getId(), records.size());
         var imported = 0;
         var skipped = 0;
         for (Map<String, Object> record : records) {
             var parsed = eventMapper.parseAccessControlCardRec(record);
-            var normalized = eventMapper.normalizeAccessControlCardRec(record, connection.device(), resolve(parsed.userId(), parsed.cardName()));
+            var normalized = eventMapper.normalizeAccessControlCardRec(record, connection.device(), personResolver.resolve(connection.device(), parsed));
             if (accessEventService.recordImported(normalized).isPresent()) {
                 imported++;
+                log.info("events_imported device_id={} rec_no={} user_id={} status={} method={} door={}",
+                        connection.device().getId(), parsed.recNo(), parsed.userId(), parsed.status(), parsed.method(), parsed.door());
             } else {
                 skipped++;
+                log.info("events_skipped_duplicate device_id={} rec_no={} user_id={} create_time={} door={}",
+                        connection.device().getId(), parsed.recNo(), parsed.userId(), parsed.createTime(), parsed.door());
             }
         }
-        return new IntelbrasEventImportResult(deviceId, records.size(), imported, skipped);
-    }
-
-    private IntelbrasPersonIdentity resolve(String userId, String cardName) {
-        var candidate = firstNonBlank(userId, cardName);
-        if (candidate == null) {
-            return fallback("unknown");
-        }
-        var exactEmployee = employeeRepository.findByCpf(candidate);
-        if (exactEmployee.isPresent()) {
-            return new IntelbrasPersonIdentity(PersonType.EMPLOYEE, exactEmployee.get().getId());
-        }
-        var digits = candidate.replaceAll("\\D", "");
-        if (!digits.isBlank()) {
-            var employee = employeeRepository.findByCpf(digits);
-            if (employee.isPresent()) {
-                return new IntelbrasPersonIdentity(PersonType.EMPLOYEE, employee.get().getId());
-            }
-            var guest = guestRepository.findFirstByCpfOrderByVisitStartDesc(digits);
-            if (guest.isPresent()) {
-                return new IntelbrasPersonIdentity(PersonType.GUEST, guest.get().getId());
-            }
-        }
-        return fallback(candidate);
-    }
-
-    private IntelbrasPersonIdentity fallback(String externalId) {
-        return new IntelbrasPersonIdentity(
-                PersonType.EMPLOYEE,
-                UUID.nameUUIDFromBytes(("intelbras:" + externalId).getBytes(StandardCharsets.UTF_8))
-        );
-    }
-
-    private String firstNonBlank(String first, String second) {
-        return Optional.ofNullable(first).filter(value -> !value.isBlank())
-                .orElseGet(() -> Optional.ofNullable(second).filter(value -> !value.isBlank()).orElse(null));
+        return new IntelbrasEventImportResult(connection.device().getId(), records.size(), imported, skipped);
     }
 }

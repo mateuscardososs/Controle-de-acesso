@@ -76,7 +76,7 @@ export default function AccessEventsPage() {
             data={filteredEvents}
             getRowKey={(event) => event.id}
             columns={[
-              { key: "person", header: "Pessoa", render: (event) => employeeById.get(event.personId) ?? `${event.personType} ${event.personId.slice(0, 8)}` },
+              { key: "person", header: "Pessoa", render: (event) => personLabel(event, employeeById) },
               { key: "type", header: "Tipo", render: (event) => <StatusBadge value={event.eventType} /> },
               { key: "device", header: "Dispositivo", render: (event) => deviceById.get(event.deviceId) ?? event.deviceId.slice(0, 8) },
               { key: "area", header: "Area", render: (event) => areaById.get(event.areaId) ?? event.areaId.slice(0, 8) },
@@ -95,7 +95,7 @@ export default function AccessEventsPage() {
                     <StatusBadge value={event.accessResult} />
                     <span className="text-xs font-medium text-slate-500">{new Date(event.eventTime).toLocaleTimeString("pt-BR")}</span>
                   </div>
-                  <p className="text-sm font-semibold text-slate-100">{employeeById.get(event.personId) ?? "Pessoa nao identificada"}</p>
+                  <p className="text-sm font-semibold text-slate-100">{personLabel(event, employeeById)}</p>
                   <p className="mt-1 text-xs text-slate-500">{deviceById.get(event.deviceId) ?? "Dispositivo"} · {areaById.get(event.areaId) ?? "Area"}</p>
                 </div>
               ))}
@@ -105,4 +105,14 @@ export default function AccessEventsPage() {
       ) : null}
     </AdminShell>
   );
+}
+
+function personLabel(event: { personId?: string | null; personType?: string; personName?: string | null; rawCardName?: string | null; externalUserId?: string | null; rawPayload?: Record<string, unknown> }, employeeById: Map<string, string>) {
+  if (event.personName) return event.personName;
+  if (event.rawCardName) return event.rawCardName;
+  const cardName = event.rawPayload?.CardName;
+  if (typeof cardName === "string" && cardName) return cardName;
+  if (event.personId && employeeById.has(event.personId)) return employeeById.get(event.personId);
+  if (event.externalUserId) return `Usuário ${event.externalUserId}`;
+  return "Usuário não identificado";
 }

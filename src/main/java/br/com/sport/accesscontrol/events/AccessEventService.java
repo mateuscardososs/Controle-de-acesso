@@ -57,7 +57,25 @@ public class AccessEventService {
     @Transactional
     public Optional<AccessEventResponse> recordImported(NormalizedAccessEvent normalized) {
         var device = deviceService.getById(normalized.deviceId());
-        if (accessEventRepository.existsByDevice_IdAndPersonIdAndEventTimeAndOrigin(
+        var recNo = rawText(normalized.rawPayload(), "RecNo");
+        if (recNo != null && accessEventRepository.existsByDeviceIdAndOriginAndIntelbrasRecNo(
+                device.getId(),
+                normalized.origin(),
+                recNo
+        )) {
+            return Optional.empty();
+        }
+        if (recNo == null && accessEventRepository.existsByDeviceIdAndOriginAndIntelbrasNaturalKey(
+                device.getId(),
+                normalized.origin(),
+                rawText(normalized.rawPayload(), "CreateTime"),
+                rawText(normalized.rawPayload(), "UserID"),
+                rawText(normalized.rawPayload(), "Door"),
+                rawText(normalized.rawPayload(), "Method")
+        )) {
+            return Optional.empty();
+        }
+        if (normalized.personId() != null && accessEventRepository.existsByDevice_IdAndPersonIdAndEventTimeAndOrigin(
                 device.getId(),
                 normalized.personId(),
                 normalized.eventTime(),
@@ -68,6 +86,10 @@ public class AccessEventService {
         var accessEvent = new AccessEvent(
                 normalized.personType(),
                 normalized.personId(),
+                normalized.personName(),
+                normalized.personCpf(),
+                normalized.externalUserId(),
+                normalized.rawCardName(),
                 device,
                 device.getArea(),
                 normalized.eventType(),
@@ -80,12 +102,26 @@ public class AccessEventService {
         auditService.record("ACCESS_EVENT_IMPORTED", "AccessEvent", saved.getId(),
                 Map.of("origin", saved.getOrigin(), "result", saved.getAccessResult()), Map.of(), Map.of("id", saved.getId()));
         realtimePublisherService.publishAccessEvent(saved);
+        org.slf4j.LoggerFactory.getLogger(AccessEventService.class).info(
+                "event_publish_realtime access_event_id={} device_id={} origin={}",
+                saved.getId(), device.getId(), saved.getOrigin());
         eventPublisher.publishEvent(new AccessEventReceivedEvent(saved.getId()));
         return Optional.of(AccessEventResponse.from(saved));
     }
 
     @Transactional(readOnly = true)
     public List<AccessEventResponse> findAll() {
-        return accessEventRepository.findAll().stream().map(AccessEventResponse::from).toList();
+        return accessEventRepository.findAllByOrderByEventTimeDesc().stream().map(AccessEventResponse::from).toList();
+    }
+
+    private String rawText(Map<String, Object> rawPayload, String key) {
+        if (rawPayload == null) {
+            return null;
+        }
+        var value = rawPayload.get(key);
+        if (value == null || value.toString().isBlank()) {
+            return null;
+        }
+        return value.toString();
     }
 }

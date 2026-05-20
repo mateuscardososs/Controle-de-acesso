@@ -24,4 +24,10 @@ public class IntelbrasEventImportController {
     IntelbrasEventImportResult importEvents(@PathVariable UUID deviceId) {
         return importService.importAccessControlEvents(deviceId);
     }
+
+    @PostMapping("/events/import")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    IntelbrasEventImportResult importEventsNow() {
+        return importService.importOnlineAccessControlEvents();
+    }
 }

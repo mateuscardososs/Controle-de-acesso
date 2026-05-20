@@ -23,8 +23,20 @@ public class AccessEvent {
     @Column(name = "person_type", nullable = false)
     private PersonType personType;
 
-    @Column(name = "person_id", nullable = false)
+    @Column(name = "person_id")
     private UUID personId;
+
+    @Column(name = "person_name")
+    private String personName;
+
+    @Column(name = "person_cpf")
+    private String personCpf;
+
+    @Column(name = "external_user_id")
+    private String externalUserId;
+
+    @Column(name = "raw_card_name")
+    private String rawCardName;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "device_id", nullable = false)
@@ -60,8 +72,18 @@ public class AccessEvent {
 
     public AccessEvent(PersonType personType, UUID personId, Device device, Area area, AccessEventType eventType,
                        AccessResult accessResult, Instant eventTime, String origin, Map<String, Object> rawPayload) {
+        this(personType, personId, null, null, null, null, device, area, eventType, accessResult, eventTime, origin, rawPayload);
+    }
+
+    public AccessEvent(PersonType personType, UUID personId, String personName, String personCpf,
+                       String externalUserId, String rawCardName, Device device, Area area, AccessEventType eventType,
+                       AccessResult accessResult, Instant eventTime, String origin, Map<String, Object> rawPayload) {
         this.personType = personType;
         this.personId = personId;
+        this.personName = personName;
+        this.personCpf = personCpf;
+        this.externalUserId = externalUserId;
+        this.rawCardName = rawCardName;
         this.device = device;
         this.area = area;
         this.eventType = eventType;
@@ -86,6 +108,22 @@ public class AccessEvent {
 
     public UUID getPersonId() {
         return personId;
+    }
+
+    public String getPersonName() {
+        return personName;
+    }
+
+    public String getPersonCpf() {
+        return personCpf;
+    }
+
+    public String getExternalUserId() {
+        return externalUserId;
+    }
+
+    public String getRawCardName() {
+        return rawCardName;
     }
 
     public Device getDevice() {

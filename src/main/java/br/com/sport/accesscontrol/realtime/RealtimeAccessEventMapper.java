@@ -6,6 +6,7 @@ import br.com.sport.accesscontrol.devices.Device;
 import br.com.sport.accesscontrol.employees.Employee;
 import br.com.sport.accesscontrol.employees.EmployeeRepository;
 import br.com.sport.accesscontrol.events.AccessEvent;
+import br.com.sport.accesscontrol.guests.GuestRepository;
 import br.com.sport.accesscontrol.realtime.dto.RealtimeAccessEventMessage;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Component;
@@ -16,9 +17,11 @@ import java.util.UUID;
 public class RealtimeAccessEventMapper {
 
     private final EmployeeRepository employeeRepository;
+    private final GuestRepository guestRepository;
 
-    public RealtimeAccessEventMapper(EmployeeRepository employeeRepository) {
+    public RealtimeAccessEventMapper(EmployeeRepository employeeRepository, GuestRepository guestRepository) {
         this.employeeRepository = employeeRepository;
+        this.guestRepository = guestRepository;
     }
 
     public RealtimeAccessEventMessage toMessage(AccessEvent event) {
@@ -32,6 +35,8 @@ public class RealtimeAccessEventMapper {
                 event.getPersonId(),
                 person.name(),
                 person.cpf(),
+                event.getExternalUserId(),
+                event.getRawCardName(),
                 device == null ? null : safeUuid(device::getId),
                 device == null ? null : safeString(device::getName),
                 area == null ? null : safeUuid(area::getId),
@@ -40,18 +45,32 @@ public class RealtimeAccessEventMapper {
                 event.getAccessResult(),
                 event.getEventTime(),
                 event.getOrigin(),
+                event.getOrigin(),
                 event.getCreatedAt()
         );
     }
 
     private PersonSnapshot resolvePerson(AccessEvent event) {
-        if (event.getPersonType() != PersonType.EMPLOYEE || event.getPersonId() == null) {
+        if (event.getPersonName() != null || event.getPersonCpf() != null) {
+            return new PersonSnapshot(event.getPersonName(), event.getPersonCpf());
+        }
+        if (event.getPersonId() == null) {
             return PersonSnapshot.empty();
         }
 
-        return employeeRepository.findById(event.getPersonId())
-                .map(employee -> new PersonSnapshot(employee.getFullName(), employee.getCpf()))
-                .orElse(PersonSnapshot.empty());
+        if (event.getPersonType() == PersonType.EMPLOYEE) {
+            return employeeRepository.findById(event.getPersonId())
+                    .map(employee -> new PersonSnapshot(employee.getFullName(), employee.getCpf()))
+                    .orElse(PersonSnapshot.empty());
+        }
+
+        if (event.getPersonType() == PersonType.GUEST) {
+            return guestRepository.findById(event.getPersonId())
+                    .map(guest -> new PersonSnapshot(guest.getFullName(), guest.getCpf()))
+                    .orElse(PersonSnapshot.empty());
+        }
+
+        return PersonSnapshot.empty();
     }
 
     private Device safeDevice(AccessEvent event) {

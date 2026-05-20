@@ -5,14 +5,14 @@ spring:
   application:
     name: access-control-api
   datasource:
-    url: jdbc:postgresql://localhost:5432/access_control
-    username: access_user
-    password: access_pass
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/access_control}
+    username: ${SPRING_DATASOURCE_USERNAME:access_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:access_pass}
   rabbitmq:
-    host: localhost
-    port: 5672
-    username: access_user
-    password: access_pass
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:access_user}
+    password: ${SPRING_RABBITMQ_PASSWORD:access_pass}
   mail:
     host: ${SMTP_HOST:localhost}
     port: ${SMTP_PORT:1025}
@@ -61,6 +61,9 @@ app:
     default-password: ${APP_INTELBRAS_DEFAULT_PASSWORD:}
     connection-timeout: ${APP_INTELBRAS_CONNECTION_TIMEOUT:3s}
     read-timeout: ${APP_INTELBRAS_READ_TIMEOUT:5s}
+    identity-strategy: ${APP_INTELBRAS_IDENTITY_STRATEGY:document}
+    events-polling-enabled: ${APP_INTELBRAS_EVENTS_POLLING_ENABLED:true}
+    events-polling-interval: ${APP_INTELBRAS_EVENTS_POLLING_INTERVAL:5s}
   frontend:
     public-base-url: ${FRONTEND_PUBLIC_BASE_URL:http://localhost:3000}
   mail:

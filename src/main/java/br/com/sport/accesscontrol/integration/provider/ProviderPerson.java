@@ -13,6 +13,11 @@ public record ProviderPerson(
         String facePhotoUrl,
         boolean active,
         Instant validFrom,
-        Instant validUntil
+        Instant validUntil,
+        UUID areaId
 ) {
+    public ProviderPerson(PersonType personType, UUID personId, String document, String fullName, String facePhotoUrl,
+                          boolean active, Instant validFrom, Instant validUntil) {
+        this(personType, personId, document, fullName, facePhotoUrl, active, validFrom, validUntil, null);
+    }
 }

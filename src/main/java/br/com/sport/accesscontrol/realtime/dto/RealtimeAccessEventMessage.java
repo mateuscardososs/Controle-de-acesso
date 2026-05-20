@@ -13,6 +13,8 @@ public record RealtimeAccessEventMessage(
         UUID personId,
         String personName,
         String personCpf,
+        String externalUserId,
+        String rawCardName,
         UUID deviceId,
         String deviceName,
         UUID areaId,
@@ -21,6 +23,7 @@ public record RealtimeAccessEventMessage(
         AccessResult accessResult,
         Instant eventTime,
         String origin,
+        String source,
         Instant createdAt
 ) {
 }

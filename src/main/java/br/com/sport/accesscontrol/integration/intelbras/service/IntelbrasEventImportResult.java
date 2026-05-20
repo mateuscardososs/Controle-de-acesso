@@ -6,6 +6,10 @@ public record IntelbrasEventImportResult(
         UUID deviceId,
         int received,
         int imported,
-        int skipped
+        int skipped,
+        int devicesScanned
 ) {
+    public IntelbrasEventImportResult(UUID deviceId, int received, int imported, int skipped) {
+        this(deviceId, received, imported, skipped, 1);
+    }
 }

@@ -110,7 +110,7 @@ export default function DashboardPage() {
                     { key: "time", header: "Horario", render: (event) => new Date(event.eventTime).toLocaleString("pt-BR") },
                     { key: "type", header: "Tipo", render: (event) => <StatusBadge value={event.eventType} /> },
                     { key: "result", header: "Resultado", render: (event) => <StatusBadge value={event.accessResult} /> },
-                    { key: "origin", header: "Origem", render: (event) => <StatusBadge value={event.origin} /> }
+                    { key: "origin", header: "Origem", render: (event) => <StatusBadge value={originLabel(event.origin)} /> }
                   ]}
                 />
               ) : null}
@@ -169,4 +169,11 @@ export default function DashboardPage() {
       ) : null}
     </AdminShell>
   );
+}
+
+function originLabel(origin?: string) {
+  if (origin === "INTELBRAS_REAL") return "Intelbras Real";
+  if (origin === "INTELBRAS_SIMULATOR") return "Simulador Intelbras";
+  if (origin === "SIMULATION") return "Simulação";
+  return origin ?? "Não informado";
 }

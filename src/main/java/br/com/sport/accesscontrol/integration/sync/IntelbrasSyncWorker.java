@@ -4,7 +4,9 @@ import br.com.sport.accesscontrol.audit.AuditService;
 import br.com.sport.accesscontrol.common.PersonType;
 import br.com.sport.accesscontrol.common.messaging.IntegrationEventPublisher;
 import br.com.sport.accesscontrol.config.RabbitMqConfig;
+import br.com.sport.accesscontrol.devices.Device;
 import br.com.sport.accesscontrol.devices.DeviceRepository;
+import br.com.sport.accesscontrol.devices.DeviceStatus;
 import br.com.sport.accesscontrol.employees.Employee;
 import br.com.sport.accesscontrol.employees.EmployeeRepository;
 import br.com.sport.accesscontrol.guests.Guest;
@@ -88,6 +90,7 @@ public class IntelbrasSyncWorker {
             ProviderSyncResult result = switch (message.personType()) {
                 case EMPLOYEE -> syncEmployee(message.personId(), message.attempt());
                 case GUEST -> syncGuest(message.personId(), message.attempt());
+                case UNKNOWN -> new ProviderSyncResult(ProviderSyncStatus.FAILED, "Unknown person type cannot be synced.", java.time.Duration.ZERO);
             };
             sample.stop(meterRegistry.timer("intelbras.sync.latency", "result", result.status().name()));
             if (result.successful()) {
@@ -156,10 +159,12 @@ public class IntelbrasSyncWorker {
     private void finishEmployee(Employee employee, ProviderSyncResult result) {
         if (result.status() == ProviderSyncStatus.SUCCESS) {
             employee.markSynced();
+            employeeRepository.save(employee);
             auditSuccess(PersonType.EMPLOYEE, employee.getId(), result);
             realtimePublisher.publish(PersonType.EMPLOYEE, employee.getId(), SyncStatus.SYNCED, result.message());
         } else {
             employee.markSyncFailed(result.message());
+            employeeRepository.save(employee);
             auditFailure(PersonType.EMPLOYEE, employee.getId(), result.message());
             realtimePublisher.publish(PersonType.EMPLOYEE, employee.getId(), SyncStatus.SYNC_FAILED, result.message());
         }
@@ -168,12 +173,15 @@ public class IntelbrasSyncWorker {
     private void finishGuest(Guest guest, ProviderSyncResult result, String target) {
         if (result.status() == ProviderSyncStatus.SUCCESS) {
             guest.markSynced();
+            guestRepository.save(guest);
             auditSuccess(PersonType.GUEST, guest.getId(), result);
             sendGuestAccessApprovalEmail(guest);
+            guestRepository.save(guest);
             realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNCED,
                     "Visitante " + guest.getFullName() + " sincronizado com " + target);
         } else {
             guest.markSyncFailed(result.message());
+            guestRepository.save(guest);
             auditFailure(PersonType.GUEST, guest.getId(), result.message());
             realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNC_FAILED,
                     "Falha ao sincronizar visitante " + guest.getFullName() + " com " + target + ": " + safe(result.message()));
@@ -242,7 +250,7 @@ public class IntelbrasSyncWorker {
 
     private String intelbrasTarget() {
         return deviceRepository.findAll().stream()
-                .filter(device -> containsIntelbras(device.getModel()) || containsIntelbras(device.getName()))
+                .filter(this::eligibleIntelbrasDeviceForWorkerLog)
                 .findFirst()
                 .map(device -> device.getModel() == null || device.getModel().isBlank() ? device.getName() : device.getModel())
                 .orElse("Intelbras");
@@ -250,13 +258,45 @@ public class IntelbrasSyncWorker {
 
     private String intelbrasTargetDeviceId() {
         return deviceRepository.findAll().stream()
-                .filter(device -> containsIntelbras(device.getModel()) || containsIntelbras(device.getName()))
+                .filter(this::eligibleIntelbrasDeviceForWorkerLog)
                 .findFirst()
                 .map(device -> device.getId() == null ? "unknown" : device.getId().toString())
                 .orElse("none");
     }
 
+    private boolean eligibleIntelbrasDeviceForWorkerLog(Device device) {
+        return device != null
+                && looksLikeIntelbrasDevice(device)
+                && hasText(device.getIpAddress())
+                && (device.getStatus() == DeviceStatus.ONLINE || device.getOnlineStatus() == DeviceStatus.ONLINE)
+                && device.getArea() != null
+                && hasText(device.getIntelbrasUsername())
+                && hasText(device.getIntelbrasPassword());
+    }
+
+    private boolean looksLikeIntelbrasDevice(Device device) {
+        return containsIntelbras(device.getModel())
+                || containsIntelbras(device.getName())
+                || containsIntelbrasSs55xx(device.getModel())
+                || containsIntelbrasSs55xx(device.getName());
+    }
+
     private boolean containsIntelbras(String value) {
         return value != null && value.toLowerCase(java.util.Locale.ROOT).contains("intelbras");
+    }
+
+    private boolean containsIntelbrasSs55xx(String value) {
+        if (value == null) {
+            return false;
+        }
+        var normalized = value.toLowerCase(java.util.Locale.ROOT).replaceAll("\\s+", " ").trim();
+        return normalized.contains("ss 5531")
+                || normalized.contains("ss5531")
+                || normalized.contains("ss 5541")
+                || normalized.contains("ss5541");
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 }

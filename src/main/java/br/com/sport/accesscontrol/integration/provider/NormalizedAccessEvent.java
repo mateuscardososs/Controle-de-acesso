@@ -16,6 +16,22 @@ public record NormalizedAccessEvent(
         AccessResult accessResult,
         Instant eventTime,
         String origin,
+        String personName,
+        String personCpf,
+        String externalUserId,
+        String rawCardName,
         Map<String, Object> rawPayload
 ) {
+    public NormalizedAccessEvent(
+            PersonType personType,
+            UUID personId,
+            UUID deviceId,
+            AccessEventType eventType,
+            AccessResult accessResult,
+            Instant eventTime,
+            String origin,
+            Map<String, Object> rawPayload
+    ) {
+        this(personType, personId, deviceId, eventType, accessResult, eventTime, origin, null, null, null, null, rawPayload);
+    }
 }

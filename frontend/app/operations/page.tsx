@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, MonitorCog, RadioTower, RotateCcw, ShieldAlert, Tv } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Activity, AlertTriangle, DownloadCloud, MonitorCog, RadioTower, RotateCcw, ShieldAlert, Tv } from "lucide-react";
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
@@ -11,18 +11,21 @@ import { accessEventService } from "@/services/accessEventService";
 import { deviceService } from "@/services/deviceService";
 import { dashboardService } from "@/services/dashboardService";
 import { guestService } from "@/services/guestService";
+import { integrationService } from "@/services/integrationService";
 import { useRealtime } from "@/src/hooks/useRealtime";
 import { AccessEventSimulator } from "@/src/components/shared/AccessEventSimulator";
 import { RealtimeFeed } from "@/src/components/shared/RealtimeFeed";
 import { RealtimeIndicator } from "@/src/components/shared/RealtimeIndicator";
 import { StatCard } from "@/components/StatCard";
 import { Card, CardContent, CardHeader } from "@/src/components/ui/Card";
+import { Button } from "@/src/components/ui/Button";
 import { Badge } from "@/src/components/ui/Badge";
 import { StatusBadge } from "@/src/components/shared/StatusBadge";
 
 export default function OperationsPage() {
   const queryClient = useQueryClient();
   const realtime = useRealtime();
+  const [importMessage, setImportMessage] = useState("");
   const user = useQuery({ queryKey: ["me"], queryFn: authService.me, retry: false });
   const summary = useQuery({ queryKey: ["dashboard-summary"], queryFn: dashboardService.summary });
   const events = useQuery({ queryKey: ["access-events"], queryFn: accessEventService.list });
@@ -30,6 +33,16 @@ export default function OperationsPage() {
   const guests = useQuery({ queryKey: ["guests", "today"], queryFn: guestService.today });
 
   const canSimulate = user.data?.role === "ADMIN" || user.data?.role === "HR";
+  const canImportIntelbrasEvents = user.data?.role === "ADMIN";
+  const importEvents = useMutation({
+    mutationFn: integrationService.importIntelbrasEventsNow,
+    onSuccess: (result) => {
+      setImportMessage(`${result.imported} evento(s) importado(s), ${result.skipped} duplicado(s), ${result.received} recebido(s).`);
+      queryClient.invalidateQueries({ queryKey: ["access-events"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+    },
+    onError: () => setImportMessage("Não foi possível importar eventos da Intelbras agora.")
+  });
   const liveEvents = useMemo(() => {
     const realtimeIds = new Set(realtime.accessEvents.map((event) => event.accessEventId ?? event.id).filter(Boolean));
     const recentRestEvents = (events.data ?? []).filter((event) => !realtimeIds.has(event.id)).slice(0, 10);
@@ -85,12 +98,28 @@ export default function OperationsPage() {
         title="Operação ao vivo"
         description="Sala de controle para acompanhar eventos, saude dos dispositivos e alertas antes da integracao Intelbras real."
         actions={
-          <>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              icon={DownloadCloud}
+              loading={importEvents.isPending}
+              disabled={!canImportIntelbrasEvents || importEvents.isPending}
+              title={canImportIntelbrasEvents ? "Buscar eventos reais AccessControlCardRec na Intelbras" : "Apenas administradores podem importar eventos"}
+              onClick={() => importEvents.mutate()}
+            >
+              Importar eventos agora
+            </Button>
             <RealtimeIndicator status={realtime.status} />
             <Badge tone="slate" className="gap-2"><Tv className="h-3.5 w-3.5" /> TV mode</Badge>
-          </>
+          </div>
         }
       />
+
+      {importMessage ? (
+        <div className={`mb-4 rounded-xl border px-4 py-3 text-sm font-semibold ${importEvents.isError ? "border-red-300/20 bg-red-500/12 text-red-100" : "border-emerald-300/20 bg-emerald-400/12 text-emerald-100"}`}>
+          {importMessage}
+        </div>
+      ) : null}
 
       <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard title="Eventos hoje" value={summary.data?.todayEvents ?? 0} icon={Activity} description="Atualizado por consulta e sinais realtime" />

@@ -14,6 +14,10 @@ import br.com.sport.accesscontrol.employees.EmployeeRepository;
 import br.com.sport.accesscontrol.events.*;
 import br.com.sport.accesscontrol.guests.*;
 import br.com.sport.accesscontrol.integration.intelbras.scheduler.IntelbrasSyncScheduler;
+import br.com.sport.accesscontrol.integration.intelbras.config.IntelbrasProperties;
+import br.com.sport.accesscontrol.integration.intelbras.mapper.IntelbrasEventMapper;
+import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasDeviceConnectionService;
+import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasPersonResolver;
 import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasIntegrationService;
 import br.com.sport.accesscontrol.integration.intelbras.simulator.IntelbrasAccessEventSimulatorRequest;
 import br.com.sport.accesscontrol.integration.intelbras.simulator.IntelbrasSimulatorService;
@@ -141,7 +145,7 @@ class EnterpriseArchitectureTests {
         var area = area();
         var device = device(area);
         var event = accessEvent(employeeId, device, area);
-        var mapper = new RealtimeAccessEventMapper(employeeRepository);
+        var mapper = new RealtimeAccessEventMapper(employeeRepository, mock(GuestRepository.class));
 
         var message = mapper.toMessage(event);
 
@@ -172,7 +176,7 @@ class EnterpriseArchitectureTests {
         ReflectionTestUtils.setField(event, "id", UUID.randomUUID());
         ReflectionTestUtils.setField(event, "createdAt", Instant.now());
 
-        var message = new RealtimeAccessEventMapper(employeeRepository).toMessage(event);
+        var message = new RealtimeAccessEventMapper(employeeRepository, mock(GuestRepository.class)).toMessage(event);
 
         assertThat(message.personName()).isNull();
         assertThat(message.deviceId()).isNull();
@@ -212,6 +216,132 @@ class EnterpriseArchitectureTests {
         verify(realtimePublisher).publishAccessEvent(any(AccessEvent.class));
         verify(eventPublisher).publishEvent(any(br.com.sport.accesscontrol.common.events.AccessEventReceivedEvent.class));
         verify(auditService).record(eq("ACCESS_EVENT_RECEIVED"), eq("AccessEvent"), any(), any(), any(), any());
+    }
+
+    @Test
+    void intelbrasEventWithGuestUserIdResolvesGuestName() {
+        var guest = new Guest("Visitante Real", "12345678901", "visitante@empresa.local", null, "Empresa", "Reuniao",
+                "Host", Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600));
+        ReflectionTestUtils.setField(guest, "id", UUID.randomUUID());
+        var guestRepository = mock(GuestRepository.class);
+        var employeeRepository = mock(EmployeeRepository.class);
+        when(guestRepository.findFirstByCpfOrderByVisitStartDesc("12345678901")).thenReturn(Optional.of(guest));
+
+        var identity = new IntelbrasPersonResolver(guestRepository, employeeRepository)
+                .resolve(device(area()), intelbrasRecord("123.456.789-01", "Nome Intelbras"));
+
+        assertThat(identity.personType()).isEqualTo(br.com.sport.accesscontrol.common.PersonType.GUEST);
+        assertThat(identity.personId()).isEqualTo(guest.getId());
+        assertThat(identity.personName()).isEqualTo("Visitante Real");
+        assertThat(identity.personCpf()).isEqualTo("12345678901");
+        assertThat(identity.foundInDatabase()).isTrue();
+        verifyNoInteractions(employeeRepository);
+    }
+
+    @Test
+    void intelbrasEventWithUserIdWithoutLeadingZeroResolvesGuestDocument() {
+        var guest = new Guest("Visitante Real", "05731650411", "visitante@empresa.local", null, "Empresa", "Reuniao",
+                "Host", Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600));
+        ReflectionTestUtils.setField(guest, "id", UUID.randomUUID());
+        var guestRepository = mock(GuestRepository.class);
+        var employeeRepository = mock(EmployeeRepository.class);
+        when(guestRepository.findFirstByCpfOrderByVisitStartDesc("5731650411")).thenReturn(Optional.empty());
+        when(guestRepository.findFirstByCpfOrderByVisitStartDesc("05731650411")).thenReturn(Optional.of(guest));
+
+        var identity = new IntelbrasPersonResolver(guestRepository, employeeRepository)
+                .resolve(device(area()), intelbrasRecord("5731650411", "Nome Intelbras"));
+
+        assertThat(identity.personType()).isEqualTo(br.com.sport.accesscontrol.common.PersonType.GUEST);
+        assertThat(identity.personId()).isEqualTo(guest.getId());
+        assertThat(identity.personName()).isEqualTo("Visitante Real");
+        assertThat(identity.personCpf()).isEqualTo("05731650411");
+        assertThat(identity.foundInDatabase()).isTrue();
+    }
+
+    @Test
+    void intelbrasEventWithEmployeeUserIdResolvesEmployeeName() {
+        var employee = new Employee("Colaborador Real", "12345678901", null, null, null, null, null, null, null);
+        ReflectionTestUtils.setField(employee, "id", UUID.randomUUID());
+        var guestRepository = mock(GuestRepository.class);
+        var employeeRepository = mock(EmployeeRepository.class);
+        when(guestRepository.findFirstByCpfOrderByVisitStartDesc("12345678901")).thenReturn(Optional.empty());
+        when(employeeRepository.findByCpf("12345678901")).thenReturn(Optional.of(employee));
+
+        var identity = new IntelbrasPersonResolver(guestRepository, employeeRepository)
+                .resolve(device(area()), intelbrasRecord("12345678901", "Nome Intelbras"));
+
+        assertThat(identity.personType()).isEqualTo(br.com.sport.accesscontrol.common.PersonType.EMPLOYEE);
+        assertThat(identity.personId()).isEqualTo(employee.getId());
+        assertThat(identity.personName()).isEqualTo("Colaborador Real");
+        assertThat(identity.personCpf()).isEqualTo("12345678901");
+        assertThat(identity.foundInDatabase()).isTrue();
+    }
+
+    @Test
+    void intelbrasEventWithoutDatabaseMatchUsesCardNameAndDoesNotCreateFakeEmployee() {
+        var guestRepository = mock(GuestRepository.class);
+        var employeeRepository = mock(EmployeeRepository.class);
+        when(guestRepository.findFirstByCpfOrderByVisitStartDesc("12345678901")).thenReturn(Optional.empty());
+        when(employeeRepository.findByCpf("12345678901")).thenReturn(Optional.empty());
+
+        var identity = new IntelbrasPersonResolver(guestRepository, employeeRepository)
+                .resolve(device(area()), intelbrasRecord("12345678901", "Visitante da Controladora"));
+
+        assertThat(identity.personType()).isEqualTo(br.com.sport.accesscontrol.common.PersonType.UNKNOWN);
+        assertThat(identity.personId()).isNull();
+        assertThat(identity.personName()).isEqualTo("Visitante da Controladora");
+        assertThat(identity.externalUserId()).isEqualTo("12345678901");
+        assertThat(identity.foundInDatabase()).isFalse();
+    }
+
+    @Test
+    void intelbrasEventWithoutUserIdOrCardNameUsesUnidentifiedUserLabel() {
+        var identity = new IntelbrasPersonResolver(mock(GuestRepository.class), mock(EmployeeRepository.class))
+                .resolve(device(area()), intelbrasRecord(null, null));
+
+        assertThat(identity.personType()).isEqualTo(br.com.sport.accesscontrol.common.PersonType.UNKNOWN);
+        assertThat(identity.personId()).isNull();
+        assertThat(identity.personName()).isEqualTo("Usuário não identificado");
+        assertThat(identity.foundInDatabase()).isFalse();
+    }
+
+    @Test
+    void importedIntelbrasDuplicateByRecNoDoesNotCreateAccessEvent() {
+        var repository = mock(AccessEventRepository.class);
+        var deviceService = mock(DeviceService.class);
+        var device = device(area());
+        when(deviceService.getById(device.getId())).thenReturn(device);
+        when(repository.existsByDeviceIdAndOriginAndIntelbrasRecNo(device.getId(), "INTELBRAS_REAL", "77"))
+                .thenReturn(true);
+
+        var normalized = new IntelbrasEventMapper().normalizeAccessControlCardRec(
+                Map.of(
+                        "RecNo", "77",
+                        "UserID", "12345678901",
+                        "CardName", "Visitante",
+                        "Status", "1",
+                        "ErrorCode", "0",
+                        "CreateTime", "2026-05-20 12:00:00",
+                        "Door", "1",
+                        "Method", "15"
+                ),
+                device,
+                new br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasPersonIdentity(
+                        br.com.sport.accesscontrol.common.PersonType.UNKNOWN,
+                        null,
+                        "Visitante",
+                        null,
+                        "12345678901",
+                        "Visitante",
+                        false
+                )
+        );
+
+        var service = new AccessEventService(repository, deviceService, mock(ApplicationEventPublisher.class),
+                mock(AuditService.class), mock(RealtimePublisherService.class));
+
+        assertThat(service.recordImported(normalized)).isEmpty();
+        verify(repository, never()).save(any(AccessEvent.class));
     }
 
     @Test
@@ -450,6 +580,7 @@ class EnterpriseArchitectureTests {
                 .process(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.EMPLOYEE, employee.getId(), 1));
 
         assertThat(employee.getSyncStatus()).isEqualTo(SyncStatus.SYNCED);
+        verify(employeeRepository).save(employee);
         verify(auditService).record(eq("INTELBRAS_SYNC_STARTED"), eq("EMPLOYEE"), eq(employee.getId()), any(), any(), any());
         verify(auditService).record(eq("INTELBRAS_SYNC_SUCCEEDED"), eq("EMPLOYEE"), eq(employee.getId()), any(), any(), any());
         verify(realtime).publish(eq(br.com.sport.accesscontrol.common.PersonType.EMPLOYEE), eq(employee.getId()), eq(SyncStatus.SYNCED), any());
@@ -470,6 +601,7 @@ class EnterpriseArchitectureTests {
         worker.process(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, guest.getId(), 1));
 
         assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNC_FAILED);
+        verify(guestRepository, atLeastOnce()).save(guest);
         verify(publisher).publishIntelbrasSync(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, guest.getId(), 2));
         assertThatThrownBy(() -> worker.process(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, guest.getId(), 2)))
                 .isInstanceOf(AmqpRejectAndDontRequeueException.class);
@@ -495,6 +627,7 @@ class EnterpriseArchitectureTests {
         assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNCED);
         assertThat(guest.getAccessApprovedEmailStatus()).isEqualTo("SENT");
         assertThat(guest.getAccessApprovedEmailSentAt()).isNotNull();
+        verify(guestRepository, atLeastOnce()).save(guest);
         verify(provider).syncPerson(any());
         verify(mailService).sendGuestAccessApproved(guest);
         verify(auditService).record(eq("INTELBRAS_SYNC_SUCCEEDED"), eq("GUEST"), eq(guest.getId()), any(), any(), any());
@@ -550,6 +683,62 @@ class EnterpriseArchitectureTests {
 
         verifyNoInteractions(provider);
         verifyNoInteractions(publisher);
+    }
+
+    @Test
+    void intelbrasDeviceConnectionServiceAcceptsOnlineSs5531WithCredentialsAndArea() {
+        var device = device(area());
+        ReflectionTestUtils.setField(device, "model", "SS 5531 MF W");
+        device.setIntelbrasUsername("admin");
+        device.setIntelbrasPassword("secret");
+        device.setStatus(DeviceStatus.ONLINE);
+        var repository = mock(DeviceRepository.class);
+        when(repository.findAll()).thenReturn(List.of(device));
+
+        var selected = new IntelbrasDeviceConnectionService(repository, new IntelbrasProperties())
+                .selectOnlineConfiguredDevice(device.getArea().getId());
+
+        assertThat(selected).isPresent();
+        assertThat(selected.get().device().getId()).isEqualTo(device.getId());
+    }
+
+    @Test
+    void intelbrasDeviceConnectionServiceRejectsOnlineDeviceWithoutSs55xxOrIntelbrasModel() {
+        var device = device(area());
+        ReflectionTestUtils.setField(device, "model", "Generic Controller");
+        device.setIntelbrasUsername("admin");
+        device.setIntelbrasPassword("secret");
+        device.setStatus(DeviceStatus.ONLINE);
+        var repository = mock(DeviceRepository.class);
+        when(repository.findAll()).thenReturn(List.of(device));
+
+        var selected = new IntelbrasDeviceConnectionService(repository, new IntelbrasProperties())
+                .selectOnlineConfiguredDevice(null);
+
+        assertThat(selected).isEmpty();
+    }
+
+    @Test
+    void intelbrasDeviceConnectionServicePrefersDeviceFromRequestedArea() {
+        var fallback = device(area());
+        ReflectionTestUtils.setField(fallback, "model", "SS 5531 MF W");
+        fallback.setIntelbrasUsername("admin");
+        fallback.setIntelbrasPassword("secret");
+        fallback.setStatus(DeviceStatus.ONLINE);
+        var preferredArea = area();
+        var preferred = device(preferredArea);
+        ReflectionTestUtils.setField(preferred, "model", "SS 5541 MF W");
+        preferred.setIntelbrasUsername("admin");
+        preferred.setIntelbrasPassword("secret");
+        preferred.setStatus(DeviceStatus.ONLINE);
+        var repository = mock(DeviceRepository.class);
+        when(repository.findAll()).thenReturn(List.of(fallback, preferred));
+
+        var selected = new IntelbrasDeviceConnectionService(repository, new IntelbrasProperties())
+                .selectOnlineConfiguredDevice(preferredArea.getId());
+
+        assertThat(selected).isPresent();
+        assertThat(selected.get().device().getId()).isEqualTo(preferred.getId());
     }
 
     @Test
@@ -618,6 +807,23 @@ class EnterpriseArchitectureTests {
         ReflectionTestUtils.setField(event, "id", UUID.randomUUID());
         ReflectionTestUtils.setField(event, "createdAt", Instant.now());
         return event;
+    }
+
+    private br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasAccessControlCardRecord intelbrasRecord(String userId, String cardName) {
+        return new br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasAccessControlCardRecord(
+                "1",
+                cardName,
+                userId,
+                "1",
+                "15",
+                "Entry",
+                Instant.now(),
+                null,
+                "0",
+                "1",
+                "1",
+                Map.of()
+        );
     }
 
     private IntelbrasSyncWorker worker(EmployeeRepository employeeRepository, GuestRepository guestRepository,

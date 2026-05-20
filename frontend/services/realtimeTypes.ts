@@ -5,6 +5,8 @@ export type RealtimeAccessEvent = {
   personId?: string;
   personName?: string | null;
   personCpf?: string | null;
+  externalUserId?: string | null;
+  rawCardName?: string | null;
   deviceId?: string;
   deviceName?: string | null;
   areaId?: string;
@@ -13,6 +15,7 @@ export type RealtimeAccessEvent = {
   accessResult?: "ALLOWED" | "DENIED" | "ERROR" | string;
   eventTime?: string;
   origin?: string;
+  source?: string;
   receivedAt?: string;
 };
 

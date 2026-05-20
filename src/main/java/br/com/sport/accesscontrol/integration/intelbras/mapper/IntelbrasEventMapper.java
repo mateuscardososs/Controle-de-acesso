@@ -1,6 +1,5 @@
 package br.com.sport.accesscontrol.integration.intelbras.mapper;
 
-import br.com.sport.accesscontrol.common.PersonType;
 import br.com.sport.accesscontrol.devices.Device;
 import br.com.sport.accesscontrol.events.AccessEventType;
 import br.com.sport.accesscontrol.events.AccessResult;
@@ -16,7 +15,6 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Locale;
 import java.util.Map;
-import java.util.UUID;
 
 @Component
 public class IntelbrasEventMapper {
@@ -25,9 +23,11 @@ public class IntelbrasEventMapper {
 
     public IntelbrasAccessControlCardRecord parseAccessControlCardRec(Map<String, Object> payload) {
         return new IntelbrasAccessControlCardRecord(
+                text(payload, "RecNo"),
                 text(payload, "CardName"),
                 text(payload, "UserID"),
                 text(payload, "Status"),
+                text(payload, "Method"),
                 text(payload, "Type"),
                 parseTime(text(payload, "CreateTime")),
                 text(payload, "URL"),
@@ -44,7 +44,7 @@ public class IntelbrasEventMapper {
             IntelbrasPersonIdentity person
     ) {
         var record = parseAccessControlCardRec(payload);
-        var identity = person == null ? fallbackIdentity(record) : person;
+        var identity = person == null ? unknownIdentity(record) : person;
         return new NormalizedAccessEvent(
                 identity.personType(),
                 identity.personId(),
@@ -53,19 +53,28 @@ public class IntelbrasEventMapper {
                 accessResult(record),
                 record.createTime() == null ? Instant.now() : record.createTime(),
                 "INTELBRAS_REAL",
+                identity.personName(),
+                identity.personCpf(),
+                identity.externalUserId(),
+                identity.rawCardName(),
                 payload
         );
     }
 
-    private IntelbrasPersonIdentity fallbackIdentity(IntelbrasAccessControlCardRecord record) {
-        var source = record.userId() == null || record.userId().isBlank() ? record.cardName() : record.userId();
-        if (source == null || source.isBlank()) {
-            source = "unknown";
-        }
+    private IntelbrasPersonIdentity unknownIdentity(IntelbrasAccessControlCardRecord record) {
         return new IntelbrasPersonIdentity(
-                PersonType.EMPLOYEE,
-                UUID.nameUUIDFromBytes(("intelbras:" + source).getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                br.com.sport.accesscontrol.common.PersonType.UNKNOWN,
+                null,
+                firstNonBlank(record.cardName(), "Usuário não identificado"),
+                null,
+                record.userId(),
+                record.cardName(),
+                false
         );
+    }
+
+    private String firstNonBlank(String first, String fallback) {
+        return first == null || first.isBlank() ? fallback : first;
     }
 
     private AccessEventType eventType(IntelbrasAccessControlCardRecord record) {

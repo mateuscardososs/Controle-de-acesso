@@ -20,9 +20,11 @@ function eventTime(event: AccessEvent | RealtimeAccessEvent) {
 
 function eventTitle(event: AccessEvent | RealtimeAccessEvent) {
   if ("personName" in event && event.personName) return event.personName;
-  if ("accessEventId" in event && event.accessEventId && !("id" in event)) return `Evento ${event.accessEventId.slice(0, 8)}`;
-  if ("personType" in event && event.personType) return `${event.personType} ${event.personId?.slice(0, 8) ?? ""}`.trim();
-  return "Evento recebido";
+  if ("rawCardName" in event && event.rawCardName) return event.rawCardName;
+  if ("externalUserId" in event && event.externalUserId) return `Usuário ${event.externalUserId}`;
+  const rawCardName = "rawPayload" in event ? event.rawPayload?.CardName : undefined;
+  if (typeof rawCardName === "string" && rawCardName) return rawCardName;
+  return "Usuário não identificado";
 }
 
 function eventDescription(event: AccessEvent | RealtimeAccessEvent) {
@@ -37,11 +39,18 @@ function eventDescription(event: AccessEvent | RealtimeAccessEvent) {
   }
 
   const pieces = [
-    "eventType" in event ? event.eventType : undefined,
-    "deviceId" in event ? event.deviceId?.slice(0, 8) : undefined,
-    "origin" in event ? event.origin : undefined
+      "eventType" in event ? event.eventType : undefined,
+      "deviceId" in event ? event.deviceId?.slice(0, 8) : undefined,
+      "origin" in event ? originLabel(event.origin) : undefined
   ].filter(Boolean);
   return pieces.join(" · ") || "Sinal realtime recebido";
+}
+
+function originLabel(origin?: string) {
+  if (origin === "INTELBRAS_REAL") return "Intelbras Real";
+  if (origin === "INTELBRAS_SIMULATOR") return "Simulador Intelbras";
+  if (origin === "SIMULATION") return "Simulação";
+  return origin;
 }
 
 export function RealtimeFeed({

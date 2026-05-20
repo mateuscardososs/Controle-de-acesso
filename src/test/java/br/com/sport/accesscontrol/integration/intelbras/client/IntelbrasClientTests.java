@@ -149,6 +149,7 @@ class IntelbrasClientTests {
         assertThat(requests.get(3).uri().toString())
                 .contains("/cgi-bin/recordUpdater.cgi?action=insert&name=AccessControlCard")
                 .contains("CardNo=16")
+                .contains("CardStatus=0")
                 .contains("UserID=16")
                 .contains("CardName=Alexandre16");
         assertThat(requests.get(5).uri().toString())
@@ -199,7 +200,53 @@ class IntelbrasClientTests {
         assertThat(requests.get(3).uri().toString())
                 .contains("/cgi-bin/recordUpdater.cgi?action=update&name=AccessControlCard")
                 .contains("recno=22")
+                .contains("CardStatus=0")
                 .contains("UserID=16");
+    }
+
+    @Test
+    void cgiClientRetriesRecordUpdaterAsPostFormWhenDocumentedGetIsRejected() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        var properties = properties();
+        var challenge = stringResponse(401, "", Map.of(
+                "WWW-Authenticate", List.of("Digest realm=\"Intelbras\", nonce=\"abc\", qop=\"auth\"")
+        ));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(challenge)
+                .thenReturn(stringResponse(200, "found=0", Map.of()))
+                .thenReturn(challenge)
+                .thenReturn(stringResponse(400, "Error\nBad Request!", Map.of()))
+                .thenReturn(challenge)
+                .thenReturn(stringResponse(200, "RecNo=10", Map.of()));
+
+        var client = new IntelbrasCgiClient(httpClient, properties, new ObjectMapper());
+
+        var response = client.upsertAccessUser(
+                "192.168.15.5",
+                "admin",
+                "admin123",
+                "05731650411",
+                "05731650411",
+                "mateus da silva cardoso",
+                LocalDateTime.of(2026, 5, 20, 8, 0),
+                LocalDateTime.of(2037, 12, 31, 23, 59, 59)
+        );
+
+        assertThat(response).isEqualTo("RecNo=10");
+        var requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(httpClient, times(6)).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        var requests = requestCaptor.getAllValues();
+        assertThat(requests.get(5).method()).isEqualTo("POST");
+        assertThat(requests.get(5).uri().toString()).contains("/cgi-bin/recordUpdater.cgi");
+        assertThat(requests.get(5).headers().firstValue("Content-Type"))
+                .hasValue("application/x-www-form-urlencoded; charset=UTF-8");
+        assertThat(bodyOf(requests.get(5)))
+                .contains("action=insert")
+                .contains("name=AccessControlCard")
+                .contains("CardNo=05731650411")
+                .contains("CardStatus=0")
+                .contains("CardName=mateus%20da%20silva%20cardoso")
+                .contains("UserID=05731650411");
     }
 
     @Test

@@ -3,8 +3,10 @@ package br.com.sport.accesscontrol.integration.intelbras.provider;
 import br.com.sport.accesscontrol.devices.DeviceStatus;
 import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasCgiClient;
 import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasHttpSupport;
+import br.com.sport.accesscontrol.integration.intelbras.config.IntelbrasProperties;
 import br.com.sport.accesscontrol.integration.intelbras.mapper.IntelbrasEventMapper;
 import br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasDeviceConnection;
+import br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasIdentityCodec;
 import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasDeviceConnectionService;
 import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasFaceEncoder;
 import br.com.sport.accesscontrol.integration.provider.AccessControlProvider;
@@ -24,7 +26,6 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
-import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -38,14 +39,17 @@ public class IntelbrasRealProvider implements AccessControlProvider {
     private final IntelbrasCgiClient cgiClient;
     private final IntelbrasFaceEncoder faceEncoder;
     private final IntelbrasEventMapper eventMapper;
+    private final IntelbrasProperties properties;
 
     public IntelbrasRealProvider(IntelbrasDeviceConnectionService connectionService, IntelbrasCgiClient cgiClient,
                                  IntelbrasFaceEncoder faceEncoder,
-                                 IntelbrasEventMapper eventMapper) {
+                                 IntelbrasEventMapper eventMapper,
+                                 IntelbrasProperties properties) {
         this.connectionService = connectionService;
         this.cgiClient = cgiClient;
         this.faceEncoder = faceEncoder;
         this.eventMapper = eventMapper;
+        this.properties = properties;
     }
 
     @Override
@@ -54,40 +58,54 @@ public class IntelbrasRealProvider implements AccessControlProvider {
         if (!person.active()) {
             return removePerson(person);
         }
-        var connections = connectionService.allConfiguredDevices();
-        if (connections.isEmpty()) {
+        var selectedConnection = connectionService.selectOnlineConfiguredDevice(person.areaId());
+        if (selectedConnection.isEmpty()) {
             return result(start, ProviderSyncStatus.FAILED, "No configured Intelbras real devices found.");
         }
+        var connections = java.util.List.of(selectedConnection.get());
 
-        final String photoData;
+        String photoData = null;
         try {
             photoData = faceEncoder.toJpegBase64(person.facePhotoUrl());
         } catch (IllegalArgumentException exception) {
-            return result(start, ProviderSyncStatus.FAILED, exception.getMessage());
+            log.warn("intelbras_real_face_payload_unavailable_user_only person_type={} person_id={} error={}",
+                    person.personType(), person.personId(), safe(exception.getMessage()));
         }
 
         var errors = new ArrayList<String>();
         var synced = 0;
         for (IntelbrasDeviceConnection connection : connections) {
             try {
-                var userId = userId(person);
-                log.info("intelbras_real_sync_person_start protocol=CGI device_id={} host={} person_type={} person_id={} user_id={} photo_base64_bytes={}",
+                var identity = resolveIdentity(person);
+                log.info("intelbras_identity_strategy strategy={} user_id={} card_no={} person_type={} person_id={} document_present={}",
+                        identity.strategy().name().toLowerCase(java.util.Locale.ROOT), identity.userId(), identity.cardNo(),
+                        person.personType(), person.personId(), person.document() != null && !person.document().isBlank());
+                log.info("intelbras_real_sync_person_start protocol=CGI device_id={} host={} person_type={} person_id={} user_id={} card_no={} photo_base64_bytes={}",
                         connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()), person.personType(),
-                        person.personId(), userId, photoData.length());
+                        person.personId(), identity.userId(), identity.cardNo(), photoData == null ? 0 : photoData.length());
                 cgiClient.upsertAccessUser(
                         connection.host(),
                         connection.username(),
                         connection.password(),
-                        userId,
+                        identity.userId(),
+                        identity.cardNo(),
                         person.fullName(),
                         localDeviceTime(person.validFrom(), LocalDateTime.now().minusDays(1)),
                         localDeviceTime(person.validUntil(), LocalDateTime.of(2037, 12, 31, 23, 59, 59))
                 );
-                cgiClient.replaceFace(connection.host(), connection.username(), connection.password(), userId,
-                        person.fullName(), photoData);
+                if (photoData != null) {
+                    try {
+                        cgiClient.replaceFace(connection.host(), connection.username(), connection.password(), identity.userId(),
+                                person.fullName(), photoData);
+                    } catch (Exception faceException) {
+                        log.warn("intelbras_real_face_sync_failed_user_kept device_id={} host={} person_type={} person_id={} user_id={} error={}",
+                                connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()), person.personType(),
+                                person.personId(), identity.userId(), safe(faceException.getMessage()));
+                    }
+                }
                 synced++;
                 log.info("intelbras_real_sync_person_success protocol=CGI device_id={} person_type={} person_id={} user_id={}",
-                        connection.device().getId(), person.personType(), person.personId(), userId);
+                        connection.device().getId(), person.personType(), person.personId(), identity.userId());
             } catch (Exception exception) {
                 errors.add("device=" + connection.device().getId() + " error=" + safe(exception.getMessage()));
                 log.warn("intelbras_real_sync_person_failed device_id={} host={} person_type={} person_id={} error={}",
@@ -117,9 +135,12 @@ public class IntelbrasRealProvider implements AccessControlProvider {
         var removed = 0;
         for (IntelbrasDeviceConnection connection : connections) {
             try {
-                var userId = userId(person);
-                cgiClient.removeFace(connection.host(), connection.username(), connection.password(), userId);
-                cgiClient.removeAccessUser(connection.host(), connection.username(), connection.password(), userId);
+                var identity = resolveIdentity(person);
+                log.info("intelbras_identity_strategy strategy={} user_id={} card_no={} person_type={} person_id={} document_present={} operation=remove",
+                        identity.strategy().name().toLowerCase(java.util.Locale.ROOT), identity.userId(), identity.cardNo(),
+                        person.personType(), person.personId(), person.document() != null && !person.document().isBlank());
+                cgiClient.removeFace(connection.host(), connection.username(), connection.password(), identity.userId());
+                cgiClient.removeAccessUser(connection.host(), connection.username(), connection.password(), identity.userId());
                 removed++;
             } catch (Exception exception) {
                 log.warn("intelbras_real_remove_person_failed device_id={} host={} person_type={} person_id={} error={}",
@@ -172,16 +193,9 @@ public class IntelbrasRealProvider implements AccessControlProvider {
         return eventMapper.normalizeAccessControlCardRec(payload, null, null);
     }
 
-    private String userId(ProviderPerson person) {
-        var document = person.document() == null ? "" : person.document().replaceAll("\\D", "");
-        if (!document.isBlank()) {
-            return document;
-        }
-        var digits = person.personId().toString().replaceAll("\\D", "");
-        if (!digits.isBlank()) {
-            return digits.length() > 18 ? digits.substring(0, 18) : digits;
-        }
-        return Long.toUnsignedString(person.personId().getMostSignificantBits() ^ person.personId().getLeastSignificantBits());
+    private IntelbrasIdentityCodec.IntelbrasIdentity resolveIdentity(ProviderPerson person) {
+        return IntelbrasIdentityCodec.resolve(properties.getIdentityStrategy(), person.personType(),
+                person.personId(), person.document());
     }
 
     private LocalDateTime localDeviceTime(Instant instant, LocalDateTime fallback) {

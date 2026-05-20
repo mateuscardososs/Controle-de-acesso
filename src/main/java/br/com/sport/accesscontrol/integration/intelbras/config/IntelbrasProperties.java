@@ -1,5 +1,6 @@
 package br.com.sport.accesscontrol.integration.intelbras.config;
 
+import br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasIdentityCodec;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -14,6 +15,9 @@ public class IntelbrasProperties {
     private String defaultPassword;
     private Duration connectionTimeout = Duration.ofSeconds(3);
     private Duration readTimeout = Duration.ofSeconds(5);
+    private boolean eventsPollingEnabled = true;
+    private Duration eventsPollingInterval = Duration.ofSeconds(5);
+    private IntelbrasIdentityCodec.Strategy identityStrategy = IntelbrasIdentityCodec.Strategy.DOCUMENT;
 
     public Mode getMode() {
         return mode;
@@ -57,6 +61,32 @@ public class IntelbrasProperties {
         if (readTimeout != null && !readTimeout.isNegative() && !readTimeout.isZero()) {
             this.readTimeout = readTimeout;
         }
+    }
+
+    public boolean isEventsPollingEnabled() {
+        return eventsPollingEnabled;
+    }
+
+    public void setEventsPollingEnabled(boolean eventsPollingEnabled) {
+        this.eventsPollingEnabled = eventsPollingEnabled;
+    }
+
+    public Duration getEventsPollingInterval() {
+        return eventsPollingInterval;
+    }
+
+    public void setEventsPollingInterval(Duration eventsPollingInterval) {
+        if (eventsPollingInterval != null && !eventsPollingInterval.isNegative() && !eventsPollingInterval.isZero()) {
+            this.eventsPollingInterval = eventsPollingInterval;
+        }
+    }
+
+    public IntelbrasIdentityCodec.Strategy getIdentityStrategy() {
+        return identityStrategy;
+    }
+
+    public void setIdentityStrategy(IntelbrasIdentityCodec.Strategy identityStrategy) {
+        this.identityStrategy = identityStrategy == null ? IntelbrasIdentityCodec.Strategy.DOCUMENT : identityStrategy;
     }
 
     private String blankToNull(String value) {
