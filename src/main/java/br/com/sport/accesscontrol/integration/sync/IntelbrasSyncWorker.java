@@ -13,6 +13,8 @@ import br.com.sport.accesscontrol.integration.provider.AccessControlProvider;
 import br.com.sport.accesscontrol.integration.provider.ProviderPerson;
 import br.com.sport.accesscontrol.integration.provider.ProviderSyncResult;
 import br.com.sport.accesscontrol.integration.provider.ProviderSyncStatus;
+import br.com.sport.accesscontrol.mail.MailDeliveryResult;
+import br.com.sport.accesscontrol.mail.MailService;
 import br.com.sport.accesscontrol.realtime.RealtimePublisherService;
 import br.com.sport.accesscontrol.realtime.dto.SystemAlertMessage;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -42,6 +44,7 @@ public class IntelbrasSyncWorker {
     private final IntegrationEventPublisher eventPublisher;
     private final IntegrationSyncRealtimePublisher realtimePublisher;
     private final RealtimePublisherService systemRealtimePublisher;
+    private final MailService mailService;
     private final MeterRegistry meterRegistry;
     private final int maxAttempts;
 
@@ -51,6 +54,7 @@ public class IntelbrasSyncWorker {
                                IntegrationEventPublisher eventPublisher,
                                IntegrationSyncRealtimePublisher realtimePublisher,
                                RealtimePublisherService systemRealtimePublisher,
+                               MailService mailService,
                                MeterRegistry meterRegistry,
                                @Value("${app.integration.intelbras.sync.max-attempts:3}") int maxAttempts) {
         this.employeeRepository = employeeRepository;
@@ -61,6 +65,7 @@ public class IntelbrasSyncWorker {
         this.eventPublisher = eventPublisher;
         this.realtimePublisher = realtimePublisher;
         this.systemRealtimePublisher = systemRealtimePublisher;
+        this.mailService = mailService;
         this.meterRegistry = meterRegistry;
         this.maxAttempts = maxAttempts;
     }
@@ -164,6 +169,7 @@ public class IntelbrasSyncWorker {
         if (result.status() == ProviderSyncStatus.SUCCESS) {
             guest.markSynced();
             auditSuccess(PersonType.GUEST, guest.getId(), result);
+            sendGuestAccessApprovalEmail(guest);
             realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNCED,
                     "Visitante " + guest.getFullName() + " sincronizado com " + target);
         } else {
@@ -205,6 +211,25 @@ public class IntelbrasSyncWorker {
 
     private void auditFailure(PersonType type, UUID id, String error) {
         auditService.record("INTELBRAS_SYNC_FAILED", type.name(), id, Map.of("error", safe(error)), Map.of(), Map.of());
+    }
+
+    private void sendGuestAccessApprovalEmail(Guest guest) {
+        if (guest.hasAccessApprovedEmailBeenSent()) {
+            log.info("guest_access_approval_email_skipped_already_sent guest_id={} sent_at={}",
+                    guest.getId(), guest.getAccessApprovedEmailSentAt());
+            return;
+        }
+
+        MailDeliveryResult delivery;
+        try {
+            delivery = mailService.sendGuestAccessApproved(guest);
+        } catch (Exception exception) {
+            delivery = MailDeliveryResult.failed(exception.getMessage());
+        }
+
+        guest.markAccessApprovedEmail(delivery.status(), safe(delivery.message()), delivery.sent());
+        auditService.record("GUEST_ACCESS_APPROVAL_EMAIL_" + delivery.status(), "Guest", guest.getId(),
+                Map.of("status", delivery.status(), "message", safe(delivery.message())), Map.of(), Map.of());
     }
 
     private String safe(String value) {

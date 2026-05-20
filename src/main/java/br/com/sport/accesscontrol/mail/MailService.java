@@ -39,14 +39,18 @@ public class MailService {
         return send(guest, "Cadastro de visitante concluído - Controle de Acesso", MailTemplates.guestRegistrationCompleted(guest));
     }
 
+    public MailDeliveryResult sendGuestAccessApproved(Guest guest) {
+        return send(guest, "Acesso de visitante liberado", MailTemplates.guestAccessApproved(guest));
+    }
+
     private MailDeliveryResult send(Guest guest, String subject, String html) {
         if (!enabled) {
             log.info("mail_delivery_skipped enabled=false guest_id={} email={}", guest.getId(), guest.getEmail());
-            return MailDeliveryResult.skipped("Email disabled for this environment.");
+            return MailDeliveryResult.skipped("Envio de e-mail desabilitado neste ambiente.");
         }
         if (guest.getEmail() == null || guest.getEmail().isBlank()) {
             log.info("mail_delivery_skipped missing_email guest_id={}", guest.getId());
-            return MailDeliveryResult.skipped("Guest email is empty.");
+            return MailDeliveryResult.skipped("E-mail do visitante não informado.");
         }
 
         try {

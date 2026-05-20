@@ -5,6 +5,7 @@ import br.com.sport.accesscontrol.common.ResourceNotFoundException;
 import br.com.sport.accesscontrol.guests.GuestDtos.GuestRequest;
 import br.com.sport.accesscontrol.guests.GuestDtos.GuestCleanupRequest;
 import br.com.sport.accesscontrol.guests.GuestDtos.GuestCleanupResponse;
+import br.com.sport.accesscontrol.guests.GuestDtos.GuestCleanupMode;
 import br.com.sport.accesscontrol.guests.GuestDtos.GuestResponse;
 import br.com.sport.accesscontrol.guests.GuestDtos.PublicGuestRegistrationResponse;
 import br.com.sport.accesscontrol.guests.GuestDtos.PublicVisitorRegistrationResponse;
@@ -14,8 +15,12 @@ import br.com.sport.accesscontrol.integration.sync.GuestReadyForSyncEvent;
 import br.com.sport.accesscontrol.integration.sync.SyncStatus;
 import br.com.sport.accesscontrol.realtime.RealtimePublisherService;
 import br.com.sport.accesscontrol.realtime.dto.SystemAlertMessage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -24,7 +29,6 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -33,6 +37,7 @@ import java.util.regex.Pattern;
 @Service
 public class GuestService {
 
+    private static final Logger log = LoggerFactory.getLogger(GuestService.class);
     private final GuestRepository guestRepository;
     private final GuestInviteRepository inviteRepository;
     private final FaceStorageService faceStorageService;
@@ -186,6 +191,50 @@ public class GuestService {
 
     @Transactional
     public GuestCleanupResponse cleanup(GuestCleanupRequest request) {
+        var criteria = cleanupCriteria(request);
+        var authenticatedUser = authenticatedUser();
+        log.info("cleanup_requested filters={} authenticatedUser={}", criteria, authenticatedUser);
+
+        if (request.mode() == GuestCleanupMode.ALL && !"LIMPAR".equals(request.confirmationPhrase())) {
+            throw new IllegalArgumentException("Digite LIMPAR para confirmar a limpeza de todos os visitantes.");
+        }
+
+        var guests = request.mode() == null ? legacyCleanupGuests(request) : modeCleanupGuests(request.mode());
+        var removedCount = guests.size();
+        log.info("cleanup_requested filters={} authenticatedUser={} removedCount={}", criteria, authenticatedUser, removedCount);
+
+        var message = removedCount == 0
+                ? "Nenhum visitante encontrado para os filtros informados"
+                : removedCount + " visitantes removidos";
+
+        if (guests.isEmpty()) {
+            auditService.record("GUEST_CLEANUP", "Guest", null,
+                    Map.of("removedCount", 0, "criteria", criteria, "authenticatedUser", authenticatedUser),
+                    Map.of(), Map.of());
+            return new GuestCleanupResponse(0, message);
+        }
+
+        var invites = inviteRepository.findByGuestIn(guests);
+        inviteRepository.deleteAllInBatch(invites);
+        guestRepository.deleteAllInBatch(guests);
+        auditService.record("GUEST_CLEANUP", "Guest", null,
+                Map.of("removedCount", removedCount, "criteria", criteria, "authenticatedUser", authenticatedUser),
+                Map.of("removedIds", guests.stream().map(Guest::getId).map(UUID::toString).toList()), Map.of());
+        return new GuestCleanupResponse(removedCount, message);
+    }
+
+    private List<Guest> modeCleanupGuests(GuestCleanupMode mode) {
+        return guestRepository.findAll().stream()
+                .filter(guest -> switch (mode) {
+                    case CANCELLED -> guest.getStatus() == GuestStatus.CANCELLED;
+                    case FAILED -> guest.getSyncStatus() == SyncStatus.SYNC_FAILED;
+                    case TEST_RECORDS -> isTestRecord(guest);
+                    case ALL -> true;
+                })
+                .toList();
+    }
+
+    private List<Guest> legacyCleanupGuests(GuestCleanupRequest request) {
         var statuses = request.status() == null ? List.<GuestStatus>of() : request.status();
         var syncStatuses = request.integrationStatus() == null ? List.<SyncStatus>of() : request.integrationStatus();
         var olderThanDays = Math.max(0, request.olderThanDays());
@@ -194,27 +243,12 @@ public class GuestService {
             throw new IllegalArgumentException("Informe ao menos um critério para limpar a lista de visitantes.");
         }
 
-        var guests = guestRepository.findAll().stream()
+        return guestRepository.findAll().stream()
                 .filter(guest -> statuses.isEmpty() || statuses.contains(guest.getStatus()))
                 .filter(guest -> syncStatuses.isEmpty() || syncStatuses.contains(guest.getSyncStatus()))
                 .filter(guest -> cutoff == null || guest.getCreatedAt().isBefore(cutoff))
                 .filter(guest -> !request.onlyTestRecords() || isTestRecord(guest))
                 .toList();
-
-        if (guests.isEmpty()) {
-            auditService.record("GUEST_CLEANUP", "Guest", null,
-                    Map.of("removedCount", 0, "criteria", cleanupCriteria(statuses, syncStatuses, olderThanDays, request.onlyTestRecords())),
-                    Map.of(), Map.of());
-            return new GuestCleanupResponse(0);
-        }
-
-        var invites = inviteRepository.findByGuestIn(guests);
-        inviteRepository.deleteAllInBatch(invites);
-        guestRepository.deleteAllInBatch(guests);
-        auditService.record("GUEST_CLEANUP", "Guest", null,
-                Map.of("removedCount", guests.size(), "criteria", cleanupCriteria(statuses, syncStatuses, olderThanDays, request.onlyTestRecords())),
-                Map.of("removedIds", guests.stream().map(Guest::getId).map(UUID::toString).toList()), Map.of());
-        return new GuestCleanupResponse(guests.size());
     }
 
     @Transactional(readOnly = true)
@@ -361,14 +395,24 @@ public class GuestService {
                 || normalized.contains("example");
     }
 
-    private Map<String, Object> cleanupCriteria(Collection<GuestStatus> statuses, Collection<SyncStatus> syncStatuses,
-                                                int olderThanDays, boolean onlyTestRecords) {
+    private Map<String, Object> cleanupCriteria(GuestCleanupRequest request) {
+        var statuses = request.status() == null ? List.<GuestStatus>of() : request.status();
+        var syncStatuses = request.integrationStatus() == null ? List.<SyncStatus>of() : request.integrationStatus();
         return Map.of(
+                "mode", request.mode() == null ? "LEGACY" : request.mode().name(),
                 "status", statuses.stream().map(Enum::name).toList(),
                 "integrationStatus", syncStatuses.stream().map(Enum::name).toList(),
-                "olderThanDays", olderThanDays,
-                "onlyTestRecords", onlyTestRecords
+                "olderThanDays", Math.max(0, request.olderThanDays()),
+                "onlyTestRecords", request.onlyTestRecords()
         );
+    }
+
+    private String authenticatedUser() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return "anonymous";
+        }
+        return authentication.getName();
     }
 
     private Map<String, Object> snapshot(Guest guest) {

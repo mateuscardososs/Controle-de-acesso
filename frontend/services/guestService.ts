@@ -27,6 +27,9 @@ export type Guest = {
   lastSyncAt?: string;
   lastSyncError?: string;
   syncAttempts?: number;
+  accessApprovedEmailSentAt?: string;
+  accessApprovedEmailStatus?: "SENT" | "SKIPPED" | "FAILED" | string;
+  accessApprovedEmailMessage?: string;
 };
 
 export type GuestPayload = {
@@ -43,14 +46,13 @@ export type GuestPayload = {
 };
 
 export type GuestCleanupPayload = {
-  status: GuestStatus[];
-  integrationStatus: SyncStatus[];
-  olderThanDays: number;
-  onlyTestRecords: boolean;
+  mode: "CANCELLED" | "FAILED" | "TEST_RECORDS" | "ALL";
+  confirmationPhrase?: string;
 };
 
 export type GuestCleanupResponse = {
   removedCount: number;
+  message: string;
 };
 
 export type PublicGuestRegistration = {

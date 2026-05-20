@@ -29,14 +29,27 @@ public final class GuestDtos {
     }
 
     public record GuestCleanupRequest(
+            GuestCleanupMode mode,
             List<GuestStatus> status,
             List<SyncStatus> integrationStatus,
             @Min(0) int olderThanDays,
-            boolean onlyTestRecords
+            boolean onlyTestRecords,
+            String confirmationPhrase
     ) {
+        public GuestCleanupRequest(List<GuestStatus> status, List<SyncStatus> integrationStatus,
+                                   int olderThanDays, boolean onlyTestRecords) {
+            this(null, status, integrationStatus, olderThanDays, onlyTestRecords, null);
+        }
     }
 
-    public record GuestCleanupResponse(int removedCount) {
+    public enum GuestCleanupMode {
+        CANCELLED,
+        FAILED,
+        TEST_RECORDS,
+        ALL
+    }
+
+    public record GuestCleanupResponse(int removedCount, String message) {
     }
 
     public record GuestResponse(
@@ -62,7 +75,10 @@ public final class GuestDtos {
             SyncStatus syncStatus,
             Instant lastSyncAt,
             String lastSyncError,
-            int syncAttempts
+            int syncAttempts,
+            Instant accessApprovedEmailSentAt,
+            String accessApprovedEmailStatus,
+            String accessApprovedEmailMessage
     ) {
         static GuestResponse from(Guest guest, GuestInvite invite) {
             return from(guest, invite, null, null, null);
@@ -93,7 +109,10 @@ public final class GuestDtos {
                     guest.getSyncStatus(),
                     guest.getLastSyncAt(),
                     guest.getLastSyncError(),
-                    guest.getSyncAttempts()
+                    guest.getSyncAttempts(),
+                    guest.getAccessApprovedEmailSentAt(),
+                    guest.getAccessApprovedEmailStatus(),
+                    guest.getAccessApprovedEmailMessage()
             );
         }
     }

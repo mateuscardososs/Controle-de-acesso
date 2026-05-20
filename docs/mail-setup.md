@@ -74,8 +74,11 @@ SMTP_STARTTLS=true
 - convite de visitante
 - reenvio de convite
 - confirmação de cadastro concluído
+- liberação de acesso após sincronização Intelbras com sucesso
 
 Se o SMTP falhar, o backend registra falha em auditoria, loga o motivo e preserva o fluxo. O `inviteUrl` continua retornando para uso manual.
+
+O e-mail de liberação de acesso só é enviado quando o visitante chega a `SYNCED`. O backend grava `accessApprovedEmailSentAt`, `accessApprovedEmailStatus` e `accessApprovedEmailMessage` no visitante para não reenviar a mesma confirmação em novas sincronizações.
 
 ## Riscos de produção
 

@@ -22,12 +22,8 @@ import { StatusBadge } from "@/src/components/shared/StatusBadge";
 const statuses: Array<GuestStatus | "ALL"> = ["ALL", "PENDING_REGISTRATION", "COMPLETED", "EXPIRED", "CANCELLED"];
 
 type CleanupForm = {
-  cancelled: boolean;
-  failed: boolean;
-  oldPending: boolean;
-  testRecords: boolean;
-  allOld: boolean;
-  olderThanDays: number;
+  mode: "CANCELLED" | "FAILED" | "TEST_RECORDS" | "ALL";
+  confirmationPhrase: string;
 };
 
 type Toast = {
@@ -58,12 +54,8 @@ export default function GuestsPage() {
   const [toast, setToast] = useState<Toast | null>(null);
   const [activeSyncId, setActiveSyncId] = useState<string | null>(null);
   const [cleanupForm, setCleanupForm] = useState<CleanupForm>({
-    cancelled: true,
-    failed: false,
-    oldPending: false,
-    testRecords: false,
-    allOld: false,
-    olderThanDays: 30
+    mode: "CANCELLED",
+    confirmationPhrase: ""
   });
   const [form, setForm] = useState({
     fullName: "",
@@ -126,7 +118,10 @@ export default function GuestsPage() {
   const cleanup = useMutation({
     mutationFn: () => guestService.cleanup(cleanupPayload(cleanupForm)),
     onSuccess: (result) => {
-      setToast({ tone: "success", message: `${result.removedCount} registros removidos com sucesso.` });
+      setToast({
+        tone: result.removedCount > 0 ? "success" : "info",
+        message: result.removedCount > 0 ? `${result.removedCount} registros removidos.` : "Nenhum registro encontrado para limpar."
+      });
       setCleanupOpen(false);
       queryClient.invalidateQueries({ queryKey: ["guests"] });
     },
@@ -187,6 +182,13 @@ export default function GuestsPage() {
     if (guest.emailDeliveryStatus === "FAILED") return "Falha no e-mail";
     if (guest.emailDeliveryStatus === "SKIPPED") return "E-mail pulado";
     return "E-mail não informado";
+  }
+
+  function accessApprovalEmailLabel(guest: Guest) {
+    if (guest.accessApprovedEmailStatus === "SENT") return "E-mail de liberação enviado";
+    if (guest.accessApprovedEmailStatus === "FAILED") return "Falha no e-mail de liberação";
+    if (guest.accessApprovedEmailStatus === "SKIPPED") return "E-mail de liberação pulado";
+    return "E-mail de liberação não enviado";
   }
 
   function requestSync(guest: Guest) {
@@ -332,6 +334,22 @@ export default function GuestsPage() {
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Mail className="h-4 w-4 text-slate-500" />
+                  <p className="text-sm font-semibold text-slate-100">{accessApprovalEmailLabel(selectedDetails)}</p>
+                </div>
+                {selectedDetails.accessApprovedEmailStatus ? <StatusBadge value={selectedDetails.accessApprovedEmailStatus} /> : null}
+              </div>
+              <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                <DetailItem label="E-mail de aprovação enviado" value={selectedDetails.accessApprovedEmailSentAt ? "sim" : "não"} />
+                <DetailItem label="Data do envio" value={formatDate(selectedDetails.accessApprovedEmailSentAt)} />
+                <DetailItem label="Status do envio" value={emailDeliveryStatusLabel(selectedDetails.accessApprovedEmailStatus)} />
+                <DetailItem label="Resultado" value={selectedDetails.accessApprovedEmailMessage ?? "Sem registro"} danger={selectedDetails.accessApprovedEmailStatus === "FAILED"} />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <p className="text-sm font-semibold text-slate-100">Integração Intelbras</p>
                 <SyncBadge guest={selectedDetails} />
@@ -374,20 +392,21 @@ export default function GuestsPage() {
 
       <Modal title="Limpar lista de visitantes" description="Remova registros antigos com critérios administrativos." open={cleanupOpen} onClose={() => setCleanupOpen(false)}>
         <form onSubmit={(event) => { event.preventDefault(); cleanup.mutate(); }} className="space-y-5">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <CleanupOption label="Apenas cancelados" checked={cleanupForm.cancelled} onChange={(checked) => setCleanupForm({ ...cleanupForm, cancelled: checked })} />
-            <CleanupOption label="Apenas falhos" checked={cleanupForm.failed} onChange={(checked) => setCleanupForm({ ...cleanupForm, failed: checked })} />
-            <CleanupOption label="Apenas pendentes antigos" checked={cleanupForm.oldPending} onChange={(checked) => setCleanupForm({ ...cleanupForm, oldPending: checked })} />
-            <CleanupOption label="Apenas registros de teste/mock" checked={cleanupForm.testRecords} onChange={(checked) => setCleanupForm({ ...cleanupForm, testRecords: checked })} />
-            <CleanupOption label="Todos os registros antigos" checked={cleanupForm.allOld} onChange={(checked) => setCleanupForm({ ...cleanupForm, allOld: checked })} />
+          <div className="grid gap-3">
+            <CleanupOption label="Limpar cancelados" checked={cleanupForm.mode === "CANCELLED"} onChange={() => setCleanupForm({ mode: "CANCELLED", confirmationPhrase: "" })} />
+            <CleanupOption label="Limpar falhos" checked={cleanupForm.mode === "FAILED"} onChange={() => setCleanupForm({ mode: "FAILED", confirmationPhrase: "" })} />
+            <CleanupOption label="Limpar todos os testes" checked={cleanupForm.mode === "TEST_RECORDS"} onChange={() => setCleanupForm({ mode: "TEST_RECORDS", confirmationPhrase: "" })} />
+            <CleanupOption label="Limpar todos" checked={cleanupForm.mode === "ALL"} onChange={() => setCleanupForm({ mode: "ALL", confirmationPhrase: "" })} />
           </div>
-          <Input label="Mais antigos que X dias" type="number" min={0} value={cleanupForm.olderThanDays} onChange={(event) => setCleanupForm({ ...cleanupForm, olderThanDays: Number(event.target.value) })} />
+          {cleanupForm.mode === "ALL" ? (
+            <Input label="Digite LIMPAR para confirmar" value={cleanupForm.confirmationPhrase} onChange={(event) => setCleanupForm({ ...cleanupForm, confirmationPhrase: event.target.value })} />
+          ) : null}
           <div className="rounded-xl border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
             A limpeza remove convites vinculados aos visitantes selecionados e registra auditoria administrativa.
           </div>
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="secondary" onClick={() => setCleanupOpen(false)}>Voltar</Button>
-            <Button variant="danger" icon={Trash2} loading={cleanup.isPending} type="submit">Confirmar limpeza</Button>
+            <Button variant="danger" icon={Trash2} loading={cleanup.isPending} disabled={cleanupForm.mode === "ALL" && cleanupForm.confirmationPhrase !== "LIMPAR"} type="submit">Confirmar limpeza</Button>
           </div>
         </form>
       </Modal>
@@ -462,13 +481,14 @@ function DetailItem({ label, value, danger = false }: { label: string; value: st
   );
 }
 
-function CleanupOption({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
+function CleanupOption({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {
   return (
     <label className="flex min-h-12 cursor-pointer items-center gap-3 rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:bg-white/[0.075]">
       <input
-        type="checkbox"
+        type="radio"
+        name="cleanup-mode"
         checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
+        onChange={onChange}
         className="h-4 w-4 accent-brand-wine"
       />
       {label}
@@ -493,16 +513,9 @@ function GuestsTableSkeleton() {
 }
 
 function cleanupPayload(form: CleanupForm) {
-  const status: GuestStatus[] = [];
-  const integrationStatus: SyncStatus[] = [];
-  if (form.cancelled) status.push("CANCELLED");
-  if (form.oldPending) status.push("PENDING_REGISTRATION");
-  if (form.failed) integrationStatus.push("SYNC_FAILED");
   return {
-    status: form.allOld ? [] : Array.from(new Set(status)),
-    integrationStatus: form.allOld ? [] : integrationStatus,
-    olderThanDays: Math.max(0, form.olderThanDays || 0),
-    onlyTestRecords: form.testRecords
+    mode: form.mode,
+    confirmationPhrase: form.mode === "ALL" ? form.confirmationPhrase : undefined
   };
 }
 
@@ -536,6 +549,15 @@ function intelbrasUserCreated(guest: Guest) {
 
 function formatDate(value?: string) {
   return value ? new Date(value).toLocaleString("pt-BR") : "não informado";
+}
+
+function emailDeliveryStatusLabel(status?: string) {
+  const labels: Record<string, string> = {
+    SENT: "Enviado",
+    SKIPPED: "Pulado",
+    FAILED: "Falhou"
+  };
+  return labels[status ?? ""] ?? "Sem registro";
 }
 
 function guestStatusLabel(status: GuestStatus) {

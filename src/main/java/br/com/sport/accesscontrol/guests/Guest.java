@@ -63,6 +63,15 @@ public class Guest extends TimestampedEntity {
     @Column(name = "sync_attempts", nullable = false)
     private int syncAttempts;
 
+    @Column(name = "access_approved_email_sent_at")
+    private Instant accessApprovedEmailSentAt;
+
+    @Column(name = "access_approved_email_status")
+    private String accessApprovedEmailStatus;
+
+    @Column(name = "access_approved_email_message")
+    private String accessApprovedEmailMessage;
+
     protected Guest() {
     }
 
@@ -193,6 +202,30 @@ public class Guest extends TimestampedEntity {
 
     public int getSyncAttempts() {
         return syncAttempts;
+    }
+
+    public Instant getAccessApprovedEmailSentAt() {
+        return accessApprovedEmailSentAt;
+    }
+
+    public String getAccessApprovedEmailStatus() {
+        return accessApprovedEmailStatus;
+    }
+
+    public String getAccessApprovedEmailMessage() {
+        return accessApprovedEmailMessage;
+    }
+
+    public boolean hasAccessApprovedEmailBeenSent() {
+        return accessApprovedEmailSentAt != null;
+    }
+
+    public void markAccessApprovedEmail(String status, String message, boolean sent) {
+        accessApprovedEmailStatus = status;
+        accessApprovedEmailMessage = message;
+        if (sent) {
+            accessApprovedEmailSentAt = Instant.now();
+        }
     }
 
     public void markPendingSync() {

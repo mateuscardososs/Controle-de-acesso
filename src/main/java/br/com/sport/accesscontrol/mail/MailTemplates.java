@@ -58,6 +58,28 @@ final class MailTemplates {
         );
     }
 
+    static String guestAccessApproved(Guest guest) {
+        return layout(
+                "Acesso de visitante liberado",
+                """
+                        <p>Olá, <strong>%s</strong>. Seu cadastro foi aprovado e seu acesso foi liberado para o período informado.</p>
+                        <div class="panel">
+                          <p><strong>Início da visita:</strong> %s</p>
+                          <p><strong>Fim da visita:</strong> %s</p>
+                          <p><strong>Empresa:</strong> %s</p>
+                          <p><strong>Responsável:</strong> %s</p>
+                        </div>
+                        <p>Compareça à portaria ou recepção no horário combinado para validação de acesso.</p>
+                        """.formatted(
+                        escape(guest.getFullName()),
+                        DATE_TIME.format(guest.getVisitStart()),
+                        DATE_TIME.format(guest.getVisitEnd()),
+                        escape(guest.getCompany()),
+                        escape(guest.getHostName())
+                )
+        );
+    }
+
     private static String layout(String title, String body) {
         return """
                 <!doctype html>

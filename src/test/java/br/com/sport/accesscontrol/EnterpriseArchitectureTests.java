@@ -346,10 +346,57 @@ class EnterpriseArchitectureTests {
         ));
 
         assertThat(result.removedCount()).isEqualTo(1);
+        assertThat(result.message()).contains("removidos");
         verify(guestRepository).deleteAllInBatch(argThat((List<Guest> guests) ->
                 guests.size() == 1 && guests.contains(oldCancelled)
         ));
         verify(auditService).record(eq("GUEST_CLEANUP"), eq("Guest"), isNull(), any(), any(), any());
+    }
+
+    @Test
+    void guestCleanupModeRemovesRecentCancelledRecordsWithoutAgeFilter() {
+        var cancelled = guest();
+        cancelled.cancel();
+        ReflectionTestUtils.setField(cancelled, "createdAt", Instant.now());
+        var active = guest();
+        var guestRepository = mock(GuestRepository.class);
+        var inviteRepository = mock(GuestInviteRepository.class);
+        when(guestRepository.findAll()).thenReturn(List.of(cancelled, active));
+        when(inviteRepository.findByGuestIn(any())).thenReturn(List.of());
+        var service = new GuestService(guestRepository, inviteRepository, mock(FaceStorageService.class),
+                mock(AuditService.class), mock(RealtimePublisherService.class), mock(MailService.class),
+                mock(ApplicationEventPublisher.class), "http://localhost:3000", 72);
+
+        var result = service.cleanup(new GuestDtos.GuestCleanupRequest(
+                GuestDtos.GuestCleanupMode.CANCELLED,
+                null,
+                null,
+                0,
+                false,
+                null
+        ));
+
+        assertThat(result.removedCount()).isEqualTo(1);
+        verify(guestRepository).deleteAllInBatch(argThat((List<Guest> guests) ->
+                guests.size() == 1 && guests.contains(cancelled)
+        ));
+    }
+
+    @Test
+    void guestCleanupAllRequiresTypedConfirmation() {
+        var service = new GuestService(mock(GuestRepository.class), mock(GuestInviteRepository.class),
+                mock(FaceStorageService.class), mock(AuditService.class), mock(RealtimePublisherService.class),
+                mock(MailService.class), mock(ApplicationEventPublisher.class), "http://localhost:3000", 72);
+
+        assertThatThrownBy(() -> service.cleanup(new GuestDtos.GuestCleanupRequest(
+                GuestDtos.GuestCleanupMode.ALL,
+                null,
+                null,
+                0,
+                false,
+                "limpar"
+        ))).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("LIMPAR");
     }
 
     @Test
@@ -436,17 +483,41 @@ class EnterpriseArchitectureTests {
         var provider = mock(AccessControlProvider.class);
         var realtime = mock(IntegrationSyncRealtimePublisher.class);
         var auditService = mock(AuditService.class);
+        var mailService = mock(MailService.class);
         when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
         when(provider.syncPerson(any())).thenReturn(new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "ok", java.time.Duration.ofMillis(5)));
+        when(mailService.sendGuestAccessApproved(guest)).thenReturn(MailDeliveryResult.delivered());
 
         worker(mock(EmployeeRepository.class), guestRepository, provider, auditService,
-                mock(IntegrationEventPublisher.class), realtime, 3)
+                mock(IntegrationEventPublisher.class), realtime, mailService, 3)
                 .process(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, guest.getId(), 1));
 
         assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNCED);
+        assertThat(guest.getAccessApprovedEmailStatus()).isEqualTo("SENT");
+        assertThat(guest.getAccessApprovedEmailSentAt()).isNotNull();
         verify(provider).syncPerson(any());
+        verify(mailService).sendGuestAccessApproved(guest);
         verify(auditService).record(eq("INTELBRAS_SYNC_SUCCEEDED"), eq("GUEST"), eq(guest.getId()), any(), any(), any());
+        verify(auditService).record(eq("GUEST_ACCESS_APPROVAL_EMAIL_SENT"), eq("Guest"), eq(guest.getId()), any(), any(), any());
         verify(realtime).publish(eq(br.com.sport.accesscontrol.common.PersonType.GUEST), eq(guest.getId()), eq(SyncStatus.SYNCED), contains("Visitante"));
+    }
+
+    @Test
+    void intelbrasSyncWorkerDoesNotSendDuplicateGuestApprovalEmail() {
+        var guest = guest();
+        guest.completeRegistration("81999990000", "Empresa", "/uploads/faces/photo.png");
+        guest.markAccessApprovedEmail("SENT", "E-mail enviado.", true);
+        var guestRepository = mock(GuestRepository.class);
+        var provider = mock(AccessControlProvider.class);
+        var mailService = mock(MailService.class);
+        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+        when(provider.syncPerson(any())).thenReturn(new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "ok", java.time.Duration.ofMillis(5)));
+
+        worker(mock(EmployeeRepository.class), guestRepository, provider, mock(AuditService.class),
+                mock(IntegrationEventPublisher.class), mock(IntegrationSyncRealtimePublisher.class), mailService, 3)
+                .process(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, guest.getId(), 1));
+
+        verifyNoInteractions(mailService);
     }
 
     @Test
@@ -553,10 +624,17 @@ class EnterpriseArchitectureTests {
                                        AccessControlProvider provider, AuditService auditService,
                                        IntegrationEventPublisher publisher, IntegrationSyncRealtimePublisher realtime,
                                        int maxAttempts) {
+        return worker(employeeRepository, guestRepository, provider, auditService, publisher, realtime, mock(MailService.class), maxAttempts);
+    }
+
+    private IntelbrasSyncWorker worker(EmployeeRepository employeeRepository, GuestRepository guestRepository,
+                                       AccessControlProvider provider, AuditService auditService,
+                                       IntegrationEventPublisher publisher, IntegrationSyncRealtimePublisher realtime,
+                                       MailService mailService, int maxAttempts) {
         var deviceRepository = mock(DeviceRepository.class);
         when(deviceRepository.findAll()).thenReturn(List.of());
         return new IntelbrasSyncWorker(employeeRepository, guestRepository, deviceRepository, provider, auditService, publisher, realtime,
-                mock(RealtimePublisherService.class), new SimpleMeterRegistry(), maxAttempts);
+                mock(RealtimePublisherService.class), mailService, new SimpleMeterRegistry(), maxAttempts);
     }
 
     private GuestDtos.GuestRequest guestRequest() {
