@@ -56,6 +56,11 @@ export default function OperationsPage() {
     .filter((guest) => guest.lastSyncAt)
     .sort((a, b) => new Date(b.lastSyncAt ?? 0).getTime() - new Date(a.lastSyncAt ?? 0).getTime())
     .slice(0, 4);
+  const intelbrasTarget = devicesWithRealtime.find((device) => [device.model, device.name].some((value) => value?.toLowerCase().includes("intelbras")))?.model ?? "Intelbras";
+  const integrationSignals = realtime.integrationSync.map((event) => ({
+    ...event,
+    title: integrationSyncTitle(event, todayGuests, intelbrasTarget)
+  }));
 
   useEffect(() => {
     if (realtime.accessEvents.length === 0) return;
@@ -67,6 +72,11 @@ export default function OperationsPage() {
     if (realtime.deviceStatuses.length === 0) return;
     queryClient.invalidateQueries({ queryKey: ["devices"] });
   }, [queryClient, realtime.deviceStatuses.length]);
+
+  useEffect(() => {
+    if (realtime.integrationSync.length === 0) return;
+    queryClient.invalidateQueries({ queryKey: ["guests", "today"] });
+  }, [queryClient, realtime.integrationSync.length]);
 
   return (
     <AdminShell>
@@ -87,7 +97,7 @@ export default function OperationsPage() {
         <StatCard title="Dispositivos online" value={devicesWithRealtime.filter((device) => device.status === "ONLINE").length} icon={RadioTower} description="Status atual conhecido" />
         <StatCard title="Dispositivos atenção" value={offlineDevices.length} icon={MonitorCog} description="Offline ou desconhecidos" />
         <StatCard title="Visitantes hoje" value={todayGuests.length} icon={ShieldAlert} description="Convidados no periodo operacional" />
-        <StatCard title="Sync Intelbras" value={failedSync.length} icon={RotateCcw} description="Falhas de sincronizacao fake" />
+        <StatCard title="Sync Intelbras" value={failedSync.length} icon={RotateCcw} description="Falhas de sincronizacao" />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
@@ -113,10 +123,10 @@ export default function OperationsPage() {
                 <p className="text-xs font-semibold uppercase tracking-wide text-emerald-200">Últimas syncs</p>
                 <p className="mt-2 text-2xl font-semibold text-emerald-100">{latestSyncs.length}</p>
               </div>
-              {realtime.integrationSync.slice(0, 4).map((event, index) => (
+              {integrationSignals.slice(0, 4).map((event, index) => (
                 <div key={`${event.personId}-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.045] p-3 md:col-span-3">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-slate-100">{event.personType} {event.personId.slice(0, 8)}</p>
+                    <p className="text-sm font-semibold text-slate-100">{event.title}</p>
                     <StatusBadge value={event.syncStatus} />
                   </div>
                   {event.message ? <p className="mt-1 text-xs text-slate-500">{event.message}</p> : null}
@@ -244,4 +254,20 @@ export default function OperationsPage() {
       </div>
     </AdminShell>
   );
+}
+
+function integrationSyncTitle(
+  event: { personType: string; personId: string; syncStatus: string; message?: string },
+  guests: Array<{ id: string; fullName: string }>,
+  intelbrasTarget: string
+) {
+  if (event.message) return event.message;
+  if (event.personType === "GUEST") {
+    const guestName = guests.find((guest) => guest.id === event.personId)?.fullName ?? `Visitante ${event.personId.slice(0, 8)}`;
+    if (event.syncStatus === "SYNCED") return `${guestName} sincronizado com ${intelbrasTarget}`;
+    if (event.syncStatus === "SYNCING") return `${guestName} sincronizando com ${intelbrasTarget}`;
+    if (event.syncStatus === "SYNC_FAILED") return `${guestName} falhou ao sincronizar com ${intelbrasTarget}`;
+    return `${guestName} aguardando sincronização Intelbras`;
+  }
+  return `${event.personType} ${event.personId.slice(0, 8)} · ${event.syncStatus}`;
 }

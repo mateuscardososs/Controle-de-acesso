@@ -26,6 +26,15 @@ public class Device extends TimestampedEntity {
     @Column(name = "ip_address", nullable = false)
     private String ipAddress;
 
+    @Column(name = "http_port")
+    private Integer httpPort = 80;
+
+    @Column(name = "intelbras_username")
+    private String intelbrasUsername;
+
+    @Column(name = "intelbras_password")
+    private String intelbrasPassword;
+
     private String location;
 
     @Enumerated(EnumType.STRING)
@@ -58,10 +67,16 @@ public class Device extends TimestampedEntity {
 
     public Device(String name, String model, String serialNumber, String ipAddress, String location,
                   DeviceOperationType operationType, DeviceStatus status, Area area) {
+        this(name, model, serialNumber, ipAddress, 80, location, operationType, status, area);
+    }
+
+    public Device(String name, String model, String serialNumber, String ipAddress, Integer httpPort, String location,
+                  DeviceOperationType operationType, DeviceStatus status, Area area) {
         this.name = name;
         this.model = model;
         this.serialNumber = serialNumber;
         this.ipAddress = ipAddress;
+        this.httpPort = normalizeHttpPort(httpPort);
         this.location = location;
         this.operationType = operationType == null ? DeviceOperationType.ENTRY_EXIT : operationType;
         this.status = status == null ? DeviceStatus.UNKNOWN : status;
@@ -87,6 +102,26 @@ public class Device extends TimestampedEntity {
 
     public String getIpAddress() {
         return ipAddress;
+    }
+
+    public Integer getHttpPort() {
+        return httpPort;
+    }
+
+    public String getIntelbrasUsername() {
+        return intelbrasUsername;
+    }
+
+    public void setIntelbrasUsername(String intelbrasUsername) {
+        this.intelbrasUsername = blankToNull(intelbrasUsername);
+    }
+
+    public String getIntelbrasPassword() {
+        return intelbrasPassword;
+    }
+
+    public void setIntelbrasPassword(String intelbrasPassword) {
+        this.intelbrasPassword = blankToNull(intelbrasPassword);
     }
 
     public String getLocation() {
@@ -138,5 +173,13 @@ public class Device extends TimestampedEntity {
         if (communicationFailures >= 3) {
             setStatus(DeviceStatus.OFFLINE);
         }
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private Integer normalizeHttpPort(Integer value) {
+        return value == null ? 80 : value;
     }
 }

@@ -40,11 +40,14 @@ public class DeviceService {
                 request.model(),
                 request.serialNumber(),
                 request.ipAddress(),
+                request.httpPort(),
                 request.location(),
                 request.operationType(),
                 request.status(),
                 area
         );
+        device.setIntelbrasUsername(request.intelbrasUsername());
+        device.setIntelbrasPassword(request.intelbrasPassword());
         var saved = deviceRepository.save(device);
         auditService.record("DEVICE_CREATED", "Device", saved.getId(), Map.of("ipAddress", saved.getIpAddress()),
                 Map.of(), deviceSnapshot(saved));

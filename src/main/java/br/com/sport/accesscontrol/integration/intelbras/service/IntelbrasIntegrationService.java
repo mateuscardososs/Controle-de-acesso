@@ -18,7 +18,7 @@ public class IntelbrasIntegrationService {
     }
 
     public void synchronizeDevice(Device device) {
-        log.info("intelbras_sync_attempt simulated=true device_id={} device_name={}", device.getId(), device.getName());
+        log.info("intelbras_sync_attempt device_id={} device_name={}", device.getId(), device.getName());
         accessControlProvider.fetchDeviceStatus(device.getId());
     }
 }

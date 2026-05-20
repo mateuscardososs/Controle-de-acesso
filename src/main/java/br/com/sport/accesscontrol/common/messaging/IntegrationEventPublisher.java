@@ -1,6 +1,7 @@
 package br.com.sport.accesscontrol.common.messaging;
 
 import br.com.sport.accesscontrol.config.RabbitMqConfig;
+import br.com.sport.accesscontrol.integration.sync.IntelbrasSyncMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.AmqpException;
@@ -24,8 +25,16 @@ public class IntegrationEventPublisher {
         publish(RabbitMqConfig.INTEGRATION_EVENTS_EXCHANGE, "employee.sync", event);
     }
 
-    public void publishIntelbrasSync(Object event) {
-        publish(RabbitMqConfig.INTEGRATION_EVENTS_EXCHANGE, "intelbras.sync.requested", event);
+    public void publishIntelbrasSync(IntelbrasSyncMessage event) {
+        try {
+            rabbitTemplate.convertAndSend(RabbitMqConfig.INTEGRATION_EVENTS_EXCHANGE, "intelbras.sync.requested", event);
+            log.info("rabbit_intelbras_sync_published person_type={} person_id={} attempt={}",
+                    event.personType(), event.personId(), event.attempt());
+        } catch (AmqpException exception) {
+            log.warn("rabbit_event_publish_skipped exchange={} routing_key={} person_type={} person_id={} reason={}",
+                    RabbitMqConfig.INTEGRATION_EVENTS_EXCHANGE, "intelbras.sync.requested",
+                    event.personType(), event.personId(), exception.getMessage());
+        }
     }
 
     public void publishAccessEvent(Object event) {

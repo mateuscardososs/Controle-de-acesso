@@ -100,6 +100,10 @@ export const guestService = {
     const { data } = await api.post<Guest>(`/api/guests/${id}/resend-invite`);
     return data;
   },
+  async retryIntelbrasSync(id: string) {
+    const { data } = await api.post<{ status: string; type: string; id: string }>(`/api/integration/retry/guest/${id}`);
+    return data;
+  },
   async publicRegistration(token: string) {
     const { data } = await api.get<PublicGuestRegistration>(`/api/guest-registration/${token}`);
     return data;

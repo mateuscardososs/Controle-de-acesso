@@ -29,6 +29,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.mock.web.MockMultipartFile;
@@ -394,6 +395,40 @@ class EnterpriseArchitectureTests {
     }
 
     @Test
+    void intelbrasSyncWorkerProcessesValidGuestMessage() {
+        var guest = guest();
+        guest.completeRegistration("81999990000", "Empresa", "/uploads/faces/photo.png");
+        var guestRepository = mock(GuestRepository.class);
+        var provider = mock(AccessControlProvider.class);
+        var realtime = mock(IntegrationSyncRealtimePublisher.class);
+        var auditService = mock(AuditService.class);
+        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+        when(provider.syncPerson(any())).thenReturn(new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "ok", java.time.Duration.ofMillis(5)));
+
+        worker(mock(EmployeeRepository.class), guestRepository, provider, auditService,
+                mock(IntegrationEventPublisher.class), realtime, 3)
+                .process(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, guest.getId(), 1));
+
+        assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNCED);
+        verify(provider).syncPerson(any());
+        verify(auditService).record(eq("INTELBRAS_SYNC_SUCCEEDED"), eq("GUEST"), eq(guest.getId()), any(), any(), any());
+        verify(realtime).publish(eq(br.com.sport.accesscontrol.common.PersonType.GUEST), eq(guest.getId()), eq(SyncStatus.SYNCED), contains("Visitante"));
+    }
+
+    @Test
+    void intelbrasSyncWorkerDropsInvalidMessageWithoutRetryLoop() {
+        var provider = mock(AccessControlProvider.class);
+        var publisher = mock(IntegrationEventPublisher.class);
+
+        worker(mock(EmployeeRepository.class), mock(GuestRepository.class), provider, mock(AuditService.class),
+                publisher, mock(IntegrationSyncRealtimePublisher.class), 3)
+                .process(new IntelbrasSyncMessage(null, null, 0));
+
+        verifyNoInteractions(provider);
+        verifyNoInteractions(publisher);
+    }
+
+    @Test
     void manualRetryEndpointQueuesSyncMessageAndAudits() {
         var publisher = mock(IntegrationEventPublisher.class);
         var auditService = mock(AuditService.class);
@@ -405,6 +440,22 @@ class EnterpriseArchitectureTests {
         assertThat(response).containsEntry("status", "queued");
         verify(auditService).record(eq("INTELBRAS_SYNC_MANUAL_RETRY"), eq("GUEST"), eq(id), any(), any(), any());
         verify(publisher).publishIntelbrasSync(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, id, 1));
+    }
+
+    @Test
+    void intelbrasSyncPublisherSendsRawMessageToRabbit() {
+        var rabbitTemplate = mock(RabbitTemplate.class);
+        var publisher = new IntegrationEventPublisher(rabbitTemplate);
+        var id = UUID.randomUUID();
+        var message = new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, id, 1);
+
+        publisher.publishIntelbrasSync(message);
+
+        verify(rabbitTemplate).convertAndSend(
+                eq(RabbitMqConfig.INTEGRATION_EVENTS_EXCHANGE),
+                eq("intelbras.sync.requested"),
+                eq(message)
+        );
     }
 
     private Area area() {
@@ -449,7 +500,9 @@ class EnterpriseArchitectureTests {
                                        AccessControlProvider provider, AuditService auditService,
                                        IntegrationEventPublisher publisher, IntegrationSyncRealtimePublisher realtime,
                                        int maxAttempts) {
-        return new IntelbrasSyncWorker(employeeRepository, guestRepository, provider, auditService, publisher, realtime,
+        var deviceRepository = mock(DeviceRepository.class);
+        when(deviceRepository.findAll()).thenReturn(List.of());
+        return new IntelbrasSyncWorker(employeeRepository, guestRepository, deviceRepository, provider, auditService, publisher, realtime,
                 mock(RealtimePublisherService.class), new SimpleMeterRegistry(), maxAttempts);
     }
 

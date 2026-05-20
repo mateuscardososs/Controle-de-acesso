@@ -62,6 +62,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/dashboard/**").hasAnyRole("ADMIN", "HR", "SECURITY_VIEWER")
                         .requestMatchers(HttpMethod.GET, "/api/devices/**").hasAnyRole("ADMIN", "HR", "SECURITY_VIEWER")
                         .requestMatchers("/api/devices/**").hasAnyRole("ADMIN", "HR")
+                        .requestMatchers(HttpMethod.GET, "/api/integration/**").hasAnyRole("ADMIN", "HR", "SECURITY_VIEWER")
                         .requestMatchers(HttpMethod.POST, "/api/integration/retry/**").hasAnyRole("ADMIN", "HR")
                         .requestMatchers(HttpMethod.GET, "/api/access-events/**").hasAnyRole("ADMIN", "HR", "SECURITY_VIEWER")
                         .requestMatchers("/api/access-events/**").hasAnyRole("ADMIN", "HR")

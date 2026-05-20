@@ -1,0 +1,264 @@
+# Intelbras Real Provider
+
+## Escopo
+
+Integração real para controladoras Intelbras SS 5531 MF W usando:
+
+- RPC2 HTTP para login, usuários e faces.
+- CGI com Digest Auth para status/configuração/snapshot/recordFinder.
+- Provider fake preservado como padrão de desenvolvimento.
+
+Device real validado:
+
+- IP: `192.168.15.5`
+- HTTP: `80`
+- Modelo: `SS 5531 MF W`
+- Serial: `DRWL3903457HU`
+- API: HTTP RPC2 + CGI Digest
+
+## Configuração
+
+Modo padrão:
+
+```properties
+app.intelbras.mode=fake
+```
+
+Modo real:
+
+```properties
+app.intelbras.mode=real
+app.intelbras.default-username=admin
+app.intelbras.default-password=<senha>
+app.intelbras.connection-timeout=3s
+app.intelbras.read-timeout=5s
+```
+
+As credenciais podem vir do device. Se `intelbrasUsername` ou `intelbrasPassword` não forem informados no cadastro do device, o provider usa os defaults globais.
+
+Exemplo de cadastro do device real via API:
+
+```bash
+curl -X POST http://localhost:8080/api/devices \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Intelbras SS 5531 Portaria",
+    "model": "Intelbras SS 5531 MF W",
+    "serialNumber": "DRWL3903457HU",
+    "ipAddress": "192.168.15.5",
+    "httpPort": 80,
+    "intelbrasUsername": "admin",
+    "intelbrasPassword": "<senha>",
+    "location": "Portaria",
+    "operationType": "ENTRY_EXIT",
+    "status": "ONLINE",
+    "areaId": "<areaId>"
+  }'
+```
+
+`DeviceResponse` nunca retorna a senha; ele expõe apenas `intelbrasPasswordConfigured`.
+
+### Cadastro via interface
+
+Na tela `/devices`, clique em **Novo dispositivo** e use **Preencher modelo Intelbras SS 5531** para aplicar os valores sugeridos do modelo real. Para a controladora validada, preencha:
+
+- Nome: `Intelbras Portaria`
+- Modelo: `Intelbras SS 5531 MF W`
+- Serial: `DRWL3903457HU`
+- IP: `192.168.15.5`
+- Porta HTTP: `80`
+- Usuário: `admin`
+- Senha: `admin123`
+- Área: `Portaria`
+- Localização: `Portaria principal`
+- Operação: `Entrada/Saída`
+- Status: `Online`
+
+A senha é enviada somente no cadastro e não aparece na listagem; a interface mostra apenas se as credenciais estão configuradas.
+
+## Login RPC2
+
+Endpoint:
+
+```text
+POST http://192.168.15.5/RPC2
+```
+
+Primeira chamada, sem senha:
+
+```bash
+curl -s http://192.168.15.5/RPC2 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "method": "global.login",
+    "params": {
+      "userName": "admin",
+      "password": "",
+      "clientType": "Web3.0"
+    },
+    "id": 1
+  }'
+```
+
+A resposta traz `realm`, `random` e `session`. O client calcula:
+
+```text
+pwd1 = MD5(username:realm:password).upper()
+pwd2 = MD5(username:random:pwd1).upper()
+```
+
+Segunda chamada:
+
+```bash
+curl -s http://192.168.15.5/RPC2 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "method": "global.login",
+    "params": {
+      "userName": "admin",
+      "password": "<pwd2>",
+      "clientType": "Web3.0",
+      "authorityType": "Default"
+    },
+    "session": "<session>",
+    "id": 2
+  }'
+```
+
+Keep alive:
+
+```json
+{
+  "method": "global.keepAlive",
+  "params": { "timeout": 300, "active": true },
+  "session": "<session>",
+  "id": 3
+}
+```
+
+## Fluxo de Face
+
+O `IntelbrasRealProvider.syncPerson` faz:
+
+1. Resolve devices Intelbras cadastrados.
+2. Usa credencial por device ou default global.
+3. Faz login RPC2 via challenge.
+4. Converte a imagem local para JPEG Base64.
+5. Executa `AccessUser.startFind`.
+6. Tenta garantir o usuário com `AccessUser.insertMulti`.
+7. Consulta `AccessFace.list`.
+8. Envia a face por `AccessFace.insertMulti` com `PhotoData`.
+9. Envia `global.keepAlive`.
+
+Payload base usado para face:
+
+```json
+{
+  "method": "AccessFace.insertMulti",
+  "params": {
+    "FaceList": [
+      {
+        "UserID": "12345678901",
+        "Name": "Nome da Pessoa",
+        "PhotoData": "<jpeg-base64>"
+      }
+    ]
+  },
+  "session": "<session>",
+  "id": 10
+}
+```
+
+## CGI Digest
+
+Endpoints implementados:
+
+```text
+/cgi-bin/magicBox.cgi?action=getDeviceType
+/cgi-bin/magicBox.cgi?action=getSerialNo
+/cgi-bin/magicBox.cgi?action=getSoftwareVersion
+/cgi-bin/global.cgi?action=getCurrentTime
+/cgi-bin/configManager.cgi?action=getConfig&name=Network
+/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard
+/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCardRec
+/cgi-bin/snapshot.cgi?channel=1
+```
+
+Exemplo:
+
+```bash
+curl --digest -u "admin:<senha>" \
+  "http://192.168.15.5/cgi-bin/magicBox.cgi?action=getSerialNo"
+```
+
+Snapshot:
+
+```bash
+curl --digest -u "admin:<senha>" \
+  "http://192.168.15.5/cgi-bin/snapshot.cgi?channel=1" \
+  -o snapshot.jpg
+```
+
+## Eventos Reais
+
+Eventos confirmados:
+
+```text
+/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCardRec
+```
+
+Exemplo:
+
+```bash
+curl --digest -u "admin:<senha>" \
+  "http://192.168.15.5/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCardRec"
+```
+
+Endpoint administrativo para importar e publicar realtime:
+
+```bash
+curl -X POST http://localhost:8080/api/admin/intelbras/devices/<deviceId>/events/import \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+O import salva em `access_events`, faz dedupe por `deviceId + personId + eventTime + origin`, registra auditoria e publica no WebSocket `/topic/access-events`.
+
+## Mapeamento AccessControlCardRec
+
+Campos preservados no `rawPayload`:
+
+- `CardName`
+- `UserID`
+- `Status`
+- `Type`
+- `CreateTime`
+- `URL`
+- `ErrorCode`
+- `Door`
+- `ReaderID`
+
+Normalização:
+
+- `Status=1` e `ErrorCode=0` viram `ALLOWED`.
+- `Status=0` ou erro viram `DENIED`/`ERROR`.
+- `ReaderID=2` ou `Type=Exit` vira `EXIT`.
+- Demais eventos permitidos viram `ENTRY`.
+- Eventos negados viram `ACCESS_DENIED`.
+
+O import tenta resolver pessoa por CPF em colaboradores e visitantes. Se não encontrar, usa um UUID determinístico a partir do identificador externo para manter o evento persistível.
+
+## Segurança
+
+- Senha nunca é logada.
+- Erros mascaram IPv4 como `192.168.*.*`.
+- `DeviceResponse` não expõe senha.
+- Timeouts curtos são configuráveis.
+- RPC/CGI fazem retry controlado de uma repetição em falhas transitórias de I/O.
+
+## Limitações Conhecidas
+
+- `AccessUser.insertMulti`, `AccessFace.removeMulti` e `AccessUser.removeMulti` podem variar por firmware. O provider registra falhas sem expor senha.
+- `ProviderPermission` atual não carrega documento/UserID, então o provider real aceita a alteração e aplica validade no próximo `syncPerson`.
+- A importação de eventos é manual por endpoint administrativo nesta etapa.
+- Não há criptografia dedicada para `intelbras_password` em banco; use default por ambiente quando isso for preferível operacionalmente.

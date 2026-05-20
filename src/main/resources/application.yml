@@ -49,6 +49,12 @@ logging:
     br.com.sport.accesscontrol: INFO
 
 app:
+  intelbras:
+    mode: ${APP_INTELBRAS_MODE:fake}
+    default-username: ${APP_INTELBRAS_DEFAULT_USERNAME:}
+    default-password: ${APP_INTELBRAS_DEFAULT_PASSWORD:}
+    connection-timeout: ${APP_INTELBRAS_CONNECTION_TIMEOUT:3s}
+    read-timeout: ${APP_INTELBRAS_READ_TIMEOUT:5s}
   frontend:
     public-base-url: ${FRONTEND_PUBLIC_BASE_URL:http://localhost:3000}
   mail:

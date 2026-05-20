@@ -9,4 +9,6 @@ public interface AccessEventRepository extends JpaRepository<AccessEvent, UUID> 
     long countByEventTimeBetween(Instant startInclusive, Instant endExclusive);
 
     long countByAccessResult(AccessResult accessResult);
+
+    boolean existsByDevice_IdAndPersonIdAndEventTimeAndOrigin(UUID deviceId, UUID personId, Instant eventTime, String origin);
 }

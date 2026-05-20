@@ -6,6 +6,7 @@ const labels: Record<string, string> = {
   BLOCKED: "Bloqueado",
   ONLINE: "Online",
   OFFLINE: "Offline",
+  MAINTENANCE: "Manutenção",
   UNKNOWN: "Desconhecido",
   ALLOWED: "Permitido",
   DENIED: "Negado",
@@ -48,7 +49,7 @@ export function StatusBadge({ value }: { value?: string | boolean | null }) {
       ? "green"
       : normalized === "DENIED" || normalized === "BLOCKED" || normalized === "OFFLINE" || normalized === "ERROR" || normalized === "FAILED" || normalized === "SYNC_FAILED"
         ? "red"
-        : normalized === "UNKNOWN"
+        : normalized === "UNKNOWN" || normalized === "MAINTENANCE"
           ? "amber"
           : normalized === "PENDING_SYNC" || normalized === "SYNCING"
             ? "amber"

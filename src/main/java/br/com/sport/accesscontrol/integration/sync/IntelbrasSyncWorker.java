@@ -4,6 +4,7 @@ import br.com.sport.accesscontrol.audit.AuditService;
 import br.com.sport.accesscontrol.common.PersonType;
 import br.com.sport.accesscontrol.common.messaging.IntegrationEventPublisher;
 import br.com.sport.accesscontrol.config.RabbitMqConfig;
+import br.com.sport.accesscontrol.devices.DeviceRepository;
 import br.com.sport.accesscontrol.employees.Employee;
 import br.com.sport.accesscontrol.employees.EmployeeRepository;
 import br.com.sport.accesscontrol.guests.Guest;
@@ -35,6 +36,7 @@ public class IntelbrasSyncWorker {
 
     private final EmployeeRepository employeeRepository;
     private final GuestRepository guestRepository;
+    private final DeviceRepository deviceRepository;
     private final AccessControlProvider provider;
     private final AuditService auditService;
     private final IntegrationEventPublisher eventPublisher;
@@ -44,6 +46,7 @@ public class IntelbrasSyncWorker {
     private final int maxAttempts;
 
     public IntelbrasSyncWorker(EmployeeRepository employeeRepository, GuestRepository guestRepository,
+                               DeviceRepository deviceRepository,
                                AccessControlProvider provider, AuditService auditService,
                                IntegrationEventPublisher eventPublisher,
                                IntegrationSyncRealtimePublisher realtimePublisher,
@@ -52,6 +55,7 @@ public class IntelbrasSyncWorker {
                                @Value("${app.integration.intelbras.sync.max-attempts:3}") int maxAttempts) {
         this.employeeRepository = employeeRepository;
         this.guestRepository = guestRepository;
+        this.deviceRepository = deviceRepository;
         this.provider = provider;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
@@ -68,6 +72,10 @@ public class IntelbrasSyncWorker {
 
     @Transactional
     public void process(IntelbrasSyncMessage message) {
+        if (invalid(message)) {
+            log.warn("intelbras_sync_worker_invalid_message message={}", message);
+            return;
+        }
         log.info("intelbras_sync_worker_start person_type={} person_id={} attempt={}",
                 message.personType(), message.personId(), message.attempt());
         var sample = Timer.start(meterRegistry);
@@ -109,9 +117,15 @@ public class IntelbrasSyncWorker {
 
     private ProviderSyncResult syncGuest(UUID guestId) {
         var guest = guestRepository.findById(guestId).orElseThrow();
+        var target = intelbrasTarget();
+        var targetDeviceId = intelbrasTargetDeviceId();
         guest.markSyncing();
         auditStart(PersonType.GUEST, guestId, guest.getSyncAttempts());
-        realtimePublisher.publish(PersonType.GUEST, guestId, SyncStatus.SYNCING, "Sincronizando Intelbras");
+        log.info("intelbras_sync_guest_start person_type={} guest_id={} device_id={} face_photo_configured={} attempt={}",
+                PersonType.GUEST, guestId, targetDeviceId, guest.getFacePhotoUrl() != null && !guest.getFacePhotoUrl().isBlank(),
+                guest.getSyncAttempts());
+        realtimePublisher.publish(PersonType.GUEST, guestId, SyncStatus.SYNCING,
+                "Sincronizando visitante " + guest.getFullName() + " com " + target);
         var result = provider.syncPerson(new ProviderPerson(
                 PersonType.GUEST,
                 guest.getId(),
@@ -122,7 +136,7 @@ public class IntelbrasSyncWorker {
                 guest.getVisitStart(),
                 guest.getVisitEnd()
         ));
-        finishGuest(guest, result);
+        finishGuest(guest, result, target);
         return result;
     }
 
@@ -138,15 +152,17 @@ public class IntelbrasSyncWorker {
         }
     }
 
-    private void finishGuest(Guest guest, ProviderSyncResult result) {
+    private void finishGuest(Guest guest, ProviderSyncResult result, String target) {
         if (result.status() == ProviderSyncStatus.SUCCESS) {
             guest.markSynced();
             auditSuccess(PersonType.GUEST, guest.getId(), result);
-            realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNCED, result.message());
+            realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNCED,
+                    "Visitante " + guest.getFullName() + " sincronizado com " + target);
         } else {
             guest.markSyncFailed(result.message());
             auditFailure(PersonType.GUEST, guest.getId(), result.message());
-            realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNC_FAILED, result.message());
+            realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNC_FAILED,
+                    "Falha ao sincronizar visitante " + guest.getFullName() + " com " + target + ": " + safe(result.message()));
         }
     }
 
@@ -185,5 +201,29 @@ public class IntelbrasSyncWorker {
 
     private String safe(String value) {
         return value == null ? "" : value;
+    }
+
+    private boolean invalid(IntelbrasSyncMessage message) {
+        return message == null || message.personType() == null || message.personId() == null || message.attempt() < 1;
+    }
+
+    private String intelbrasTarget() {
+        return deviceRepository.findAll().stream()
+                .filter(device -> containsIntelbras(device.getModel()) || containsIntelbras(device.getName()))
+                .findFirst()
+                .map(device -> device.getModel() == null || device.getModel().isBlank() ? device.getName() : device.getModel())
+                .orElse("Intelbras");
+    }
+
+    private String intelbrasTargetDeviceId() {
+        return deviceRepository.findAll().stream()
+                .filter(device -> containsIntelbras(device.getModel()) || containsIntelbras(device.getName()))
+                .findFirst()
+                .map(device -> device.getId() == null ? "unknown" : device.getId().toString())
+                .orElse("none");
+    }
+
+    private boolean containsIntelbras(String value) {
+        return value != null && value.toLowerCase(java.util.Locale.ROOT).contains("intelbras");
     }
 }

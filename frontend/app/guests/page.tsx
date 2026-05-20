@@ -1,21 +1,30 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Copy, Mail, Plus, RefreshCw, Search, XCircle } from "lucide-react";
+import { AlertCircle, CalendarDays, CheckCircle2, Copy, Eye, Loader2, Mail, Plus, RefreshCw, RotateCcw, Search, XCircle, type LucideIcon } from "lucide-react";
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
 import { apiErrorMessage } from "@/lib/errors";
-import { guestService, Guest, GuestStatus } from "@/services/guestService";
+import { Device, deviceService } from "@/services/deviceService";
+import { guestService, Guest, GuestStatus, SyncStatus } from "@/services/guestService";
+import { integrationService } from "@/services/integrationService";
+import { useRealtime } from "@/src/hooks/useRealtime";
+import { Badge } from "@/src/components/ui/Badge";
 import { Button } from "@/src/components/ui/Button";
 import { Card, CardContent } from "@/src/components/ui/Card";
-import { Input, Select, Textarea } from "@/src/components/ui/Input";
+import { Input, Select } from "@/src/components/ui/Input";
 import { Modal } from "@/src/components/ui/Modal";
 import { DataTable } from "@/src/components/shared/DataTable";
 import { StatusBadge } from "@/src/components/shared/StatusBadge";
 
 const statuses: Array<GuestStatus | "ALL"> = ["ALL", "PENDING_REGISTRATION", "COMPLETED", "EXPIRED", "CANCELLED"];
+
+type Toast = {
+  tone: "success" | "error" | "info";
+  message: string;
+};
 
 function localDateTime(daysFromNow = 0) {
   const date = new Date();
@@ -26,12 +35,17 @@ function localDateTime(daysFromNow = 0) {
 
 export default function GuestsPage() {
   const queryClient = useQueryClient();
+  const realtime = useRealtime();
   const guests = useQuery({ queryKey: ["guests"], queryFn: guestService.list });
+  const devices = useQuery({ queryKey: ["devices"], queryFn: deviceService.list });
+  const intelbrasStatus = useQuery({ queryKey: ["intelbras-status"], queryFn: integrationService.intelbrasStatus });
   const [open, setOpen] = useState(false);
   const [details, setDetails] = useState<Guest | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<GuestStatus | "ALL">("ALL");
   const [message, setMessage] = useState("");
+  const [toast, setToast] = useState<Toast | null>(null);
+  const [activeSyncId, setActiveSyncId] = useState<string | null>(null);
   const [form, setForm] = useState({
     fullName: "",
     cpf: "",
@@ -43,6 +57,32 @@ export default function GuestsPage() {
     visitStart: localDateTime(),
     visitEnd: localDateTime(1)
   });
+
+  const intelbrasDevices = useMemo(() => (devices.data ?? []).filter(isIntelbrasDevice), [devices.data]);
+  const primaryIntelbrasDevice = intelbrasDevices[0];
+  const syncEnabled = intelbrasStatus.data?.syncEnabled === true;
+  const intelbrasMode = intelbrasStatus.data?.mode ?? "fake";
+
+  const guestsWithRealtime = useMemo(() => {
+    const latestSyncByGuest = new Map<string, { syncStatus: string; message?: string; occurredAt?: string }>();
+    for (const event of realtime.integrationSync) {
+      if (event.personType !== "GUEST" || latestSyncByGuest.has(event.personId)) continue;
+      latestSyncByGuest.set(event.personId, event);
+    }
+
+    return (guests.data ?? []).map((guest) => {
+      const sync = latestSyncByGuest.get(guest.id);
+      if (!sync) return guest;
+      return {
+        ...guest,
+        syncStatus: sync.syncStatus as SyncStatus,
+        lastSyncAt: sync.syncStatus === "SYNCED" || sync.syncStatus === "SYNC_FAILED" ? sync.occurredAt ?? guest.lastSyncAt : guest.lastSyncAt,
+        lastSyncError: sync.syncStatus === "SYNC_FAILED" ? sync.message ?? guest.lastSyncError : sync.syncStatus === "SYNCED" ? undefined : guest.lastSyncError
+      };
+    });
+  }, [guests.data, realtime.integrationSync]);
+
+  const selectedDetails = details ? guestsWithRealtime.find((guest) => guest.id === details.id) ?? details : null;
 
   const create = useMutation({
     mutationFn: () => guestService.create({ ...form, visitStart: new Date(form.visitStart).toISOString(), visitEnd: new Date(form.visitEnd).toISOString() }),
@@ -57,26 +97,50 @@ export default function GuestsPage() {
 
   const cancel = useMutation({
     mutationFn: (id: string) => guestService.cancel(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["guests"] })
+    onSuccess: () => {
+      setToast({ tone: "success", message: "Visitante cancelado." });
+      queryClient.invalidateQueries({ queryKey: ["guests"] });
+    },
+    onError: (error) => setToast({ tone: "error", message: apiErrorMessage(error, "Não foi possível cancelar o visitante.") })
   });
 
-  const resend = useMutation({
-    mutationFn: (id: string) => guestService.resendInvite(id),
-    onSuccess: (guest) => {
-      setDetails(guest);
-      setMessage(guest.emailDeliveryStatus === "SENT" ? "Convite reenviado por e-mail." : "Novo link gerado. E-mail não enviado ou falhou; use copiar link.");
+  const sync = useMutation({
+    mutationFn: (id: string) => guestService.retryIntelbrasSync(id),
+    onMutate: async (id) => {
+      setActiveSyncId(id);
+      setToast({ tone: "info", message: "Sincronização Intelbras enfileirada." });
+      await queryClient.cancelQueries({ queryKey: ["guests"] });
+      queryClient.setQueryData<Guest[]>(["guests"], (current) =>
+        current?.map((guest) => guest.id === id ? { ...guest, syncStatus: "SYNCING", lastSyncError: undefined } : guest)
+      );
+    },
+    onSuccess: () => {
+      setToast({ tone: "success", message: "Pedido de sync enviado para o backend." });
       queryClient.invalidateQueries({ queryKey: ["guests"] });
-    }
+    },
+    onError: (error) => setToast({ tone: "error", message: apiErrorMessage(error, "Não foi possível iniciar a sincronização Intelbras.") }),
+    onSettled: () => setActiveSyncId(null)
   });
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 4500);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
+  useEffect(() => {
+    if (!realtime.integrationSync.some((event) => event.personType === "GUEST")) return;
+    queryClient.invalidateQueries({ queryKey: ["guests"] });
+  }, [queryClient, realtime.integrationSync.length]);
 
   const filteredGuests = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return (guests.data ?? []).filter((guest) => {
+    return guestsWithRealtime.filter((guest) => {
       const matchesStatus = status === "ALL" || guest.status === status;
       const matchesSearch = !term || [guest.fullName, guest.cpf, guest.email, guest.company, guest.hostName].some((value) => value?.toLowerCase().includes(term));
       return matchesStatus && matchesSearch;
     });
-  }, [guests.data, search, status]);
+  }, [guestsWithRealtime, search, status]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -96,14 +160,29 @@ export default function GuestsPage() {
     return "E-mail não informado";
   }
 
+  function requestSync(guest: Guest) {
+    const reason = syncDisabledReason(guest, syncEnabled, intelbrasStatus.isLoading, false);
+    if (reason) {
+      setToast({ tone: "error", message: reason });
+      return;
+    }
+    sync.mutate(guest.id);
+  }
+
   return (
     <AdminShell>
       <PageHeader
         eyebrow="Visitantes"
         title="Convidados"
-        description="Convites, cadastro facial e acompanhamento de visitantes antes da integracao Intelbras real."
+        description="Convites, cadastro facial e sincronização operacional com Intelbras real."
         actions={<Button icon={Plus} onClick={() => setOpen(true)}>Novo visitante</Button>}
       />
+
+      {toast ? (
+        <div role="status" className={`fixed right-5 top-5 z-[60] max-w-sm rounded-xl border px-4 py-3 text-sm font-semibold shadow-enterprise backdrop-blur ${toast.tone === "error" ? "border-red-300/20 bg-red-500/20 text-red-100" : toast.tone === "success" ? "border-emerald-300/20 bg-emerald-400/20 text-emerald-100" : "border-sky-300/20 bg-sky-400/20 text-sky-100"}`}>
+          {toast.message}
+        </div>
+      ) : null}
 
       <Card className="mb-5">
         <CardContent className="grid gap-3 lg:grid-cols-[1fr_220px]">
@@ -117,6 +196,12 @@ export default function GuestsPage() {
         </CardContent>
       </Card>
 
+      {!intelbrasStatus.isLoading && !syncEnabled ? (
+        <div className="mb-4 rounded-xl border border-amber-300/20 bg-amber-400/12 px-4 py-3 text-sm font-medium text-amber-100">
+          Modo fake/dev ativo. A sincronização manual com Intelbras real fica desabilitada até `APP_INTELBRAS_MODE=real`.
+        </div>
+      ) : null}
+
       {message ? <div className="mb-4 rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm font-medium text-slate-300 shadow-sm">{message}</div> : null}
       {guests.isLoading ? <LoadingState label="Carregando visitantes..." /> : null}
       {guests.isError ? <ErrorState label="Não foi possível carregar visitantes." /> : null}
@@ -126,21 +211,30 @@ export default function GuestsPage() {
           data={filteredGuests}
           getRowKey={(guest) => guest.id}
           columns={[
-            { key: "name", header: "Visitante", className: "font-semibold text-slate-100", render: (guest) => guest.fullName },
+            { key: "name", header: "Visitante", className: "min-w-[180px] font-semibold text-slate-100", render: (guest) => guest.fullName },
             { key: "company", header: "Empresa", render: (guest) => guest.company ?? "Nao informada" },
             { key: "host", header: "Responsavel", render: (guest) => guest.hostName },
-            { key: "visit", header: "Visita", render: (guest) => <span className="inline-flex items-center gap-2"><CalendarDays className="h-4 w-4 text-slate-400" />{new Date(guest.visitStart).toLocaleString("pt-BR")}</span> },
+            { key: "visit", header: "Visita", className: "min-w-[190px]", render: (guest) => <span className="inline-flex items-center gap-2"><CalendarDays className="h-4 w-4 text-slate-400" />{new Date(guest.visitStart).toLocaleString("pt-BR")}</span> },
             { key: "status", header: "Status", render: (guest) => <StatusBadge value={guest.status} /> },
+            { key: "integration", header: "Integração", className: "min-w-[180px]", render: (guest) => <SyncBadge guest={guest} /> },
             {
               key: "actions",
-              header: "Acoes",
-              render: (guest) => (
-                <div className="flex items-center gap-1">
-                  <Button variant="ghost" onClick={() => setDetails(guest)}>Detalhes</Button>
-                  <Button aria-label="Reenviar convite" variant="ghost" icon={RefreshCw} className="h-9 w-9 px-0" onClick={() => resend.mutate(guest.id)} disabled={guest.status === "COMPLETED" || resend.isPending} />
-                  <Button aria-label="Cancelar" variant="ghost" icon={XCircle} className="h-9 w-9 px-0" onClick={() => cancel.mutate(guest.id)} disabled={guest.status === "CANCELLED"} />
-                </div>
-              )
+              header: "Ações",
+              headerClassName: "min-w-[460px]",
+              className: "min-w-[460px]",
+              render: (guest) => {
+                const syncReason = syncDisabledReason(guest, syncEnabled, intelbrasStatus.isLoading, false);
+                const retryReason = syncDisabledReason(guest, syncEnabled, intelbrasStatus.isLoading, true);
+                const isSyncing = activeSyncId === guest.id && sync.isPending;
+                return (
+                  <div className="flex min-w-[430px] flex-wrap items-center gap-2">
+                    <ActionButton title="Abrir detalhes operacionais do visitante" ariaLabel={`Abrir detalhes de ${guest.fullName}`} icon={Eye} onClick={() => setDetails(guest)}>Detalhes</ActionButton>
+                    <ActionButton title={syncReason || "Sincronizar visitante com Intelbras"} ariaLabel={`Sincronizar ${guest.fullName} com Intelbras`} icon={RefreshCw} loading={isSyncing} disabled={Boolean(syncReason) || isSyncing} onClick={() => requestSync(guest)}>Sincronizar</ActionButton>
+                    <ActionButton title={retryReason || "Executar retry da sincronização Intelbras"} ariaLabel={`Executar retry Intelbras para ${guest.fullName}`} icon={RotateCcw} loading={isSyncing} disabled={Boolean(retryReason) || isSyncing} onClick={() => requestSync(guest)}>Retry</ActionButton>
+                    <ActionButton title={guest.status === "CANCELLED" ? "Visitante já cancelado" : "Cancelar visitante"} ariaLabel={`Cancelar ${guest.fullName}`} icon={XCircle} disabled={guest.status === "CANCELLED" || cancel.isPending} onClick={() => cancel.mutate(guest.id)}>Cancelar</ActionButton>
+                  </div>
+                );
+              }
             }
           ]}
         />
@@ -173,40 +267,63 @@ export default function GuestsPage() {
         </form>
       </Modal>
 
-      <Modal title="Detalhes do visitante" open={!!details} onClose={() => setDetails(null)}>
-        {details ? (
+      <Modal title="Detalhes do visitante" open={!!selectedDetails} onClose={() => setDetails(null)}>
+        {selectedDetails ? (
           <div className="space-y-4">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-50">{details.fullName}</h2>
-                <p className="text-sm text-slate-500">{details.company ?? "Sem empresa"} · {details.hostName}</p>
+                <h2 className="text-lg font-semibold text-slate-50">{selectedDetails.fullName}</h2>
+                <p className="text-sm text-slate-500">{selectedDetails.company ?? "Sem empresa"} · {selectedDetails.hostName}</p>
               </div>
-              <StatusBadge value={details.status} />
+              <StatusBadge value={selectedDetails.status} />
             </div>
+
             <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <Mail className="h-4 w-4 text-slate-500" />
-                  <p className="text-sm font-semibold text-slate-100">{emailStatusLabel(details)}</p>
+                  <p className="text-sm font-semibold text-slate-100">{emailStatusLabel(selectedDetails)}</p>
                 </div>
-                {details.emailDeliveryStatus ? <StatusBadge value={details.emailDeliveryStatus} /> : null}
+                {selectedDetails.emailDeliveryStatus ? <StatusBadge value={selectedDetails.emailDeliveryStatus} /> : null}
               </div>
-              {details.emailDeliveryMessage ? <p className="mt-1 text-xs text-slate-500">{details.emailDeliveryMessage}</p> : null}
+              {selectedDetails.emailDeliveryMessage ? <p className="mt-1 text-xs text-slate-500">{selectedDetails.emailDeliveryMessage}</p> : null}
             </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-slate-100">Integração Intelbras</p>
+                <SyncBadge guest={selectedDetails} />
+              </div>
+              <div className="grid gap-3 text-sm sm:grid-cols-2">
+                <DetailItem label="Device vinculado" value={linkedDeviceLabel(intelbrasDevices)} />
+                <div>
+                  <p className="font-semibold text-slate-300">Status do device</p>
+                  <div className="mt-1">{primaryIntelbrasDevice ? <StatusBadge value={primaryIntelbrasDevice.status} /> : <span className="text-slate-500">Nao configurado</span>}</div>
+                </div>
+                <DetailItem label="Status Intelbras" value={syncLabel(selectedDetails.syncStatus)} />
+                <DetailItem label="Último sync" value={formatDate(selectedDetails.lastSyncAt)} />
+                <DetailItem label="Erro último sync" value={selectedDetails.lastSyncError ?? "Sem erro registrado"} danger={Boolean(selectedDetails.lastSyncError)} />
+                <DetailItem label="Face enviada" value={selectedDetails.facePhotoUrl ? "sim" : "não"} />
+                <DetailItem label="Usuário Intelbras criado" value={intelbrasUserCreated(selectedDetails)} />
+                <DetailItem label="Modo Intelbras" value={syncEnabled ? "real" : `fake/dev (${intelbrasMode})`} />
+              </div>
+            </div>
+
             <div className="grid gap-3 text-sm sm:grid-cols-2">
-              <p><span className="font-semibold text-slate-300">CPF:</span> {details.cpf}</p>
-              <p><span className="font-semibold text-slate-300">Email:</span> {details.email ?? "Nao informado"}</p>
-              <p><span className="font-semibold text-slate-300">Inicio:</span> {new Date(details.visitStart).toLocaleString("pt-BR")}</p>
-              <p><span className="font-semibold text-slate-300">Fim:</span> {new Date(details.visitEnd).toLocaleString("pt-BR")}</p>
+              <p><span className="font-semibold text-slate-300">CPF:</span> {selectedDetails.cpf}</p>
+              <p><span className="font-semibold text-slate-300">Email:</span> {selectedDetails.email ?? "Nao informado"}</p>
+              <p><span className="font-semibold text-slate-300">Inicio:</span> {new Date(selectedDetails.visitStart).toLocaleString("pt-BR")}</p>
+              <p><span className="font-semibold text-slate-300">Fim:</span> {new Date(selectedDetails.visitEnd).toLocaleString("pt-BR")}</p>
             </div>
-            {details.inviteToken ? (
+
+            {selectedDetails.inviteToken ? (
               <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
                 <p className="mb-2 text-sm font-semibold text-slate-100">Link de convite</p>
                 <div className="flex gap-2">
-                  <input readOnly value={inviteUrl(details)} className="h-10 flex-1 rounded-xl border border-white/10 bg-white/[0.055] px-3 text-sm text-slate-100" />
-                  <Button icon={Copy} onClick={() => navigator.clipboard.writeText(inviteUrl(details))}>Copiar</Button>
+                  <input readOnly value={inviteUrl(selectedDetails)} className="h-10 flex-1 rounded-xl border border-white/10 bg-white/[0.055] px-3 text-sm text-slate-100" />
+                  <Button icon={Copy} onClick={() => navigator.clipboard.writeText(inviteUrl(selectedDetails))}>Copiar</Button>
                 </div>
-                {details.inviteExpiresAt ? <p className="mt-2 text-xs text-slate-500">Expira em {new Date(details.inviteExpiresAt).toLocaleString("pt-BR")}</p> : null}
+                {selectedDetails.inviteExpiresAt ? <p className="mt-2 text-xs text-slate-500">Expira em {new Date(selectedDetails.inviteExpiresAt).toLocaleString("pt-BR")}</p> : null}
               </div>
             ) : null}
           </div>
@@ -214,4 +331,118 @@ export default function GuestsPage() {
       </Modal>
     </AdminShell>
   );
+}
+
+function ActionButton({
+  title,
+  ariaLabel,
+  icon,
+  loading,
+  disabled,
+  onClick,
+  children
+}: {
+  title: string;
+  ariaLabel: string;
+  icon: LucideIcon;
+  loading?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: string;
+}) {
+  return (
+    <span title={title} className="inline-flex">
+      <Button
+        aria-label={ariaLabel}
+        variant="secondary"
+        icon={icon}
+        loading={loading}
+        disabled={disabled}
+        className="h-10 min-w-[112px] px-3"
+        onClick={onClick}
+      >
+        {children}
+      </Button>
+    </span>
+  );
+}
+
+function SyncBadge({ guest }: { guest: Guest }) {
+  const status = guest.syncStatus ?? "NOT_REQUIRED";
+  const title = status === "SYNC_FAILED" && guest.lastSyncError ? guest.lastSyncError : syncLabel(status);
+  const Icon = syncIcon(status);
+  return (
+    <Badge tone={syncTone(status)} title={title} className="gap-1.5">
+      <Icon className={`h-3.5 w-3.5 ${status === "SYNCING" ? "animate-spin" : ""}`} />
+      {syncLabel(status)}
+    </Badge>
+  );
+}
+
+function DetailItem({ label, value, danger = false }: { label: string; value: string; danger?: boolean }) {
+  return (
+    <div>
+      <p className="font-semibold text-slate-300">{label}</p>
+      <p className={`mt-1 ${danger ? "text-red-200" : "text-slate-500"}`}>{value}</p>
+    </div>
+  );
+}
+
+function syncDisabledReason(guest: Guest, syncEnabled: boolean, modeLoading: boolean, retry: boolean) {
+  if (modeLoading) return "Verificando modo Intelbras.";
+  if (!syncEnabled) return "Modo fake/dev ativo";
+  if (guest.status !== "COMPLETED") return "Visitante precisa estar completo para sincronizar.";
+  if (!guest.facePhotoUrl) return "Visitante precisa enviar foto facial antes da sincronização.";
+  if (guest.syncStatus === "SYNCING") return "Sincronização em andamento.";
+  if (retry && guest.syncStatus !== "SYNC_FAILED") return "Retry disponível apenas quando a sincronização falhar.";
+  return "";
+}
+
+function isIntelbrasDevice(device: Device) {
+  return [device.model, device.name].some((value) => value?.toLowerCase().includes("intelbras"));
+}
+
+function linkedDeviceLabel(devices: Device[]) {
+  if (devices.length === 0) return "Nenhum dispositivo Intelbras configurado";
+  const primary = devices[0];
+  const label = primary.model || primary.name;
+  return devices.length === 1 ? label : `${label} +${devices.length - 1}`;
+}
+
+function intelbrasUserCreated(guest: Guest) {
+  if (guest.syncStatus === "SYNCED") return "sim";
+  if (guest.syncStatus === "SYNCING") return "em andamento";
+  if (guest.syncStatus === "SYNC_FAILED") return "não";
+  return "pendente";
+}
+
+function formatDate(value?: string) {
+  return value ? new Date(value).toLocaleString("pt-BR") : "nao informado";
+}
+
+function syncLabel(status?: string) {
+  const labels: Record<string, string> = {
+    PENDING_SYNC: "Pendente",
+    SYNCING: "Sincronizando",
+    SYNCED: "Sincronizado",
+    SYNC_FAILED: "Falhou",
+    NOT_REQUIRED: "Nao requer"
+  };
+  return labels[status ?? "NOT_REQUIRED"] ?? status ?? "Nao requer";
+}
+
+function syncTone(status?: string): "slate" | "red" | "green" | "amber" | "blue" {
+  if (status === "SYNCED") return "green";
+  if (status === "SYNCING") return "blue";
+  if (status === "SYNC_FAILED") return "red";
+  if (status === "PENDING_SYNC") return "amber";
+  return "slate";
+}
+
+function syncIcon(status?: string): LucideIcon {
+  if (status === "SYNCED") return CheckCircle2;
+  if (status === "SYNCING") return Loader2;
+  if (status === "SYNC_FAILED") return AlertCircle;
+  if (status === "PENDING_SYNC") return RefreshCw;
+  return CheckCircle2;
 }
