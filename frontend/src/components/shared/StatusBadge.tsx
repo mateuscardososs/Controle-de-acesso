@@ -14,23 +14,23 @@ const labels: Record<string, string> = {
   ENTRY: "Entrada",
   EXIT: "Saída",
   ACCESS_DENIED: "Acesso negado",
-  COMMUNICATION_FAILURE: "Falha comunicacao",
+  COMMUNICATION_FAILURE: "Falha de comunicação",
   INFO: "Info",
-  WARNING: "Atencao",
-  CRITICAL: "Critico",
+  WARNING: "Atenção",
+  CRITICAL: "Crítico",
   INVITED: "Convidado",
   PENDING_REGISTRATION: "Cadastro pendente",
   COMPLETED: "Completo",
   EXPIRED: "Expirado",
   CANCELLED: "Cancelado",
   SENT: "Enviado",
-  SKIPPED: "Pulado",
+  SKIPPED: "Ignorado",
   FAILED: "Falhou",
-  NOT_REQUIRED: "Nao requer",
+  NOT_REQUIRED: "Não requer",
   PENDING_SYNC: "Pendente",
   SYNCING: "Sincronizando",
   SYNCED: "Sincronizado",
-  SYNC_FAILED: "Falha sync",
+  SYNC_FAILED: "Falhou",
   ENTRY_EXIT: "Entrada/Saída",
   SIMULATED: "Simulado",
   DEVICE: "Dispositivo"
@@ -38,7 +38,7 @@ const labels: Record<string, string> = {
 
 export function humanizeStatus(value?: string | boolean | null) {
   if (typeof value === "boolean") return value ? "Ativo" : "Inativo";
-  if (!value) return "Nao informado";
+  if (!value) return "Não informado";
   return labels[value] ?? value.replace(/_/g, " ").toLowerCase().replace(/^\w/, (letter) => letter.toUpperCase());
 }
 

@@ -34,4 +34,24 @@ class IntelbrasFaceEncoderTests {
         assertThat(decoded[0]).isEqualTo((byte) 0xFF);
         assertThat(decoded[1]).isEqualTo((byte) 0xD8);
     }
+
+    @Test
+    void normalizesFaceImageForBioTPhotoDataLimits() throws Exception {
+        var image = new BufferedImage(1600, 2400, BufferedImage.TYPE_INT_RGB);
+        var graphics = image.createGraphics();
+        graphics.setColor(Color.BLUE);
+        graphics.fillRect(0, 0, image.getWidth(), image.getHeight());
+        graphics.dispose();
+        var path = tempDir.resolve("large-face.jpg");
+        ImageIO.write(image, "jpg", path.toFile());
+
+        var encoded = new IntelbrasFaceEncoder(tempDir.toString()).toJpegBase64(path.toString());
+        var decoded = Base64.getDecoder().decode(encoded);
+        var normalized = ImageIO.read(new ByteArrayInputStream(decoded));
+
+        assertThat(decoded.length).isLessThanOrEqualTo(100 * 1024);
+        assertThat(normalized.getWidth()).isBetween(150, 600);
+        assertThat(normalized.getHeight()).isBetween(300, 1200);
+        assertThat(normalized.getHeight()).isLessThanOrEqualTo(normalized.getWidth() * 2);
+    }
 }

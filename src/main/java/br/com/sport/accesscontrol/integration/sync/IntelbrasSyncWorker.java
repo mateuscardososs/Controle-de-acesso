@@ -81,8 +81,8 @@ public class IntelbrasSyncWorker {
         var sample = Timer.start(meterRegistry);
         try {
             ProviderSyncResult result = switch (message.personType()) {
-                case EMPLOYEE -> syncEmployee(message.personId());
-                case GUEST -> syncGuest(message.personId());
+                case EMPLOYEE -> syncEmployee(message.personId(), message.attempt());
+                case GUEST -> syncGuest(message.personId(), message.attempt());
             };
             sample.stop(meterRegistry.timer("intelbras.sync.latency", "result", result.status().name()));
             if (result.successful()) {
@@ -96,8 +96,12 @@ public class IntelbrasSyncWorker {
         }
     }
 
-    private ProviderSyncResult syncEmployee(UUID employeeId) {
+    private ProviderSyncResult syncEmployee(UUID employeeId, int attempt) {
         var employee = employeeRepository.findById(employeeId).orElseThrow();
+        if (attempt > 1 && employee.getSyncStatus() == SyncStatus.SYNCED) {
+            log.info("intelbras_sync_employee_retry_skipped_already_synced employee_id={} attempt={}", employeeId, attempt);
+            return new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "Employee already synced.", java.time.Duration.ZERO);
+        }
         employee.markSyncing();
         auditStart(PersonType.EMPLOYEE, employeeId, employee.getSyncAttempts());
         realtimePublisher.publish(PersonType.EMPLOYEE, employeeId, SyncStatus.SYNCING, "Sincronizando Intelbras");
@@ -115,8 +119,12 @@ public class IntelbrasSyncWorker {
         return result;
     }
 
-    private ProviderSyncResult syncGuest(UUID guestId) {
+    private ProviderSyncResult syncGuest(UUID guestId, int attempt) {
         var guest = guestRepository.findById(guestId).orElseThrow();
+        if (attempt > 1 && guest.getSyncStatus() == SyncStatus.SYNCED) {
+            log.info("intelbras_sync_guest_retry_skipped_already_synced guest_id={} attempt={}", guestId, attempt);
+            return new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "Guest already synced.", java.time.Duration.ZERO);
+        }
         var target = intelbrasTarget();
         var targetDeviceId = intelbrasTargetDeviceId();
         guest.markSyncing();

@@ -319,6 +319,40 @@ class EnterpriseArchitectureTests {
     }
 
     @Test
+    void guestCleanupRemovesOnlyMatchingOldRecordsAndAudits() {
+        var oldCancelled = guest();
+        oldCancelled.cancel();
+        ReflectionTestUtils.setField(oldCancelled, "createdAt", Instant.now().minusSeconds(40L * 24 * 3600));
+        var recentCancelled = guest();
+        recentCancelled.cancel();
+        ReflectionTestUtils.setField(recentCancelled, "createdAt", Instant.now());
+        var failed = guest();
+        failed.markSyncFailed("erro");
+        ReflectionTestUtils.setField(failed, "createdAt", Instant.now().minusSeconds(40L * 24 * 3600));
+        var guestRepository = mock(GuestRepository.class);
+        var inviteRepository = mock(GuestInviteRepository.class);
+        var auditService = mock(AuditService.class);
+        when(guestRepository.findAll()).thenReturn(List.of(oldCancelled, recentCancelled, failed));
+        when(inviteRepository.findByGuestIn(any())).thenReturn(List.of());
+        var service = new GuestService(guestRepository, inviteRepository, mock(FaceStorageService.class),
+                auditService, mock(RealtimePublisherService.class), mock(MailService.class),
+                mock(ApplicationEventPublisher.class), "http://localhost:3000", 72);
+
+        var result = service.cleanup(new GuestDtos.GuestCleanupRequest(
+                List.of(GuestStatus.CANCELLED),
+                List.of(),
+                30,
+                false
+        ));
+
+        assertThat(result.removedCount()).isEqualTo(1);
+        verify(guestRepository).deleteAllInBatch(argThat((List<Guest> guests) ->
+                guests.size() == 1 && guests.contains(oldCancelled)
+        ));
+        verify(auditService).record(eq("GUEST_CLEANUP"), eq("Guest"), isNull(), any(), any(), any());
+    }
+
+    @Test
     void guestCancellationAndExpirationAuditAndPublishRealtime() {
         var guest = guest();
         var guestRepository = mock(GuestRepository.class);
@@ -413,6 +447,25 @@ class EnterpriseArchitectureTests {
         verify(provider).syncPerson(any());
         verify(auditService).record(eq("INTELBRAS_SYNC_SUCCEEDED"), eq("GUEST"), eq(guest.getId()), any(), any(), any());
         verify(realtime).publish(eq(br.com.sport.accesscontrol.common.PersonType.GUEST), eq(guest.getId()), eq(SyncStatus.SYNCED), contains("Visitante"));
+    }
+
+    @Test
+    void intelbrasSyncWorkerSkipsDelayedRetryWhenGuestAlreadySynced() {
+        var guest = guest();
+        guest.completeRegistration("81999990000", "Empresa", "/uploads/faces/photo.png");
+        guest.markSynced();
+        var guestRepository = mock(GuestRepository.class);
+        var provider = mock(AccessControlProvider.class);
+        var publisher = mock(IntegrationEventPublisher.class);
+        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+
+        worker(mock(EmployeeRepository.class), guestRepository, provider, mock(AuditService.class),
+                publisher, mock(IntegrationSyncRealtimePublisher.class), 3)
+                .process(new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, guest.getId(), 2));
+
+        assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNCED);
+        verifyNoInteractions(provider);
+        verifyNoInteractions(publisher);
     }
 
     @Test

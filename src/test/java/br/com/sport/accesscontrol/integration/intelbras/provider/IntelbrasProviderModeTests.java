@@ -2,7 +2,6 @@ package br.com.sport.accesscontrol.integration.intelbras.provider;
 
 import br.com.sport.accesscontrol.common.PersonType;
 import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasCgiClient;
-import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasRpcClient;
 import br.com.sport.accesscontrol.integration.intelbras.mapper.IntelbrasEventMapper;
 import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasDeviceConnectionService;
 import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasFaceEncoder;
@@ -40,7 +39,6 @@ class IntelbrasProviderModeTests {
         when(connectionService.allConfiguredDevices()).thenReturn(List.of());
         var provider = new IntelbrasRealProvider(
                 connectionService,
-                mock(IntelbrasRpcClient.class),
                 mock(IntelbrasCgiClient.class),
                 mock(IntelbrasFaceEncoder.class),
                 new IntelbrasEventMapper()

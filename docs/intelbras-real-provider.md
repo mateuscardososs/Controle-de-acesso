@@ -4,8 +4,8 @@
 
 Integração real para controladoras Intelbras SS 5531 MF W usando:
 
-- RPC2 HTTP para login, usuários e faces.
-- CGI com Digest Auth para status/configuração/snapshot/recordFinder.
+- CGI com Digest Auth para status, configuração, usuários, faces, snapshot e recordFinder.
+- RPC2 HTTP mantido para diagnóstico e firmwares que exponham chamadas RPC compatíveis.
 - Provider fake preservado como padrão de desenvolvimento.
 
 Device real validado:
@@ -14,7 +14,7 @@ Device real validado:
 - HTTP: `80`
 - Modelo: `SS 5531 MF W`
 - Serial: `DRWL3903457HU`
-- API: HTTP RPC2 + CGI Digest
+- API: HTTP CGI Digest para cadastro real de usuário/face
 
 ## Configuração
 
@@ -137,38 +137,47 @@ Keep alive:
 }
 ```
 
-## Fluxo de Face
+## Fluxo Real de Usuário/Face
 
 O `IntelbrasRealProvider.syncPerson` faz:
 
 1. Resolve devices Intelbras cadastrados.
 2. Usa credencial por device ou default global.
-3. Faz login RPC2 via challenge.
-4. Converte a imagem local para JPEG Base64.
-5. Executa `AccessUser.startFind`.
-6. Tenta garantir o usuário com `AccessUser.insertMulti`.
-7. Consulta `AccessFace.list`.
-8. Envia a face por `AccessFace.insertMulti` com `PhotoData`.
-9. Envia `global.keepAlive`.
+3. Converte a imagem local para JPEG Base64, normalizando para os limites da linha Bio-T.
+4. Consulta usuário por `recordFinder.cgi?action=find&name=AccessControlCard&condition.UserID=<id>`.
+5. Cria ou atualiza usuário por `recordUpdater.cgi?action=insert|update&name=AccessControlCard`.
+6. Remove face anterior por `FaceInfoManager.cgi?action=remove&UserID=<id>`, se existir.
+7. Cadastra face por `FaceInfoManager.cgi?action=add`.
 
-Payload base usado para face:
+Endpoints reais usados para cadastro:
+
+```text
+GET  /cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.UserID=<UserID>
+GET  /cgi-bin/recordUpdater.cgi?action=insert&name=AccessControlCard&CardNo=<UserID>&CardStatus=0&CardName=<nome>&UserID=<UserID>&CardType=0&IsValid=true&Doors[0]=0&TimeSections[0]=255&ValidDateStart=<data>&ValidDateEnd=<data>
+GET  /cgi-bin/recordUpdater.cgi?action=update&name=AccessControlCard&recno=<RecNo>&...
+GET  /cgi-bin/FaceInfoManager.cgi?action=remove&UserID=<UserID>
+POST /cgi-bin/FaceInfoManager.cgi?action=add
+```
+
+Payload base usado para face em `FaceInfoManager.cgi?action=add`:
 
 ```json
 {
-  "method": "AccessFace.insertMulti",
-  "params": {
-    "FaceList": [
-      {
-        "UserID": "12345678901",
-        "Name": "Nome da Pessoa",
-        "PhotoData": "<jpeg-base64>"
-      }
-    ]
+  "UserID": "12345678901",
+  "Info": {
+    "UserName": "Nome da Pessoa",
+    "PhotoData": ["<jpeg-base64>"]
   },
-  "session": "<session>",
-  "id": 10
 }
 ```
+
+Auditoria de compatibilidade:
+
+- A SS 5531 MF W responde `magicBox.cgi` e `recordFinder.cgi` via CGI Digest.
+- A documentação oficial de integração da linha Bio-T descreve cadastro de usuário por `recordUpdater.cgi` e cadastro de foto/face por `FaceInfoManager.cgi`.
+- O fluxo anterior via `/RPC2` com `AccessUser.insertMulti` e `AccessFace.insertMulti` é incompatível com a controladora validada quando o erro aparece como `Intelbras RPC request failed`.
+- `UserID` e `CardNo` são enviados como identificador numérico. Quando a pessoa possui documento, o provider usa somente os dígitos do documento; sem documento, usa um identificador numérico estável derivado do UUID.
+- `PhotoData` é enviado como array de Base64 JPEG. A imagem é normalizada para respeitar os limites documentados: máximo `600x1200`, altura até duas vezes a largura e até `100KB`.
 
 ## CGI Digest
 
@@ -182,6 +191,11 @@ Endpoints implementados:
 /cgi-bin/configManager.cgi?action=getConfig&name=Network
 /cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard
 /cgi-bin/recordFinder.cgi?action=find&name=AccessControlCardRec
+/cgi-bin/recordUpdater.cgi?action=insert&name=AccessControlCard
+/cgi-bin/recordUpdater.cgi?action=update&name=AccessControlCard
+/cgi-bin/recordUpdater.cgi?action=remove&name=AccessControlCard
+/cgi-bin/FaceInfoManager.cgi?action=add
+/cgi-bin/FaceInfoManager.cgi?action=remove
 /cgi-bin/snapshot.cgi?channel=1
 ```
 

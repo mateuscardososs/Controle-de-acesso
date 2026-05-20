@@ -1,6 +1,8 @@
 package br.com.sport.accesscontrol.guests;
 
 import br.com.sport.accesscontrol.guests.GuestDtos.GuestRequest;
+import br.com.sport.accesscontrol.guests.GuestDtos.GuestCleanupRequest;
+import br.com.sport.accesscontrol.guests.GuestDtos.GuestCleanupResponse;
 import br.com.sport.accesscontrol.guests.GuestDtos.GuestResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -49,6 +51,11 @@ public class GuestController {
     @PostMapping("/{id}/resend-invite")
     GuestResponse resendInvite(@PathVariable UUID id) {
         return guestService.resendInvite(id);
+    }
+
+    @DeleteMapping("/cleanup")
+    GuestCleanupResponse cleanup(@Valid @RequestBody GuestCleanupRequest request) {
+        return guestService.cleanup(request);
     }
 
     @PostMapping("/{id}/complete-registration")

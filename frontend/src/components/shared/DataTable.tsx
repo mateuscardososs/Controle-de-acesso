@@ -26,7 +26,7 @@ export function DataTable<T>({ data, columns, getRowKey }: { data: T[]; columns:
           </thead>
           <tbody className="divide-y divide-white/10">
             {data.map((row) => (
-              <tr key={getRowKey(row)} className="transition hover:bg-white/[0.045]">
+              <tr key={getRowKey(row)} className="transition hover:bg-white/[0.07] hover:shadow-[inset_3px_0_0_rgba(244,63,94,0.55)]">
                 {columns.map((column) => (
                   <td key={column.key} className={clsx("px-5 py-4 align-middle text-slate-300", column.className)}>
                     {column.render(row)}

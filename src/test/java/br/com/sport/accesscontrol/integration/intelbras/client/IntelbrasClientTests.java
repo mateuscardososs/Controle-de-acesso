@@ -10,11 +10,17 @@ import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.LocalDateTime;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -86,7 +92,7 @@ class IntelbrasClientTests {
                 .thenReturn(challenge)
                 .thenReturn(stringResponse(200, "version=1.0.0", Map.of()));
 
-        var client = new IntelbrasCgiClient(httpClient, properties);
+        var client = new IntelbrasCgiClient(httpClient, properties, new ObjectMapper());
 
         assertThat(client.getDeviceType("192.168.15.5", "admin", "admin123")).isEqualTo("SS 5531");
         assertThat(client.getSerialNo("192.168.15.5", "admin", "admin123")).isEqualTo("DRWL3903457HU");
@@ -102,6 +108,125 @@ class IntelbrasClientTests {
         });
         assertThat(requests.get(3).headers().firstValue("Authorization")).isPresent();
         assertThat(requests.get(5).headers().firstValue("Authorization")).isPresent();
+    }
+
+    @Test
+    void cgiClientUsesBioTEndpointsToUpsertUserAndReplaceFace() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        var properties = properties();
+        var challenge = stringResponse(401, "", Map.of(
+                "WWW-Authenticate", List.of("Digest realm=\"Intelbras\", nonce=\"abc\", qop=\"auth\"")
+        ));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(challenge)
+                .thenReturn(stringResponse(200, "found=0", Map.of()))
+                .thenReturn(challenge)
+                .thenReturn(stringResponse(200, "RecNo=10", Map.of()))
+                .thenReturn(challenge)
+                .thenReturn(stringResponse(200, "OK", Map.of()))
+                .thenReturn(challenge)
+                .thenReturn(stringResponse(200, "OK", Map.of()));
+
+        var client = new IntelbrasCgiClient(httpClient, properties, new ObjectMapper());
+
+        client.upsertAccessUser(
+                "192.168.15.5",
+                "admin",
+                "admin123",
+                "16",
+                "Alexandre16",
+                LocalDateTime.of(2026, 5, 20, 8, 0),
+                LocalDateTime.of(2037, 12, 31, 23, 59, 59)
+        );
+        client.replaceFace("192.168.15.5", "admin", "admin123", "16", "Alexandre16", "/9j/test");
+
+        var requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(httpClient, times(8)).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        var requests = requestCaptor.getAllValues();
+
+        assertThat(requests.get(1).uri().toString())
+                .contains("/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.UserID=16");
+        assertThat(requests.get(3).uri().toString())
+                .contains("/cgi-bin/recordUpdater.cgi?action=insert&name=AccessControlCard")
+                .contains("CardNo=16")
+                .contains("UserID=16")
+                .contains("CardName=Alexandre16");
+        assertThat(requests.get(5).uri().toString())
+                .contains("/cgi-bin/FaceInfoManager.cgi?action=remove&UserID=16");
+        assertThat(requests.get(7).method()).isEqualTo("POST");
+        assertThat(requests.get(7).uri().toString())
+                .contains("/cgi-bin/FaceInfoManager.cgi?action=add");
+        assertThat(requests.get(7).headers().firstValue("Content-Type")).hasValue("application/json");
+        assertThat(bodyOf(requests.get(7)))
+                .contains("\"UserID\":\"16\"")
+                .contains("\"UserName\":\"Alexandre16\"")
+                .contains("\"PhotoData\":[\"/9j/test\"]");
+    }
+
+    @Test
+    void cgiClientUpdatesExistingAccessUserWhenRecordFinderReturnsRecNo() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        var properties = properties();
+        var challenge = stringResponse(401, "", Map.of(
+                "WWW-Authenticate", List.of("Digest realm=\"Intelbras\", nonce=\"abc\", qop=\"auth\"")
+        ));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(challenge)
+                .thenReturn(stringResponse(200, """
+                        found=1
+                        records[0].RecNo=22
+                        records[0].UserID=16
+                        records[0].CardNo=16
+                        """, Map.of()))
+                .thenReturn(challenge)
+                .thenReturn(stringResponse(200, "OK", Map.of()));
+
+        var client = new IntelbrasCgiClient(httpClient, properties, new ObjectMapper());
+
+        client.upsertAccessUser(
+                "192.168.15.5",
+                "admin",
+                "admin123",
+                "16",
+                "Alexandre16",
+                LocalDateTime.of(2026, 5, 20, 8, 0),
+                LocalDateTime.of(2037, 12, 31, 23, 59, 59)
+        );
+
+        var requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(httpClient, times(4)).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        var requests = requestCaptor.getAllValues();
+        assertThat(requests.get(3).uri().toString())
+                .contains("/cgi-bin/recordUpdater.cgi?action=update&name=AccessControlCard")
+                .contains("recno=22")
+                .contains("UserID=16");
+    }
+
+    @Test
+    void cgiClientDoesNotInsertAgainWhenRecordFinderFindsUserWithoutRecNo() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        var properties = properties();
+        var challenge = stringResponse(401, "", Map.of(
+                "WWW-Authenticate", List.of("Digest realm=\"Intelbras\", nonce=\"abc\", qop=\"auth\"")
+        ));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(challenge)
+                .thenReturn(stringResponse(200, "found=1", Map.of()));
+
+        var client = new IntelbrasCgiClient(httpClient, properties, new ObjectMapper());
+
+        var result = client.upsertAccessUser(
+                "192.168.15.5",
+                "admin",
+                "admin123",
+                "16",
+                "Alexandre16",
+                LocalDateTime.of(2026, 5, 20, 8, 0),
+                LocalDateTime.of(2037, 12, 31, 23, 59, 59)
+        );
+
+        assertThat(result).isEqualTo("EXISTS_WITHOUT_RECNO");
+        verify(httpClient, times(2)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
     }
 
     @Test
@@ -150,5 +275,42 @@ class IntelbrasClientTests {
             builder.append(String.format("%02X", item));
         }
         return builder.toString();
+    }
+
+    private String bodyOf(HttpRequest request) throws Exception {
+        var publisher = request.bodyPublisher().orElseThrow();
+        var chunks = new ArrayList<ByteBuffer>();
+        var done = new CountDownLatch(1);
+        publisher.subscribe(new Flow.Subscriber<>() {
+            @Override
+            public void onSubscribe(Flow.Subscription subscription) {
+                subscription.request(Long.MAX_VALUE);
+            }
+
+            @Override
+            public void onNext(ByteBuffer item) {
+                chunks.add(item);
+            }
+
+            @Override
+            public void onError(Throwable throwable) {
+                done.countDown();
+            }
+
+            @Override
+            public void onComplete() {
+                done.countDown();
+            }
+        });
+        done.await(1, TimeUnit.SECONDS);
+        var size = chunks.stream().mapToInt(ByteBuffer::remaining).sum();
+        var bytes = new byte[size];
+        var offset = 0;
+        for (ByteBuffer chunk : chunks) {
+            var length = chunk.remaining();
+            chunk.get(bytes, offset, length);
+            offset += length;
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 }

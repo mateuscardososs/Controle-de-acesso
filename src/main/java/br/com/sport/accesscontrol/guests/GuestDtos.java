@@ -1,11 +1,13 @@
 package br.com.sport.accesscontrol.guests;
 
 import br.com.sport.accesscontrol.integration.sync.SyncStatus;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 public final class GuestDtos {
@@ -24,6 +26,17 @@ public final class GuestDtos {
             @NotNull Instant visitEnd,
             GuestStatus status
     ) {
+    }
+
+    public record GuestCleanupRequest(
+            List<GuestStatus> status,
+            List<SyncStatus> integrationStatus,
+            @Min(0) int olderThanDays,
+            boolean onlyTestRecords
+    ) {
+    }
+
+    public record GuestCleanupResponse(int removedCount) {
     }
 
     public record GuestResponse(

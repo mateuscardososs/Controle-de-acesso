@@ -18,7 +18,9 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
@@ -103,12 +105,17 @@ public class IntelbrasRpcClient {
                 .build();
 
         try {
+            log.info("intelbras_rpc_http_request method=POST host={} endpoint={} rpc_method={} request_headers={} request_body={}",
+                    IntelbrasHttpSupport.maskHost(host), RPC_PATH, method, sanitizeHeaders(request.headers().map()),
+                    sanitizeBody(requestBody));
             var response = sendWithRetry(request);
-            log.info("intelbras_rpc_request host={} method={} status={}",
-                    IntelbrasHttpSupport.maskHost(host), method, response.statusCode());
+            log.info("intelbras_rpc_http_response method=POST host={} endpoint={} rpc_method={} status={} response_headers={} response_body={}",
+                    IntelbrasHttpSupport.maskHost(host), RPC_PATH, method, response.statusCode(),
+                    sanitizeHeaders(response.headers().map()), sanitizeBody(response.body()));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new IntelbrasIntegrationException("Intelbras RPC request failed for host "
-                        + IntelbrasHttpSupport.maskHost(host) + " status=" + response.statusCode() + ".");
+                        + IntelbrasHttpSupport.maskHost(host) + " endpoint=" + RPC_PATH + " method=" + method
+                        + " status=" + response.statusCode() + " body=" + sanitizeBody(response.body()) + ".");
             }
             return objectMapper.readTree(response.body());
         } catch (IOException exception) {
@@ -198,5 +205,24 @@ public class IntelbrasRpcClient {
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("MD5 digest is not available.", exception);
         }
+    }
+
+    private Map<String, List<String>> sanitizeHeaders(Map<String, List<String>> headers) {
+        var sanitized = new TreeMap<String, List<String>>(String.CASE_INSENSITIVE_ORDER);
+        for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+            if ("Authorization".equalsIgnoreCase(entry.getKey())) {
+                sanitized.put(entry.getKey(), List.of("<redacted>"));
+            } else {
+                sanitized.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return sanitized;
+    }
+
+    private String sanitizeBody(String body) {
+        if (body == null || body.isBlank()) {
+            return "";
+        }
+        return body.replaceAll("\"password\"\\s*:\\s*\"[^\"]*\"", "\"password\":\"<redacted>\"");
     }
 }

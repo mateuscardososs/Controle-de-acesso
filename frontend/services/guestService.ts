@@ -42,6 +42,17 @@ export type GuestPayload = {
   status?: GuestStatus;
 };
 
+export type GuestCleanupPayload = {
+  status: GuestStatus[];
+  integrationStatus: SyncStatus[];
+  olderThanDays: number;
+  onlyTestRecords: boolean;
+};
+
+export type GuestCleanupResponse = {
+  removedCount: number;
+};
+
 export type PublicGuestRegistration = {
   id: string;
   fullName: string;
@@ -102,6 +113,10 @@ export const guestService = {
   },
   async retryIntelbrasSync(id: string) {
     const { data } = await api.post<{ status: string; type: string; id: string }>(`/api/integration/retry/guest/${id}`);
+    return data;
+  },
+  async cleanup(payload: GuestCleanupPayload) {
+    const { data } = await api.delete<GuestCleanupResponse>("/api/guests/cleanup", { data: payload });
     return data;
   },
   async publicRegistration(token: string) {

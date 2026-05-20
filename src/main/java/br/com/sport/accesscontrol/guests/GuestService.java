@@ -3,12 +3,15 @@ package br.com.sport.accesscontrol.guests;
 import br.com.sport.accesscontrol.audit.AuditService;
 import br.com.sport.accesscontrol.common.ResourceNotFoundException;
 import br.com.sport.accesscontrol.guests.GuestDtos.GuestRequest;
+import br.com.sport.accesscontrol.guests.GuestDtos.GuestCleanupRequest;
+import br.com.sport.accesscontrol.guests.GuestDtos.GuestCleanupResponse;
 import br.com.sport.accesscontrol.guests.GuestDtos.GuestResponse;
 import br.com.sport.accesscontrol.guests.GuestDtos.PublicGuestRegistrationResponse;
 import br.com.sport.accesscontrol.guests.GuestDtos.PublicVisitorRegistrationResponse;
 import br.com.sport.accesscontrol.mail.MailDeliveryResult;
 import br.com.sport.accesscontrol.mail.MailService;
 import br.com.sport.accesscontrol.integration.sync.GuestReadyForSyncEvent;
+import br.com.sport.accesscontrol.integration.sync.SyncStatus;
 import br.com.sport.accesscontrol.realtime.RealtimePublisherService;
 import br.com.sport.accesscontrol.realtime.dto.SystemAlertMessage;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,6 +24,7 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -180,6 +184,39 @@ public class GuestService {
         return GuestResponse.from(guest, invite, inviteUrl, delivery.status(), delivery.message());
     }
 
+    @Transactional
+    public GuestCleanupResponse cleanup(GuestCleanupRequest request) {
+        var statuses = request.status() == null ? List.<GuestStatus>of() : request.status();
+        var syncStatuses = request.integrationStatus() == null ? List.<SyncStatus>of() : request.integrationStatus();
+        var olderThanDays = Math.max(0, request.olderThanDays());
+        var cutoff = olderThanDays > 0 ? Instant.now().minus(Duration.ofDays(olderThanDays)) : null;
+        if (statuses.isEmpty() && syncStatuses.isEmpty() && !request.onlyTestRecords() && cutoff == null) {
+            throw new IllegalArgumentException("Informe ao menos um critério para limpar a lista de visitantes.");
+        }
+
+        var guests = guestRepository.findAll().stream()
+                .filter(guest -> statuses.isEmpty() || statuses.contains(guest.getStatus()))
+                .filter(guest -> syncStatuses.isEmpty() || syncStatuses.contains(guest.getSyncStatus()))
+                .filter(guest -> cutoff == null || guest.getCreatedAt().isBefore(cutoff))
+                .filter(guest -> !request.onlyTestRecords() || isTestRecord(guest))
+                .toList();
+
+        if (guests.isEmpty()) {
+            auditService.record("GUEST_CLEANUP", "Guest", null,
+                    Map.of("removedCount", 0, "criteria", cleanupCriteria(statuses, syncStatuses, olderThanDays, request.onlyTestRecords())),
+                    Map.of(), Map.of());
+            return new GuestCleanupResponse(0);
+        }
+
+        var invites = inviteRepository.findByGuestIn(guests);
+        inviteRepository.deleteAllInBatch(invites);
+        guestRepository.deleteAllInBatch(guests);
+        auditService.record("GUEST_CLEANUP", "Guest", null,
+                Map.of("removedCount", guests.size(), "criteria", cleanupCriteria(statuses, syncStatuses, olderThanDays, request.onlyTestRecords())),
+                Map.of("removedIds", guests.stream().map(Guest::getId).map(UUID::toString).toList()), Map.of());
+        return new GuestCleanupResponse(guests.size());
+    }
+
     @Transactional(readOnly = true)
     public PublicGuestRegistrationResponse publicRegistration(String token) {
         return PublicGuestRegistrationResponse.from(validInvite(token).getGuest());
@@ -298,6 +335,40 @@ public class GuestService {
 
     private String onlyDigits(String value) {
         return value == null ? "" : value.replaceAll("\\D", "");
+    }
+
+    private boolean isTestRecord(Guest guest) {
+        return containsTestToken(guest.getFullName())
+                || containsTestToken(guest.getEmail())
+                || containsTestToken(guest.getCompany())
+                || containsTestToken(guest.getVisitReason())
+                || containsTestToken(guest.getHostName())
+                || "00000000000".equals(onlyDigits(guest.getCpf()))
+                || "12345678900".equals(onlyDigits(guest.getCpf()))
+                || "12345678901".equals(onlyDigits(guest.getCpf()));
+    }
+
+    private boolean containsTestToken(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        var normalized = value.toLowerCase(java.util.Locale.ROOT);
+        return normalized.contains("teste")
+                || normalized.contains("test")
+                || normalized.contains("mock")
+                || normalized.contains("demo")
+                || normalized.contains("exemplo")
+                || normalized.contains("example");
+    }
+
+    private Map<String, Object> cleanupCriteria(Collection<GuestStatus> statuses, Collection<SyncStatus> syncStatuses,
+                                                int olderThanDays, boolean onlyTestRecords) {
+        return Map.of(
+                "status", statuses.stream().map(Enum::name).toList(),
+                "integrationStatus", syncStatuses.stream().map(Enum::name).toList(),
+                "olderThanDays", olderThanDays,
+                "onlyTestRecords", onlyTestRecords
+        );
     }
 
     private Map<String, Object> snapshot(Guest guest) {
