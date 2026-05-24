@@ -11,4 +11,5 @@ public interface GuestRepository extends JpaRepository<Guest, UUID> {
     List<Guest> findByVisitStartLessThanEqualAndVisitEndGreaterThanEqual(Instant end, Instant start);
     List<Guest> findByStatusNotAndVisitEndBefore(GuestStatus status, Instant now);
     Optional<Guest> findFirstByCpfOrderByVisitStartDesc(String cpf);
+    Optional<Guest> findFirstByFullNameIgnoreCaseOrderByVisitStartDesc(String fullName);
 }

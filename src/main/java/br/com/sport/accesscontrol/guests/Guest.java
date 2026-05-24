@@ -5,6 +5,7 @@ import br.com.sport.accesscontrol.integration.sync.SyncStatus;
 import jakarta.persistence.*;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 @Entity
@@ -39,6 +40,12 @@ public class Guest extends TimestampedEntity {
 
     @Column(name = "visit_end", nullable = false)
     private Instant visitEnd;
+
+    @Column(name = "invited_day")
+    private LocalDate invitedDay;
+
+    @Column(name = "invited_lounge")
+    private String invitedLounge;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -77,6 +84,11 @@ public class Guest extends TimestampedEntity {
 
     public Guest(String fullName, String cpf, String email, String phone, String company, String visitReason,
                  String hostName, Instant visitStart, Instant visitEnd) {
+        this(fullName, cpf, email, phone, company, visitReason, hostName, visitStart, visitEnd, null, null);
+    }
+
+    public Guest(String fullName, String cpf, String email, String phone, String company, String visitReason,
+                 String hostName, Instant visitStart, Instant visitEnd, LocalDate invitedDay, String invitedLounge) {
         this.fullName = fullName;
         this.cpf = cpf;
         this.email = email;
@@ -86,6 +98,8 @@ public class Guest extends TimestampedEntity {
         this.hostName = hostName;
         this.visitStart = visitStart;
         this.visitEnd = visitEnd;
+        this.invitedDay = invitedDay;
+        this.invitedLounge = invitedLounge;
         this.status = GuestStatus.PENDING_REGISTRATION;
         this.invitedAt = Instant.now();
     }
@@ -99,7 +113,8 @@ public class Guest extends TimestampedEntity {
     }
 
     public void update(String fullName, String cpf, String email, String phone, String company, String visitReason,
-                       String hostName, Instant visitStart, Instant visitEnd, GuestStatus status) {
+                       String hostName, Instant visitStart, Instant visitEnd, LocalDate invitedDay,
+                       String invitedLounge, GuestStatus status) {
         this.fullName = fullName;
         this.cpf = cpf;
         this.email = email;
@@ -109,6 +124,8 @@ public class Guest extends TimestampedEntity {
         this.hostName = hostName;
         this.visitStart = visitStart;
         this.visitEnd = visitEnd;
+        this.invitedDay = invitedDay;
+        this.invitedLounge = invitedLounge;
         if (status != null) {
             this.status = status;
         }
@@ -148,6 +165,14 @@ public class Guest extends TimestampedEntity {
 
     public Instant getVisitEnd() {
         return visitEnd;
+    }
+
+    public LocalDate getInvitedDay() {
+        return invitedDay;
+    }
+
+    public String getInvitedLounge() {
+        return invitedLounge;
     }
 
     public GuestStatus getStatus() {

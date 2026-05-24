@@ -8,6 +8,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Map;
 import java.util.UUID;
 
@@ -32,6 +33,18 @@ public class AccessEvent {
     @Column(name = "person_cpf")
     private String personCpf;
 
+    @Column(name = "person_email")
+    private String personEmail;
+
+    @Column(name = "person_phone")
+    private String personPhone;
+
+    @Column(name = "invited_day")
+    private LocalDate invitedDay;
+
+    @Column(name = "invited_lounge")
+    private String invitedLounge;
+
     @Column(name = "external_user_id")
     private String externalUserId;
 
@@ -54,8 +67,48 @@ public class AccessEvent {
     @Column(name = "access_result", nullable = false)
     private AccessResult accessResult;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "event_category")
+    private EventCategory eventCategory;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "recognition_status")
+    private RecognitionStatus recognitionStatus;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "passage_status")
+    private PassageStatus passageStatus;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "release_method")
+    private ReleaseMethod releaseMethod;
+
+    @Column(name = "operator_user_id")
+    private UUID operatorUserId;
+
+    @Column(name = "manual_reason")
+    private String manualReason;
+
+    @Column(name = "controller_method")
+    private String controllerMethod;
+
+    @Column(name = "controller_door")
+    private String controllerDoor;
+
+    @Column(name = "controller_reader_id")
+    private String controllerReaderId;
+
+    @Column(name = "controller_rec_no")
+    private String controllerRecNo;
+
+    @Column(name = "decision_reason")
+    private String decisionReason;
+
     @Column(name = "event_time", nullable = false)
     private Instant eventTime;
+
+    @Column(name = "occurred_at")
+    private Instant occurredAt;
 
     @Column(nullable = false)
     private String origin;
@@ -89,6 +142,7 @@ public class AccessEvent {
         this.eventType = eventType;
         this.accessResult = accessResult;
         this.eventTime = eventTime == null ? Instant.now() : eventTime;
+        this.occurredAt = this.eventTime;
         this.origin = origin == null ? "SIMULATION" : origin;
         this.rawPayload = rawPayload;
     }
@@ -96,6 +150,42 @@ public class AccessEvent {
     @PrePersist
     void prePersist() {
         createdAt = Instant.now();
+        if (occurredAt == null) {
+            occurredAt = eventTime == null ? createdAt : eventTime;
+        }
+    }
+
+    public void applyOperationalFields(EventCategory eventCategory, RecognitionStatus recognitionStatus,
+                                       PassageStatus passageStatus, ReleaseMethod releaseMethod,
+                                       UUID operatorUserId, String manualReason, String controllerMethod,
+                                       String controllerDoor, String controllerReaderId, String controllerRecNo,
+                                       String decisionReason, Instant occurredAt) {
+        this.eventCategory = eventCategory;
+        this.recognitionStatus = recognitionStatus;
+        this.passageStatus = passageStatus;
+        this.releaseMethod = releaseMethod;
+        this.operatorUserId = operatorUserId;
+        this.manualReason = blankToNull(manualReason);
+        this.controllerMethod = blankToNull(controllerMethod);
+        this.controllerDoor = blankToNull(controllerDoor);
+        this.controllerReaderId = blankToNull(controllerReaderId);
+        this.controllerRecNo = blankToNull(controllerRecNo);
+        this.decisionReason = blankToNull(decisionReason);
+        this.occurredAt = occurredAt == null ? this.eventTime : occurredAt;
+    }
+
+    public void applyPersonSnapshot(String personName, String personCpf, String personEmail, String personPhone,
+                                    LocalDate invitedDay, String invitedLounge) {
+        if (this.personName == null || this.personName.isBlank()) {
+            this.personName = blankToNull(personName);
+        }
+        if (this.personCpf == null || this.personCpf.isBlank()) {
+            this.personCpf = blankToNull(personCpf);
+        }
+        this.personEmail = blankToNull(personEmail);
+        this.personPhone = blankToNull(personPhone);
+        this.invitedDay = invitedDay;
+        this.invitedLounge = blankToNull(invitedLounge);
     }
 
     public UUID getId() {
@@ -116,6 +206,22 @@ public class AccessEvent {
 
     public String getPersonCpf() {
         return personCpf;
+    }
+
+    public String getPersonEmail() {
+        return personEmail;
+    }
+
+    public String getPersonPhone() {
+        return personPhone;
+    }
+
+    public LocalDate getInvitedDay() {
+        return invitedDay;
+    }
+
+    public String getInvitedLounge() {
+        return invitedLounge;
     }
 
     public String getExternalUserId() {
@@ -142,8 +248,56 @@ public class AccessEvent {
         return accessResult;
     }
 
+    public EventCategory getEventCategory() {
+        return eventCategory;
+    }
+
+    public RecognitionStatus getRecognitionStatus() {
+        return recognitionStatus;
+    }
+
+    public PassageStatus getPassageStatus() {
+        return passageStatus;
+    }
+
+    public ReleaseMethod getReleaseMethod() {
+        return releaseMethod;
+    }
+
+    public UUID getOperatorUserId() {
+        return operatorUserId;
+    }
+
+    public String getManualReason() {
+        return manualReason;
+    }
+
+    public String getControllerMethod() {
+        return controllerMethod;
+    }
+
+    public String getControllerDoor() {
+        return controllerDoor;
+    }
+
+    public String getControllerReaderId() {
+        return controllerReaderId;
+    }
+
+    public String getControllerRecNo() {
+        return controllerRecNo;
+    }
+
+    public String getDecisionReason() {
+        return decisionReason;
+    }
+
     public Instant getEventTime() {
         return eventTime;
+    }
+
+    public Instant getOccurredAt() {
+        return occurredAt;
     }
 
     public String getOrigin() {
@@ -156,5 +310,9 @@ public class AccessEvent {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 }

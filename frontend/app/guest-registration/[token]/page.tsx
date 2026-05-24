@@ -1,8 +1,8 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useMemo, useState } from "react";
+import { FormEvent, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Camera, CheckCircle2, UploadCloud } from "lucide-react";
+import { Camera, CheckCircle2 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { apiErrorMessage } from "@/lib/errors";
 import { guestService } from "@/services/guestService";
@@ -10,6 +10,7 @@ import { Button } from "@/src/components/ui/Button";
 import { Card, CardContent } from "@/src/components/ui/Card";
 import { Input } from "@/src/components/ui/Input";
 import { EmptyState, ErrorState, LoadingState } from "@/src/components/shared/AsyncState";
+import { CameraCapture } from "@/src/components/shared/CameraCapture";
 
 export default function GuestRegistrationPage() {
   const params = useParams<{ token: string }>();
@@ -20,8 +21,6 @@ export default function GuestRegistrationPage() {
   const [facePhoto, setFacePhoto] = useState<File | null>(null);
   const [message, setMessage] = useState("");
 
-  const preview = useMemo(() => (facePhoto ? URL.createObjectURL(facePhoto) : ""), [facePhoto]);
-
   const complete = useMutation({
     mutationFn: () => {
       if (!facePhoto) throw new Error("Envie uma foto facial.");
@@ -31,13 +30,12 @@ export default function GuestRegistrationPage() {
     onError: (error) => setMessage(apiErrorMessage(error, "Não foi possível concluir o cadastro."))
   });
 
-  function onFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (file) setFacePhoto(file);
-  }
-
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!facePhoto) {
+      setMessage("Tire a foto pela câmera para continuar.");
+      return;
+    }
     complete.mutate();
   }
 
@@ -74,21 +72,10 @@ export default function GuestRegistrationPage() {
                 <Input label="Telefone" value={phone} onChange={(event) => setPhone(event.target.value)} />
                 <Input label="Empresa" value={company} onChange={(event) => setCompany(event.target.value)} />
               </div>
-              <label className="block">
+              <div>
                 <span className="mb-2 block text-sm font-semibold text-slate-300">Foto facial</span>
-                <div className="flex min-h-52 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-white/15 bg-white/[0.045] p-6 text-center transition hover:border-brand-wine/70 hover:bg-red-500/10">
-                  <input className="sr-only" type="file" accept="image/png,image/jpeg,image/webp" onChange={onFile} />
-                  {preview ? (
-                    <img src={preview} alt="Preview da foto facial" className="h-44 w-44 rounded-2xl object-cover shadow-sm" />
-                  ) : (
-                    <>
-                      <UploadCloud className="h-10 w-10 text-slate-400" />
-                      <p className="mt-3 text-sm font-semibold text-slate-100">Clique para enviar uma imagem</p>
-                      <p className="mt-1 text-xs text-slate-500">PNG, JPG ou WEBP ate 5MB</p>
-                    </>
-                  )}
-                </div>
-              </label>
+                <CameraCapture value={facePhoto} onChange={setFacePhoto} disabled={complete.isPending} />
+              </div>
               {message && complete.isError ? <ErrorState label={message} /> : null}
               {!registration.data.requiresFacePhoto ? <EmptyState label="Foto já enviada." /> : null}
               <Button type="submit" icon={Camera} loading={complete.isPending}>Concluir cadastro</Button>

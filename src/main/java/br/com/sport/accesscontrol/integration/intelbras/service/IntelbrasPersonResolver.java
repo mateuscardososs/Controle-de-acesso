@@ -30,7 +30,8 @@ public class IntelbrasPersonResolver {
 
     public IntelbrasPersonIdentity resolve(Device device, IntelbrasAccessControlCardRecord record) {
         var userId = blankToNull(record.userId());
-        var documentCandidates = documentCandidates(userId);
+        var cardNo = blankToNull(rawText(record, "CardNo"));
+        var documentCandidates = documentCandidates(userId, cardNo, record.cardName());
         var cardName = blankToNull(record.cardName());
 
         var guest = findGuestByDocumentCandidates(documentCandidates);
@@ -50,6 +51,20 @@ public class IntelbrasPersonResolver {
         var employee = findEmployeeByDocumentCandidates(documentCandidates);
         if (employee.isPresent()) {
             var found = employee.get();
+            return logResolved(device, userId, new IntelbrasPersonIdentity(
+                    PersonType.EMPLOYEE,
+                    found.getId(),
+                    found.getFullName(),
+                    found.getCpf(),
+                    userId,
+                    cardName,
+                    true
+            ));
+        }
+
+        var employeeByCard = findEmployeeByCardNo(cardNo);
+        if (employeeByCard.isPresent()) {
+            var found = employeeByCard.get();
             return logResolved(device, userId, new IntelbrasPersonIdentity(
                     PersonType.EMPLOYEE,
                     found.getId(),
@@ -126,6 +141,23 @@ public class IntelbrasPersonResolver {
         return Optional.empty();
     }
 
+    private Optional<br.com.sport.accesscontrol.employees.Employee> findEmployeeByCardNo(String cardNo) {
+        var normalized = normalizeCardNo(cardNo);
+        if (normalized == null) {
+            return Optional.empty();
+        }
+        var employee = employeeRepository.findByCardNo(normalized);
+        if (employee != null && employee.isPresent()) {
+            return employee;
+        }
+        for (var candidateEmployee : safeEmployees()) {
+            if (normalized.equals(normalizeCardNo(candidateEmployee.getCardNo()))) {
+                return Optional.of(candidateEmployee);
+            }
+        }
+        return Optional.empty();
+    }
+
     private Optional<br.com.sport.accesscontrol.employees.Employee> findEmployeeByDocumentCandidates(List<String> candidates) {
         for (String candidate : candidates) {
             var employee = employeeRepository.findByCpf(candidate);
@@ -141,18 +173,20 @@ public class IntelbrasPersonResolver {
         return Optional.empty();
     }
 
-    private List<String> documentCandidates(String value) {
-        var normalized = normalizeCpf(value);
-        if (normalized == null) {
-            return List.of();
-        }
+    private List<String> documentCandidates(String... values) {
         var candidates = new LinkedHashSet<String>();
-        candidates.add(normalized);
-        if (normalized.length() < 11) {
-            candidates.add("0".repeat(11 - normalized.length()) + normalized);
+        for (String value : values) {
+            var normalized = normalizeCpf(value);
+            if (normalized == null) {
+                continue;
+            }
+            candidates.add(normalized);
+            if (normalized.length() < 11) {
+                candidates.add("0".repeat(11 - normalized.length()) + normalized);
+            }
+            var withoutLeadingZeros = normalized.replaceFirst("^0+(?!$)", "");
+            candidates.add(withoutLeadingZeros);
         }
-        var withoutLeadingZeros = normalized.replaceFirst("^0+(?!$)", "");
-        candidates.add(withoutLeadingZeros);
         return List.copyOf(candidates);
     }
 
@@ -162,6 +196,14 @@ public class IntelbrasPersonResolver {
         }
         var digits = value.replaceAll("\\D", "");
         return !digits.isBlank() && digits.length() <= 11 ? digits : null;
+    }
+
+    private String normalizeCardNo(String value) {
+        if (value == null) {
+            return null;
+        }
+        var digits = value.replaceAll("\\D", "");
+        return digits.isBlank() ? null : digits;
     }
 
     private boolean matchesAnyDocumentCandidate(String document, List<String> candidates) {
@@ -194,5 +236,13 @@ public class IntelbrasPersonResolver {
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private String rawText(IntelbrasAccessControlCardRecord record, String key) {
+        if (record.raw() == null) {
+            return null;
+        }
+        var value = record.raw().get(key);
+        return value == null ? null : value.toString();
     }
 }

@@ -6,6 +6,17 @@
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
             <includeMdc>true</includeMdc>
             <customFields>{"application":"access-control-api"}</customFields>
+            <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+                <defaultMask>***</defaultMask>
+                <path>password</path>
+                <path>senha</path>
+                <path>token</path>
+                <path>authorization</path>
+                <path>Authorization</path>
+                <path>facePhoto</path>
+                <path>photoData</path>
+                <path>biometricData</path>
+            </jsonGeneratorDecorator>
         </encoder>
     </appender>
 
@@ -14,12 +25,23 @@
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
             <includeMdc>true</includeMdc>
             <customFields>{"application":"access-control-api"}</customFields>
+            <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+                <defaultMask>***</defaultMask>
+                <path>password</path>
+                <path>senha</path>
+                <path>token</path>
+                <path>authorization</path>
+                <path>Authorization</path>
+                <path>facePhoto</path>
+                <path>photoData</path>
+                <path>biometricData</path>
+            </jsonGeneratorDecorator>
         </encoder>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${LOG_FILE:-logs/access-control-api}.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
-            <maxFileSize>50MB</maxFileSize>
-            <maxHistory>14</maxHistory>
-            <totalSizeCap>1GB</totalSizeCap>
+            <maxFileSize>${LOG_MAX_FILE_SIZE:-50MB}</maxFileSize>
+            <maxHistory>${LOG_MAX_HISTORY:-90}</maxHistory>
+            <totalSizeCap>${LOG_TOTAL_SIZE_CAP:-10GB}</totalSizeCap>
         </rollingPolicy>
     </appender>
 

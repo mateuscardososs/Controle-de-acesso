@@ -30,6 +30,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.Map;
 import java.util.UUID;
 
@@ -117,6 +119,7 @@ public class IntelbrasSyncWorker {
                 PersonType.EMPLOYEE,
                 employee.getId(),
                 employee.getCpf(),
+                employee.getCardNo(),
                 employee.getFullName(),
                 employee.getFacePhotoUrl(),
                 employee.getStatus() == br.com.sport.accesscontrol.employees.EmployeeStatus.ACTIVE,
@@ -142,6 +145,10 @@ public class IntelbrasSyncWorker {
                 guest.getSyncAttempts());
         realtimePublisher.publish(PersonType.GUEST, guestId, SyncStatus.SYNCING,
                 "Sincronizando visitante " + guest.getFullName() + " com " + target);
+        var validFrom = guestValidFrom(guest);
+        var validUntil = guestValidUntil(guest);
+        log.info("intelbras_sync_guest_validity guest_id={} invited_day={} valid_from={} valid_until={}",
+                guestId, guest.getInvitedDay(), validFrom, validUntil);
         var result = provider.syncPerson(new ProviderPerson(
                 PersonType.GUEST,
                 guest.getId(),
@@ -149,8 +156,8 @@ public class IntelbrasSyncWorker {
                 guest.getFullName(),
                 guest.getFacePhotoUrl(),
                 guest.getStatus() == br.com.sport.accesscontrol.guests.GuestStatus.COMPLETED,
-                guest.getVisitStart(),
-                guest.getVisitEnd()
+                validFrom,
+                validUntil
         ));
         finishGuest(guest, result, target);
         return result;
@@ -175,6 +182,7 @@ public class IntelbrasSyncWorker {
             guest.markSynced();
             guestRepository.save(guest);
             auditSuccess(PersonType.GUEST, guest.getId(), result);
+            auditGuestSyncResult(guest, target, "SYNCED", null);
             sendGuestAccessApprovalEmail(guest);
             guestRepository.save(guest);
             realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNCED,
@@ -183,9 +191,24 @@ public class IntelbrasSyncWorker {
             guest.markSyncFailed(result.message());
             guestRepository.save(guest);
             auditFailure(PersonType.GUEST, guest.getId(), result.message());
+            auditGuestSyncResult(guest, target, "SYNC_FAILED", result.message());
             realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNC_FAILED,
                     "Falha ao sincronizar visitante " + guest.getFullName() + " com " + target + ": " + safe(result.message()));
         }
+    }
+
+    private void auditGuestSyncResult(Guest guest, String target, String result, String error) {
+        auditService.record("GUEST_SYNC_RESULT", "Guest", guest.getId(),
+                Map.of(
+                        "visitor", guest.getFullName(),
+                        "target", safe(target),
+                        "result", result,
+                        "error", safe(error),
+                        "validFrom", guest.getVisitStart(),
+                        "validUntil", guest.getVisitEnd()
+                ),
+                Map.of(),
+                Map.of());
     }
 
     private void handleFailure(IntelbrasSyncMessage message, String error) {
@@ -298,5 +321,21 @@ public class IntelbrasSyncWorker {
 
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private static final ZoneId EVENT_ZONE = ZoneId.of("America/Recife");
+
+    private Instant guestValidFrom(br.com.sport.accesscontrol.guests.Guest guest) {
+        if (guest.getInvitedDay() != null) {
+            return guest.getInvitedDay().atTime(LocalTime.of(15, 0)).atZone(EVENT_ZONE).toInstant();
+        }
+        return guest.getVisitStart();
+    }
+
+    private Instant guestValidUntil(br.com.sport.accesscontrol.guests.Guest guest) {
+        if (guest.getInvitedDay() != null) {
+            return guest.getInvitedDay().plusDays(1).atTime(LocalTime.of(4, 0)).atZone(EVENT_ZONE).toInstant();
+        }
+        return guest.getVisitEnd();
     }
 }

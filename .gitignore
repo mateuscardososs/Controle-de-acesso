@@ -12,6 +12,9 @@ target/
 # Logs and runtime files
 *.log
 logs/
+!frontend/app/logs/
+!frontend/app/logs/**
+backups/
 *.pid
 
 # Environment files

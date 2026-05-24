@@ -15,6 +15,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.Base64;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -102,19 +103,17 @@ class AccessControlApiApplicationTests {
     @Test
     void publicVisitorRegistrationCreatesGuestWithoutToken() throws Exception {
         mockMvc.perform(multipart("/api/public/visitor-registration")
+                        .file(facePhoto())
                         .param("fullName", "Visitante Publico")
                         .param("cpf", "12345678901")
                         .param("email", "visitante.publico@empresa.local")
                         .param("phone", "81999990000")
-                        .param("company", "Empresa")
-                        .param("visitReason", "Reuniao")
-                        .param("hostName", "Recepcao")
-                        .param("visitStart", "2026-06-01T12:00:00Z")
-                        .param("visitEnd", "2026-06-01T13:00:00Z"))
+                        .param("invitedDay", "2026-06-01")
+                        .param("invitedLounge", "Camarote 1"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.fullName").value("Visitante Publico"))
-                .andExpect(jsonPath("$.status").value("PENDING_REGISTRATION"))
-                .andExpect(jsonPath("$.facePhotoReceived").value(false))
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.facePhotoReceived").value(true))
                 .andExpect(jsonPath("$.cpf").doesNotExist())
                 .andExpect(jsonPath("$.inviteToken").doesNotExist());
     }
@@ -133,10 +132,9 @@ class AccessControlApiApplicationTests {
                         .param("fullName", "Visitante Upload")
                         .param("cpf", "12345678902")
                         .param("email", "visitante.upload@empresa.local")
-                        .param("visitReason", "Reuniao")
-                        .param("hostName", "Recepcao")
-                        .param("visitStart", "2026-06-01T12:00:00Z")
-                        .param("visitEnd", "2026-06-01T13:00:00Z"))
+                        .param("phone", "81999990000")
+                        .param("invitedDay", "2026-06-01")
+                        .param("invitedLounge", "Camarote 1"))
                 .andExpect(status().isBadRequest());
     }
 
@@ -229,6 +227,99 @@ class AccessControlApiApplicationTests {
                 .andExpect(jsonPath("$.accessResult").value("ALLOWED"));
     }
 
+    @Test
+    void registersManualReleaseWithAuthenticatedOperator() throws Exception {
+        var areaId = createArea();
+        var deviceId = createDevice(areaId);
+        var token = adminToken();
+
+        mockMvc.perform(post("/api/access-events/manual-release")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "personName": "Visitante Manual",
+                                  "personCpf": "123.456.789-01",
+                                  "deviceId": "%s",
+                                  "reason": "Reconhecimento facial falhou",
+                                  "operatorObservation": "Conferido em lista fisica"
+                                }
+                                """.formatted(deviceId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.eventType").value("MANUAL_ADMIN_RELEASE"))
+                .andExpect(jsonPath("$.accessResult").value("ALLOWED"))
+                .andExpect(jsonPath("$.releaseMethod").value("MANUAL_ADMIN_RELEASE"))
+                .andExpect(jsonPath("$.operatorUserId").isNotEmpty())
+                .andExpect(jsonPath("$.personCpf").value("12345678901"))
+                .andExpect(jsonPath("$.manualReason").value("Reconhecimento facial falhou"));
+    }
+
+    @Test
+    void manualReleaseRequiresAuthenticationAndAuthorizedRole() throws Exception {
+        var areaId = createArea();
+        var deviceId = createDevice(areaId);
+        var payload = """
+                {
+                  "personName": "Visitante Manual",
+                  "personCpf": "123.456.789-01",
+                  "deviceId": "%s",
+                  "reason": "Reconhecimento facial falhou",
+                  "operatorObservation": "Conferido em lista fisica"
+                }
+                """.formatted(deviceId);
+
+        mockMvc.perform(post("/api/access-events/manual-release")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isUnauthorized());
+
+        var viewerToken = tokenForRegisteredUser("viewer-manual-" + UUID.randomUUID() + "@empresa.local", "SECURITY_VIEWER");
+        mockMvc.perform(post("/api/access-events/manual-release")
+                        .header("Authorization", "Bearer " + viewerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void searchesAccessEventsWithPaginationAndFilters() throws Exception {
+        var areaId = createArea();
+        var deviceId = createDevice(areaId);
+        var token = adminToken();
+
+        mockMvc.perform(post("/api/access-events/manual-release")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "personName": "Busca Operacional",
+                                  "personCpf": "987.654.321-00",
+                                  "deviceId": "%s",
+                                  "reason": "Teste de busca",
+                                  "operatorObservation": "Filtro CPF nome status"
+                                }
+                                """.formatted(deviceId)))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/access-events")
+                        .header("Authorization", "Bearer " + token)
+                        .param("page", "0")
+                        .param("size", "10")
+                        .param("personName", "Busca")
+                        .param("personCpf", "98765432100")
+                        .param("accessResult", "ALLOWED")
+                        .param("manualOnly", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content").isArray())
+                .andExpect(jsonPath("$.content[0].personName").value("Busca Operacional"))
+                .andExpect(jsonPath("$.content[0].personCpf").value("98765432100"))
+                .andExpect(jsonPath("$.content[0].accessResult").value("ALLOWED"))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(10))
+                .andExpect(jsonPath("$.totalElements").isNumber())
+                .andExpect(jsonPath("$.totalPages").isNumber());
+    }
+
     private UUID createEmployee() throws Exception {
         var result = mockMvc.perform(post("/api/employees")
                         .header("Authorization", "Bearer " + adminToken())
@@ -249,6 +340,8 @@ class AccessControlApiApplicationTests {
                   "fullName": "Colaborador Exemplo",
                   "cpf": "%s",
                   "email": "colaborador.%s@empresa.local",
+                  "password": "Admin@123456",
+                  "role": "HR",
                   "phone": "81999990000",
                   "registrationNumber": "EMP-%s",
                   "status": "ACTIVE"
@@ -304,6 +397,11 @@ class AccessControlApiApplicationTests {
     private UUID idFrom(String json) throws Exception {
         JsonNode node = objectMapper.readTree(json);
         return UUID.fromString(node.get("id").asText());
+    }
+
+    private MockMultipartFile facePhoto() {
+        var bytes = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=");
+        return new MockMultipartFile("facePhoto", "face.png", MediaType.IMAGE_PNG_VALUE, bytes);
     }
 
     private String adminToken() throws Exception {

@@ -77,4 +77,12 @@ public class AuditLog {
     public String getAction() {
         return action;
     }
+
+    public UUID getActorUserId() {
+        return actorUserId;
+    }
+
+    public Map<String, Object> getDetails() {
+        return details;
+    }
 }

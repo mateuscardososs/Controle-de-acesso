@@ -151,7 +151,9 @@ class IntelbrasClientTests {
                 .contains("CardNo=16")
                 .contains("CardStatus=0")
                 .contains("UserID=16")
-                .contains("CardName=Alexandre16");
+                .contains("CardName=Alexandre16")
+                .contains("ValidDateStart=2026-05-20%2008%3A00%3A00")
+                .contains("ValidDateEnd=2037-12-31%2023%3A59%3A59");
         assertThat(requests.get(5).uri().toString())
                 .contains("/cgi-bin/FaceInfoManager.cgi?action=remove&UserID=16");
         assertThat(requests.get(7).method()).isEqualTo("POST");
@@ -201,7 +203,9 @@ class IntelbrasClientTests {
                 .contains("/cgi-bin/recordUpdater.cgi?action=update&name=AccessControlCard")
                 .contains("recno=22")
                 .contains("CardStatus=0")
-                .contains("UserID=16");
+                .contains("UserID=16")
+                .contains("ValidDateStart=2026-05-20%2008%3A00%3A00")
+                .contains("ValidDateEnd=2037-12-31%2023%3A59%3A59");
     }
 
     @Test

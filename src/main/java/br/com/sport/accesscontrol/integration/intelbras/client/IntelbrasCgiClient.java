@@ -256,7 +256,8 @@ public class IntelbrasCgiClient {
     private HttpResponse<String> send(HttpRequest request, String host) {
         IOException lastIo = null;
         InterruptedException lastInterrupted = null;
-        for (int attempt = 1; attempt <= 2; attempt++) {
+        var attempts = Math.max(1, properties.getRetryAttempts());
+        for (int attempt = 1; attempt <= attempts; attempt++) {
             try {
                 return httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.ISO_8859_1));
             } catch (InterruptedException exception) {
@@ -265,6 +266,9 @@ public class IntelbrasCgiClient {
                 break;
             } catch (IOException exception) {
                 lastIo = exception;
+                log.warn("intelbras_cgi_http_request_failed host={} attempt={} max_attempts={} error={}",
+                        IntelbrasHttpSupport.maskHost(host), attempt, attempts, safe(exception.getMessage()));
+                backoff(attempt, attempts);
             }
         }
         if (lastInterrupted != null) {
@@ -277,7 +281,8 @@ public class IntelbrasCgiClient {
     private HttpResponse<byte[]> sendBinary(HttpRequest request, String host) {
         IOException lastIo = null;
         InterruptedException lastInterrupted = null;
-        for (int attempt = 1; attempt <= 2; attempt++) {
+        var attempts = Math.max(1, properties.getRetryAttempts());
+        for (int attempt = 1; attempt <= attempts; attempt++) {
             try {
                 return httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
             } catch (InterruptedException exception) {
@@ -286,6 +291,9 @@ public class IntelbrasCgiClient {
                 break;
             } catch (IOException exception) {
                 lastIo = exception;
+                log.warn("intelbras_cgi_http_binary_request_failed host={} attempt={} max_attempts={} error={}",
+                        IntelbrasHttpSupport.maskHost(host), attempt, attempts, safe(exception.getMessage()));
+                backoff(attempt, attempts);
             }
         }
         if (lastInterrupted != null) {
@@ -293,6 +301,17 @@ public class IntelbrasCgiClient {
         }
         throw new IntelbrasIntegrationException("Intelbras CGI request failed for host "
                 + IntelbrasHttpSupport.maskHost(host) + ".", lastIo);
+    }
+
+    private void backoff(int attempt, int attempts) {
+        if (attempt >= attempts || properties.getRetryBackoff().isZero()) {
+            return;
+        }
+        try {
+            Thread.sleep(properties.getRetryBackoff().toMillis());
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void ensureSuccess(int statusCode, String host, String endpoint, String body) {
@@ -362,7 +381,8 @@ public class IntelbrasCgiClient {
                                                                  LocalDateTime validFrom,
                                                                  LocalDateTime validUntil) {
         var payloads = new ArrayList<AccessUserPayload>();
-        payloads.add(accessUserPayload("documented_card_status", action, recNo, userId, cardNo, cardName));
+        payloads.add(accessUserPayload("documented_card_status_with_validity", action, recNo, userId, cardNo, cardName,
+                validFrom, validUntil, true));
         payloads.add(legacyAccessUserPayload("legacy_full_get", action, recNo, userId, cardNo, cardName,
                 validFrom, validUntil));
         payloads.add(accessUserPayload("minimal_without_card_status", action, recNo, userId, cardNo, cardName,
@@ -389,6 +409,16 @@ public class IntelbrasCgiClient {
         }
         params.put("CardName", cardName == null || cardName.isBlank() ? userId : cardName);
         params.put("UserID", userId);
+        return new AccessUserPayload(variant, params);
+    }
+
+    private AccessUserPayload accessUserPayload(String variant, String action, String recNo, String userId,
+                                                String cardNo, String cardName, LocalDateTime validFrom,
+                                                LocalDateTime validUntil, boolean includeCardStatus) {
+        var params = new LinkedHashMap<>(accessUserPayload(variant, action, recNo, userId, cardNo, cardName,
+                includeCardStatus).params());
+        params.put("ValidDateStart", DEVICE_TIME.format(validFrom));
+        params.put("ValidDateEnd", DEVICE_TIME.format(validUntil));
         return new AccessUserPayload(variant, params);
     }
 

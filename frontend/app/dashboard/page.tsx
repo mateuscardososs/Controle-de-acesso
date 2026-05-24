@@ -1,23 +1,24 @@
 "use client";
 
 import { AdminShell } from "@/components/AdminShell";
-import { ErrorState, LoadingState } from "@/components/AsyncState";
+import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/StatCard";
 import { Card, CardContent, CardHeader } from "@/src/components/ui/Card";
 import { Badge } from "@/src/components/ui/Badge";
+import { Modal } from "@/src/components/ui/Modal";
 import { DataTable } from "@/src/components/shared/DataTable";
 import { StatusBadge } from "@/src/components/shared/StatusBadge";
-import { accessEventService } from "@/services/accessEventService";
+import { AccessEvent } from "@/services/accessEventService";
 import { deviceService } from "@/services/deviceService";
 import { dashboardService } from "@/services/dashboardService";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, CalendarClock, IdCard, MonitorCog, RadioTower, ShieldAlert } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRealtime } from "@/src/hooks/useRealtime";
 import { RealtimeIndicator } from "@/src/components/shared/RealtimeIndicator";
 import { RealtimeFeed } from "@/src/components/shared/RealtimeFeed";
-import { Area, AreaChart, ResponsiveContainer, Tooltip } from "recharts";
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 function metricTrend(value: number) {
   const safeValue = Math.max(value, 1);
@@ -46,17 +47,35 @@ function Sparkline({ value }: { value: number }) {
   );
 }
 
+function localDate() {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
+}
+
 export default function DashboardPage() {
   const queryClient = useQueryClient();
   const realtime = useRealtime();
+  const [peaksOpen, setPeaksOpen] = useState(false);
+  const [peaksDate, setPeaksDate] = useState(() => localDate());
   const summary = useQuery({ queryKey: ["dashboard-summary"], queryFn: dashboardService.summary });
-  const events = useQuery({ queryKey: ["access-events"], queryFn: accessEventService.list });
+  const trafficPeaks = useQuery({
+    queryKey: ["traffic-peaks", peaksDate],
+    queryFn: () => dashboardService.trafficPeaks(peaksDate),
+    enabled: peaksOpen
+  });
+  const events = useQuery({
+    queryKey: ["dashboard-recent-events"],
+    queryFn: () => dashboardService.recentEvents(6),
+    refetchInterval: realtime.connected ? false : 10000
+  });
   const devices = useQuery({ queryKey: ["devices"], queryFn: deviceService.list });
   const recentEvents = (events.data ?? []).slice(0, 6);
   const offlineDevices = (devices.data ?? []).filter((device) => device.status !== "ONLINE");
 
   useEffect(() => {
     if (realtime.accessEvents.length === 0) return;
+    queryClient.invalidateQueries({ queryKey: ["dashboard-recent-events"] });
     queryClient.invalidateQueries({ queryKey: ["access-events"] });
     queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
   }, [queryClient, realtime.accessEvents.length]);
@@ -65,6 +84,13 @@ export default function DashboardPage() {
     if (realtime.deviceStatuses.length === 0) return;
     queryClient.invalidateQueries({ queryKey: ["devices"] });
   }, [queryClient, realtime.deviceStatuses.length]);
+
+  const peaksData = trafficPeaks.data ?? [];
+  const peakEntryItem = peaksData.length > 0 ? peaksData.reduce((max, item) => item.entries > max.entries ? item : max) : null;
+  const totalAllowed = peaksData.reduce((sum, item) => sum + item.allowed, 0);
+  const totalDenied = peaksData.reduce((sum, item) => sum + item.denied, 0);
+  const busyHourItem = peaksData.length > 0 ? peaksData.reduce((max, item) => (item.entries + item.exits + item.passages) > (max.entries + max.exits + max.passages) ? item : max) : null;
+  const chartData = peaksData.map((item) => ({ ...item, label: `${String(item.hour).padStart(2, "0")}h` }));
 
   return (
     <AdminShell>
@@ -82,11 +108,17 @@ export default function DashboardPage() {
             {[
               { title: "Colaboradores ativos", value: summary.data?.totalEmployees ?? 0, icon: IdCard, description: "Base cadastrada" },
               { title: "Dispositivos", value: summary.data?.totalDevices ?? 0, icon: MonitorCog, description: "Catracas e controladoras" },
-              { title: "Eventos hoje", value: summary.data?.todayEvents ?? 0, icon: CalendarClock, description: "Movimento do dia" },
+              { title: "Eventos hoje", value: summary.data?.todayEvents ?? 0, icon: CalendarClock, description: "Movimento do dia", onClick: () => setPeaksOpen(true) },
               { title: "Acessos negados", value: summary.data?.deniedAccesses ?? 0, icon: ShieldAlert, description: "Requer acompanhamento" }
             ].map((item) => (
               <div key={item.title} className="relative">
-                <StatCard title={item.title} value={item.value} icon={item.icon} description={item.description} />
+                {"onClick" in item ? (
+                  <button type="button" className="block w-full text-left" onClick={item.onClick}>
+                    <StatCard title={item.title} value={item.value} icon={item.icon} description={item.description} />
+                  </button>
+                ) : (
+                  <StatCard title={item.title} value={item.value} icon={item.icon} description={item.description} />
+                )}
                 <div className="pointer-events-none absolute bottom-5 right-5">
                   <Sparkline value={Number(item.value)} />
                 </div>
@@ -108,6 +140,8 @@ export default function DashboardPage() {
                   getRowKey={(event) => event.id}
                   columns={[
                     { key: "time", header: "Horario", render: (event) => new Date(event.eventTime).toLocaleString("pt-BR") },
+                    { key: "person", header: "Pessoa", className: "min-w-[170px]", render: personLabel },
+                    { key: "cpf", header: "CPF", className: "whitespace-nowrap font-mono text-xs", render: (event) => formatCpf(event.personCpf) },
                     { key: "type", header: "Tipo", render: (event) => <StatusBadge value={event.eventType} /> },
                     { key: "result", header: "Resultado", render: (event) => <StatusBadge value={event.accessResult} /> },
                     { key: "origin", header: "Origem", render: (event) => <StatusBadge value={originLabel(event.origin)} /> }
@@ -167,8 +201,90 @@ export default function DashboardPage() {
           </div>
         </div>
       ) : null}
+
+      <Modal title="Picos de horário" description="Movimento por hora no dia selecionado" open={peaksOpen} onClose={() => setPeaksOpen(false)}>
+        <div className="mb-5 flex items-center gap-3">
+          <label className="text-sm font-medium text-slate-400">Data</label>
+          <input
+            type="date"
+            value={peaksDate}
+            max={localDate()}
+            onChange={(e) => setPeaksDate(e.target.value)}
+            className="rounded-lg border border-white/15 bg-white/[0.055] px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-red-700"
+          />
+        </div>
+
+        {trafficPeaks.isLoading ? <LoadingState label="Carregando picos de horário..." /> : null}
+        {trafficPeaks.isError ? <ErrorState label="Não foi possível carregar os picos de horário." /> : null}
+
+        {!trafficPeaks.isLoading && !trafficPeaks.isError && chartData.length === 0 ? (
+          <EmptyState label="Nenhum evento registrado nesta data." description="Selecione outra data ou aguarde novos eventos." />
+        ) : null}
+
+        {chartData.length > 0 ? (
+          <>
+            <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="rounded-xl border border-white/10 bg-white/[0.045] p-3">
+                <p className="text-xs text-slate-400">Pico de entrada</p>
+                <p className="mt-1 text-xl font-bold text-sky-400">{peakEntryItem ? `${String(peakEntryItem.hour).padStart(2, "0")}h` : "—"}</p>
+                <p className="text-xs text-slate-500">{peakEntryItem ? `${peakEntryItem.entries} entradas` : "sem dados"}</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.045] p-3">
+                <p className="text-xs text-slate-400">Total liberados</p>
+                <p className="mt-1 text-xl font-bold text-emerald-400">{totalAllowed}</p>
+                <p className="text-xs text-slate-500">acessos permitidos</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.045] p-3">
+                <p className="text-xs text-slate-400">Total negados</p>
+                <p className="mt-1 text-xl font-bold text-red-400">{totalDenied}</p>
+                <p className="text-xs text-slate-500">acessos negados</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.045] p-3">
+                <p className="text-xs text-slate-400">Maior fluxo</p>
+                <p className="mt-1 text-xl font-bold text-slate-50">{busyHourItem ? `${String(busyHourItem.hour).padStart(2, "0")}h` : "—"}</p>
+                <p className="text-xs text-slate-500">{busyHourItem ? `${busyHourItem.entries + busyHourItem.exits + busyHourItem.passages} eventos` : "sem dados"}</p>
+              </div>
+            </div>
+
+            <div className="h-[300px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 0, right: 0, left: -10, bottom: 0 }} barCategoryGap="18%">
+                  <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} strokeDasharray="3 3" />
+                  <XAxis dataKey="label" stroke="#64748b" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
+                  <YAxis stroke="#64748b" tickLine={false} axisLine={false} allowDecimals={false} tick={{ fontSize: 11 }} />
+                  <Tooltip
+                    cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                    contentStyle={{ background: "#0f172a", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, color: "#e2e8f0", fontSize: 12 }}
+                    labelStyle={{ color: "#94a3b8", marginBottom: 6, fontWeight: 600 }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
+                  <Bar dataKey="entries" name="Entradas" stackId="stack">
+                    {chartData.map((entry) => (
+                      <Cell key={entry.label} fill={hourColor(entry.hour)} />
+                    ))}
+                  </Bar>
+                  <Bar dataKey="passages" name="Passagens" stackId="stack" fill="#22c55e" opacity={0.82} />
+                  <Bar dataKey="allowed" name="Liberados" stackId="stack" fill="#f59e0b" opacity={0.82} />
+                  <Bar dataKey="denied" name="Negados" stackId="stack" fill="#ef4444" opacity={0.9} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </>
+        ) : null}
+      </Modal>
     </AdminShell>
   );
+}
+
+function hourColor(hour: number): string {
+  if (hour <= 4) return "#5b21b6";
+  if (hour <= 7) return "#1d4ed8";
+  if (hour <= 10) return "#0284c7";
+  if (hour <= 13) return "#0d9488";
+  if (hour <= 16) return "#15803d";
+  if (hour <= 19) return "#d97706";
+  if (hour <= 21) return "#9333ea";
+  return "#6d28d9";
 }
 
 function originLabel(origin?: string) {
@@ -176,4 +292,18 @@ function originLabel(origin?: string) {
   if (origin === "INTELBRAS_SIMULATOR") return "Simulador Intelbras";
   if (origin === "SIMULATION") return "Simulação";
   return origin ?? "Não informado";
+}
+
+function personLabel(event: AccessEvent) {
+  if (event.personName) return event.personName;
+  if (event.rawCardName) return event.rawCardName;
+  if (event.externalUserId) return `Usuário ${event.externalUserId}`;
+  return "Usuário não identificado";
+}
+
+function formatCpf(value?: string | null) {
+  if (!value) return "Não informado";
+  const digits = value.replace(/\D/g, "");
+  if (digits.length !== 11) return value;
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
 }

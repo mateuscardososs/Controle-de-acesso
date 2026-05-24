@@ -7,8 +7,10 @@ import br.com.sport.accesscontrol.integration.intelbras.mapper.IntelbrasEventMap
 import br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasIdentityCodec;
 import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasDeviceConnectionService;
 import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasFaceEncoder;
+import br.com.sport.accesscontrol.metrics.AccessMetricsService;
 import br.com.sport.accesscontrol.integration.provider.ProviderPerson;
 import br.com.sport.accesscontrol.integration.provider.ProviderSyncStatus;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -46,7 +48,8 @@ class IntelbrasProviderModeTests {
                 mock(IntelbrasCgiClient.class),
                 mock(IntelbrasFaceEncoder.class),
                 new IntelbrasEventMapper(),
-                new IntelbrasProperties()
+                new IntelbrasProperties(),
+                new AccessMetricsService(new SimpleMeterRegistry())
         );
 
         var result = provider.syncPerson(person(true, null));

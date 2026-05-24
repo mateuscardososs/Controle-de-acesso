@@ -5,6 +5,10 @@ export type RealtimeAccessEvent = {
   personId?: string;
   personName?: string | null;
   personCpf?: string | null;
+  personEmail?: string | null;
+  personPhone?: string | null;
+  invitedDay?: string | null;
+  invitedLounge?: string | null;
   externalUserId?: string | null;
   rawCardName?: string | null;
   deviceId?: string;

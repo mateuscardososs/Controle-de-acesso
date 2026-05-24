@@ -10,9 +10,9 @@ import { Input, Select } from "@/src/components/ui/Input";
 import { Modal } from "@/src/components/ui/Modal";
 import { StatusBadge } from "@/src/components/shared/StatusBadge";
 import { areaService } from "@/services/areaService";
-import { deviceService } from "@/services/deviceService";
+import { deviceService, type Device } from "@/services/deviceService";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Cpu, Hash, KeyRound, MapPin, Plus, Router, Sparkles, Wifi } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Cpu, Hash, KeyRound, MapPin, Pencil, Plus, Router, Sparkles, Trash2, Wifi, Zap } from "lucide-react";
 import { FormEvent, useState } from "react";
 
 type OperationType = "ENTRY" | "EXIT" | "ENTRY_EXIT";
@@ -46,14 +46,34 @@ const initialForm: DeviceForm = {
   areaId: ""
 };
 
+function deviceToForm(device: Device): DeviceForm {
+  return {
+    name: device.name,
+    model: device.model ?? "",
+    serialNumber: device.serialNumber ?? "",
+    ipAddress: device.ipAddress,
+    httpPort: String(device.httpPort ?? 80),
+    intelbrasUsername: device.intelbrasUsername ?? "",
+    intelbrasPassword: "",
+    location: device.location ?? "",
+    operationType: (device.operationType as OperationType) ?? "ENTRY_EXIT",
+    status: (device.status as DeviceStatus) ?? "UNKNOWN",
+    areaId: device.areaId ?? ""
+  };
+}
+
 export default function DevicesPage() {
   const queryClient = useQueryClient();
   const devices = useQuery({ queryKey: ["devices"], queryFn: deviceService.list });
   const areas = useQuery({ queryKey: ["areas"], queryFn: areaService.list });
+
   const [form, setForm] = useState<DeviceForm>(initialForm);
   const [formError, setFormError] = useState("");
   const [message, setMessage] = useState("");
-  const [open, setOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editDevice, setEditDevice] = useState<Device | null>(null);
+  const [deleteDevice, setDeleteDevice] = useState<Device | null>(null);
+  const [pingStates, setPingStates] = useState<Record<string, "pending" | "success" | "error">>({});
 
   const create = useMutation({
     mutationFn: () => deviceService.create({
@@ -73,21 +93,81 @@ export default function DevicesPage() {
       setForm(initialForm);
       setFormError("");
       setMessage("Dispositivo criado com sucesso.");
-      setOpen(false);
+      setCreateOpen(false);
       queryClient.invalidateQueries({ queryKey: ["devices"] });
     },
     onError: (error) => setMessage(apiErrorMessage(error, "Não foi possível criar o dispositivo."))
   });
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  const update = useMutation({
+    mutationFn: () => deviceService.update(editDevice!.id, {
+      name: form.name.trim(),
+      model: form.model.trim(),
+      serialNumber: optionalValue(form.serialNumber),
+      ipAddress: form.ipAddress.trim(),
+      httpPort: Number(form.httpPort),
+      intelbrasUsername: optionalValue(form.intelbrasUsername),
+      intelbrasPassword: optionalValue(form.intelbrasPassword),
+      location: optionalValue(form.location),
+      operationType: form.operationType,
+      status: form.status,
+      areaId: form.areaId
+    }),
+    onSuccess: () => {
+      setForm(initialForm);
+      setFormError("");
+      setMessage("Dispositivo atualizado com sucesso.");
+      setEditDevice(null);
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
+    onError: (error) => setFormError(apiErrorMessage(error, "Não foi possível atualizar o dispositivo."))
+  });
+
+  const remove = useMutation({
+    mutationFn: () => deviceService.delete(deleteDevice!.id),
+    onSuccess: () => {
+      setMessage("Dispositivo removido.");
+      setDeleteDevice(null);
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
+    onError: (error) => {
+      setMessage(apiErrorMessage(error, "Não foi possível remover o dispositivo."));
+      setDeleteDevice(null);
+    }
+  });
+
+  function submitCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const validation = validateForm(form);
-    if (validation) {
-      setFormError(validation);
-      return;
-    }
+    if (validation) { setFormError(validation); return; }
     setFormError("");
     create.mutate();
+  }
+
+  function submitEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const validation = validateForm(form);
+    if (validation) { setFormError(validation); return; }
+    setFormError("");
+    update.mutate();
+  }
+
+  function openEdit(device: Device) {
+    setForm(deviceToForm(device));
+    setFormError("");
+    setEditDevice(device);
+  }
+
+  function closeEdit() {
+    setEditDevice(null);
+    setForm(initialForm);
+    setFormError("");
+  }
+
+  function closeCreate() {
+    setCreateOpen(false);
+    setForm(initialForm);
+    setFormError("");
   }
 
   function updateForm<K extends keyof DeviceForm>(key: K, value: DeviceForm[K]) {
@@ -104,9 +184,19 @@ export default function DevicesPage() {
     }));
   }
 
-  function closeModal() {
-    setOpen(false);
-    setFormError("");
+  function handlePing(device: Device) {
+    setPingStates((s) => ({ ...s, [device.id]: "pending" }));
+    deviceService.ping(device.id)
+      .then(() => {
+        setPingStates((s) => ({ ...s, [device.id]: "success" }));
+        queryClient.invalidateQueries({ queryKey: ["devices"] });
+        setTimeout(() => setPingStates((s) => { const n = { ...s }; delete n[device.id]; return n; }), 3000);
+      })
+      .catch(() => {
+        setPingStates((s) => ({ ...s, [device.id]: "error" }));
+        queryClient.invalidateQueries({ queryKey: ["devices"] });
+        setTimeout(() => setPingStates((s) => { const n = { ...s }; delete n[device.id]; return n; }), 3000);
+      });
   }
 
   return (
@@ -115,7 +205,7 @@ export default function DevicesPage() {
         eyebrow="Infraestrutura"
         title="Dispositivos"
         description="Catracas, controladoras e pontos de acesso vinculados as areas fisicas."
-        actions={<Button icon={Plus} onClick={() => setOpen(true)}>Novo dispositivo</Button>}
+        actions={<Button icon={Plus} onClick={() => setCreateOpen(true)}>Novo dispositivo</Button>}
       />
       {message ? <div className="mb-4 rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm font-medium text-slate-300 shadow-sm">{message}</div> : null}
       {devices.isLoading ? <LoadingState label="Carregando dispositivos..." /> : null}
@@ -144,81 +234,170 @@ export default function DevicesPage() {
                   <p className="flex items-center gap-2"><Wifi className="h-4 w-4 text-slate-400" /> {formatAddress(device.ipAddress, device.httpPort)}</p>
                   <p className="flex items-center gap-2"><Hash className="h-4 w-4 text-slate-400" /> Serial: {device.serialNumber ?? "nao informado"}</p>
                   <p className="flex items-center gap-2"><MapPin className="h-4 w-4 text-slate-400" /> {device.areaName} · {device.location ?? "Sem local"}</p>
-                  <p className="flex items-center gap-2"><KeyRound className="h-4 w-4 text-slate-400" /> Credenciais configuradas: {hasIntelbrasCredentials(device) ? "sim" : "nao"}</p>
+                  <p className="flex items-center gap-2"><KeyRound className="h-4 w-4 text-slate-400" /> Credenciais: {hasIntelbrasCredentials(device) ? "configuradas" : "nao configuradas"}</p>
                   <p className="flex items-center gap-2"><Cpu className="h-4 w-4 text-slate-400" /> Ultimo heartbeat: {formatDate(device.lastHeartbeatAt)}</p>
+                  {device.lastSuccessAt ? (
+                    <p className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-emerald-400" /> Ultimo sucesso: {formatDate(device.lastSuccessAt)}</p>
+                  ) : null}
+                  {device.lastFailureAt ? (
+                    <p className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-amber-400" /> Ultima falha: {formatDate(device.lastFailureAt)}</p>
+                  ) : null}
+                  {device.lastError ? (
+                    <p className="flex items-center gap-2 text-rose-400 text-xs break-all"><AlertTriangle className="h-4 w-4 shrink-0" /> {device.lastError}</p>
+                  ) : null}
+                  {(device.communicationFailures ?? 0) > 0 ? (
+                    <p className="text-xs text-amber-400">Falhas consecutivas: {device.communicationFailures}</p>
+                  ) : null}
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    icon={Zap}
+                    className="h-8 px-3 text-xs"
+                    loading={pingStates[device.id] === "pending"}
+                    onClick={() => handlePing(device)}
+                  >
+                    {pingStates[device.id] === "success" ? "Online" : pingStates[device.id] === "error" ? "Falhou" : "Testar"}
+                  </Button>
+                  <Button variant="secondary" icon={Pencil} className="h-8 px-3 text-xs" onClick={() => openEdit(device)}>
+                    Editar
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    icon={Trash2}
+                    className="h-8 px-3 text-xs text-rose-400 hover:text-rose-300"
+                    onClick={() => setDeleteDevice(device)}
+                  >
+                    Remover
+                  </Button>
                 </div>
               </CardContent>
             </Card>
           ))}
         </div>
       ) : null}
-      <Modal title="Novo dispositivo" description="Cadastre controladoras reais com rede, operacao e credenciais Intelbras." open={open} onClose={closeModal}>
-        <form onSubmit={submit} className="grid gap-5">
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-slate-100">Dados básicos</p>
-                <p className="mt-1 text-xs text-slate-500">Serial recomendado para auditoria e suporte técnico.</p>
-              </div>
-              <Button type="button" variant="secondary" icon={Sparkles} className="h-auto min-h-10 whitespace-normal py-2 text-left" onClick={applyIntelbrasPreset}>Preencher modelo Intelbras SS 5531</Button>
-            </div>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <Input label="Nome" value={form.name} onChange={(event) => updateForm("name", event.target.value)} required />
-              <Input label="Modelo" value={form.model} onChange={(event) => updateForm("model", event.target.value)} required />
-              <Input label="Número de série" value={form.serialNumber} onChange={(event) => updateForm("serialNumber", event.target.value)} placeholder="DRWL3903457HU" />
-              <Select label="Area" value={form.areaId} onChange={(event) => updateForm("areaId", event.target.value)} required>
-                <option value="">Selecione</option>
-                {areas.data?.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
-              </Select>
-            </div>
-          </div>
 
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-            <p className="text-sm font-semibold text-slate-100">Rede</p>
-            <div className="mt-4 grid gap-4 sm:grid-cols-[1fr_160px]">
-              <Input label="IP" value={form.ipAddress} onChange={(event) => updateForm("ipAddress", event.target.value)} placeholder="192.168.15.5" required />
-              <Input label="Porta HTTP" type="number" min={1} max={65535} value={form.httpPort} onChange={(event) => updateForm("httpPort", event.target.value)} required />
-            </div>
-            <div className="mt-4">
-              <Input label="Localização" value={form.location} onChange={(event) => updateForm("location", event.target.value)} placeholder="Portaria principal" />
-            </div>
-          </div>
+      {/* Modal: novo dispositivo */}
+      <Modal title="Novo dispositivo" description="Cadastre controladoras reais com rede, operacao e credenciais Intelbras." open={createOpen} onClose={closeCreate}>
+        <DeviceForm
+          form={form}
+          formError={formError}
+          areas={areas.data ?? []}
+          isPending={create.isPending}
+          onSubmit={submitCreate}
+          onCancel={closeCreate}
+          updateForm={updateForm}
+          applyIntelbrasPreset={applyIntelbrasPreset}
+          submitLabel="Cadastrar"
+          passwordPlaceholder="Senha Intelbras"
+        />
+      </Modal>
 
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-            <p className="text-sm font-semibold text-slate-100">Credenciais Intelbras</p>
-            <p className="mt-1 text-xs text-slate-500">As credenciais são usadas somente pelo backend para comunicação com a controladora.</p>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <Input label="Usuário Intelbras" value={form.intelbrasUsername} onChange={(event) => updateForm("intelbrasUsername", event.target.value)} autoComplete="username" />
-              <Input label="Senha Intelbras" type="password" value={form.intelbrasPassword} onChange={(event) => updateForm("intelbrasPassword", event.target.value)} autoComplete="new-password" />
-            </div>
-          </div>
+      {/* Modal: editar dispositivo */}
+      <Modal title="Editar dispositivo" description="Altere os dados da controladora. Deixe a senha em branco para manter a atual." open={editDevice !== null} onClose={closeEdit}>
+        <DeviceForm
+          form={form}
+          formError={formError}
+          areas={areas.data ?? []}
+          isPending={update.isPending}
+          onSubmit={submitEdit}
+          onCancel={closeEdit}
+          updateForm={updateForm}
+          applyIntelbrasPreset={applyIntelbrasPreset}
+          submitLabel="Salvar"
+          passwordPlaceholder="Nova senha (deixe em branco para manter)"
+        />
+      </Modal>
 
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-            <p className="text-sm font-semibold text-slate-100">Operação</p>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <Select label="Tipo de operação" value={form.operationType} onChange={(event) => updateForm("operationType", event.target.value as OperationType)} required>
-                <option value="ENTRY">Entrada</option>
-                <option value="EXIT">Saída</option>
-                <option value="ENTRY_EXIT">Entrada/Saída</option>
-              </Select>
-              <Select label="Status" value={form.status} onChange={(event) => updateForm("status", event.target.value as DeviceStatus)} required>
-                <option value="ONLINE">Online</option>
-                <option value="OFFLINE">Offline</option>
-                <option value="MAINTENANCE">Manutenção</option>
-                <option value="UNKNOWN">Desconhecido</option>
-              </Select>
-            </div>
-          </div>
-
-          {formError ? <ErrorState label={formError} /> : null}
-          {create.isError ? <ErrorState label={message || "Não foi possível criar o dispositivo."} /> : null}
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={closeModal}>Cancelar</Button>
-            <Button type="submit" loading={create.isPending}>Cadastrar</Button>
-          </div>
-        </form>
+      {/* Modal: confirmar exclusão */}
+      <Modal title="Remover dispositivo" description={`Tem certeza que deseja remover "${deleteDevice?.name}"? Esta ação não pode ser desfeita.`} open={deleteDevice !== null} onClose={() => setDeleteDevice(null)}>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setDeleteDevice(null)}>Cancelar</Button>
+          <Button loading={remove.isPending} onClick={() => remove.mutate()} className="bg-rose-600 hover:bg-rose-500">Remover</Button>
+        </div>
       </Modal>
     </AdminShell>
+  );
+}
+
+type DeviceFormProps = {
+  form: DeviceForm;
+  formError: string;
+  areas: { id: string; name: string }[];
+  isPending: boolean;
+  onSubmit: (e: FormEvent<HTMLFormElement>) => void;
+  onCancel: () => void;
+  updateForm: <K extends keyof DeviceForm>(key: K, value: DeviceForm[K]) => void;
+  applyIntelbrasPreset: () => void;
+  submitLabel: string;
+  passwordPlaceholder: string;
+};
+
+function DeviceForm({ form, formError, areas, isPending, onSubmit, onCancel, updateForm, applyIntelbrasPreset, submitLabel, passwordPlaceholder }: DeviceFormProps) {
+  return (
+    <form onSubmit={onSubmit} className="grid gap-5">
+      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-slate-100">Dados básicos</p>
+            <p className="mt-1 text-xs text-slate-500">Serial recomendado para auditoria e suporte técnico.</p>
+          </div>
+          <Button type="button" variant="secondary" icon={Sparkles} className="h-auto min-h-10 whitespace-normal py-2 text-left" onClick={applyIntelbrasPreset}>Preencher modelo Intelbras SS 5531</Button>
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Input label="Nome" value={form.name} onChange={(e) => updateForm("name", e.target.value)} required />
+          <Input label="Modelo" value={form.model} onChange={(e) => updateForm("model", e.target.value)} required />
+          <Input label="Número de série" value={form.serialNumber} onChange={(e) => updateForm("serialNumber", e.target.value)} placeholder="DRWL3903457HU" />
+          <Select label="Area" value={form.areaId} onChange={(e) => updateForm("areaId", e.target.value)} required>
+            <option value="">Selecione</option>
+            {areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
+          </Select>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+        <p className="text-sm font-semibold text-slate-100">Rede</p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-[1fr_160px]">
+          <Input label="IP" value={form.ipAddress} onChange={(e) => updateForm("ipAddress", e.target.value)} placeholder="192.168.15.5" required />
+          <Input label="Porta HTTP" type="number" min={1} max={65535} value={form.httpPort} onChange={(e) => updateForm("httpPort", e.target.value)} required />
+        </div>
+        <div className="mt-4">
+          <Input label="Localização" value={form.location} onChange={(e) => updateForm("location", e.target.value)} placeholder="Portaria principal" />
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+        <p className="text-sm font-semibold text-slate-100">Credenciais Intelbras</p>
+        <p className="mt-1 text-xs text-slate-500">Usadas somente pelo backend para comunicação com a controladora.</p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Input label="Usuário Intelbras" value={form.intelbrasUsername} onChange={(e) => updateForm("intelbrasUsername", e.target.value)} autoComplete="username" />
+          <Input label="Senha Intelbras" type="password" value={form.intelbrasPassword} onChange={(e) => updateForm("intelbrasPassword", e.target.value)} placeholder={passwordPlaceholder} autoComplete="new-password" />
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+        <p className="text-sm font-semibold text-slate-100">Operação</p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Select label="Tipo de operação" value={form.operationType} onChange={(e) => updateForm("operationType", e.target.value as OperationType)} required>
+            <option value="ENTRY">Entrada</option>
+            <option value="EXIT">Saída</option>
+            <option value="ENTRY_EXIT">Entrada/Saída</option>
+          </Select>
+          <Select label="Status" value={form.status} onChange={(e) => updateForm("status", e.target.value as DeviceStatus)} required>
+            <option value="ONLINE">Online</option>
+            <option value="OFFLINE">Offline</option>
+            <option value="MAINTENANCE">Manutenção</option>
+            <option value="UNKNOWN">Desconhecido</option>
+          </Select>
+        </div>
+      </div>
+
+      {formError ? <ErrorState label={formError} /> : null}
+      <div className="flex justify-end gap-2">
+        <Button variant="secondary" type="button" onClick={onCancel}>Cancelar</Button>
+        <Button type="submit" loading={isPending}>{submitLabel}</Button>
+      </div>
+    </form>
   );
 }
 
@@ -230,19 +409,17 @@ function optionalValue(value: string) {
 function validateForm(form: DeviceForm) {
   const port = Number(form.httpPort);
   const intelbrasModel = form.model.toLowerCase().includes("intelbras");
-
   if (!form.name.trim()) return "Informe o nome do dispositivo.";
   if (!form.model.trim()) return "Informe o modelo do dispositivo.";
   if (!form.ipAddress.trim()) return "Informe o IP do dispositivo.";
   if (!form.areaId) return "Selecione a area do dispositivo.";
   if (!Number.isInteger(port) || port < 1 || port > 65535) return "Informe uma porta HTTP entre 1 e 65535.";
   if (intelbrasModel && !form.intelbrasUsername.trim()) return "Informe o usuário Intelbras para este modelo.";
-  if (intelbrasModel && !form.intelbrasPassword.trim()) return "Informe a senha Intelbras para este modelo.";
   return "";
 }
 
 function formatAddress(ipAddress: string, httpPort?: number) {
-  return httpPort ? `${ipAddress}:${httpPort}` : ipAddress;
+  return httpPort && httpPort !== 80 ? `${ipAddress}:${httpPort}` : ipAddress;
 }
 
 function formatDate(value?: string) {

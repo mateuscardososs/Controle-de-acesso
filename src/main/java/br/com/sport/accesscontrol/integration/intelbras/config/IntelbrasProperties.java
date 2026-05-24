@@ -15,8 +15,12 @@ public class IntelbrasProperties {
     private String defaultPassword;
     private Duration connectionTimeout = Duration.ofSeconds(3);
     private Duration readTimeout = Duration.ofSeconds(5);
+    private int retryAttempts = 2;
+    private Duration retryBackoff = Duration.ofMillis(300);
+    private Duration healthInterval = Duration.ofSeconds(30);
     private boolean eventsPollingEnabled = true;
     private Duration eventsPollingInterval = Duration.ofSeconds(5);
+    private Duration dedupWindow = Duration.ofSeconds(300);
     private IntelbrasIdentityCodec.Strategy identityStrategy = IntelbrasIdentityCodec.Strategy.DOCUMENT;
 
     public Mode getMode() {
@@ -63,6 +67,36 @@ public class IntelbrasProperties {
         }
     }
 
+    public int getRetryAttempts() {
+        return retryAttempts;
+    }
+
+    public void setRetryAttempts(int retryAttempts) {
+        if (retryAttempts > 0 && retryAttempts <= 5) {
+            this.retryAttempts = retryAttempts;
+        }
+    }
+
+    public Duration getRetryBackoff() {
+        return retryBackoff;
+    }
+
+    public void setRetryBackoff(Duration retryBackoff) {
+        if (retryBackoff != null && !retryBackoff.isNegative()) {
+            this.retryBackoff = retryBackoff;
+        }
+    }
+
+    public Duration getHealthInterval() {
+        return healthInterval;
+    }
+
+    public void setHealthInterval(Duration healthInterval) {
+        if (healthInterval != null && !healthInterval.isNegative() && !healthInterval.isZero()) {
+            this.healthInterval = healthInterval;
+        }
+    }
+
     public boolean isEventsPollingEnabled() {
         return eventsPollingEnabled;
     }
@@ -78,6 +112,16 @@ public class IntelbrasProperties {
     public void setEventsPollingInterval(Duration eventsPollingInterval) {
         if (eventsPollingInterval != null && !eventsPollingInterval.isNegative() && !eventsPollingInterval.isZero()) {
             this.eventsPollingInterval = eventsPollingInterval;
+        }
+    }
+
+    public Duration getDedupWindow() {
+        return dedupWindow;
+    }
+
+    public void setDedupWindow(Duration dedupWindow) {
+        if (dedupWindow != null && !dedupWindow.isNegative() && !dedupWindow.isZero()) {
+            this.dedupWindow = dedupWindow;
         }
     }
 

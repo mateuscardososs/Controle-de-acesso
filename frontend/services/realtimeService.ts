@@ -27,12 +27,21 @@ const topics = {
 };
 
 function apiBaseUrl() {
-  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined") return window.location.origin;
+  return "http://localhost:8080";
 }
 
 function websocketUrl() {
   const explicitUrl = process.env.NEXT_PUBLIC_WS_URL;
-  if (explicitUrl) return explicitUrl;
+  if (explicitUrl) {
+    if (typeof window !== "undefined" && explicitUrl.startsWith("/")) {
+      const url = new URL(explicitUrl, window.location.origin);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      return url.toString();
+    }
+    return explicitUrl;
+  }
 
   const base = apiBaseUrl();
   const url = new URL(base);
@@ -95,7 +104,8 @@ export class RealtimeClient {
   }
 
   private openSocket() {
-    this.socket = new WebSocket(websocketUrl(), ["v12.stomp", "v11.stomp", "v10.stomp"]);
+    const url = websocketUrl();
+    this.socket = new WebSocket(url, ["v12.stomp", "v11.stomp", "v10.stomp"]);
 
     this.socket.onopen = () => {
       const token = window.localStorage.getItem(TOKEN_KEY);
@@ -109,7 +119,10 @@ export class RealtimeClient {
     };
 
     this.socket.onmessage = (message) => this.handleMessage(String(message.data));
-    this.socket.onerror = () => this.handlers.onStatusChange?.("error");
+    this.socket.onerror = (event) => {
+      console.error("Realtime WebSocket error", { url, event });
+      this.handlers.onStatusChange?.("error");
+    };
     this.socket.onclose = () => {
       if (this.manuallyClosed) {
         this.handlers.onStatusChange?.("offline");

@@ -28,9 +28,14 @@ import org.springframework.web.multipart.MultipartFile;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -49,6 +54,16 @@ public class GuestService {
     private final SecureRandom secureRandom = new SecureRandom();
     private final Duration inviteTtl;
     private static final Pattern EMAIL = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
+    private static final ZoneId EVENT_ZONE = ZoneId.of("America/Recife");
+    private static final LocalTime GUEST_ACCESS_START_TIME = LocalTime.of(15, 0);
+    private static final LocalTime GUEST_ACCESS_END_TIME = LocalTime.of(4, 0);
+    private static final Set<String> ALLOWED_LOUNGES = Set.of(
+            "Camarote 1",
+            "Camarote 2",
+            "Camarote 3",
+            "Camarote 4",
+            "Camarote 5"
+    );
 
     public GuestService(GuestRepository guestRepository, GuestInviteRepository inviteRepository,
                         FaceStorageService faceStorageService, AuditService auditService,
@@ -72,7 +87,8 @@ public class GuestService {
         validateVisitWindow(request.visitStart(), request.visitEnd());
         var guest = guestRepository.save(new Guest(
                 request.fullName(), request.cpf(), request.email(), request.phone(), request.company(),
-                request.visitReason(), request.hostName(), request.visitStart(), request.visitEnd()
+                request.visitReason(), request.hostName(), request.visitStart(), request.visitEnd(),
+                resolveInvitedDay(request.invitedDay(), request.visitStart()), normalize(request.invitedLounge())
         ));
         var invite = createInvite(guest);
         var inviteUrl = inviteUrl(invite);
@@ -95,31 +111,38 @@ public class GuestService {
             String company,
             String visitReason,
             String hostName,
+            LocalDate invitedDay,
+            String invitedLounge,
             Instant visitStart,
             Instant visitEnd,
             MultipartFile facePhoto
     ) {
-        validatePublicRegistration(fullName, cpf, email, visitReason, hostName, visitStart, visitEnd);
+        validatePublicRegistration(fullName, cpf, email, phone, invitedDay, invitedLounge, visitStart, visitEnd, facePhoto);
+        var resolvedInvitedDay = resolveInvitedDay(invitedDay, visitStart);
+        var resolvedVisitStart = invitedAccessStart(resolvedInvitedDay);
+        var resolvedVisitEnd = invitedAccessEnd(resolvedInvitedDay);
+        var resolvedVisitReason = normalize(visitReason) == null ? "Convidado São João/Superfeito" : visitReason.trim();
+        var resolvedHostName = normalize(hostName) == null ? "Credenciamento São João/Superfeito" : hostName.trim();
+        var resolvedInvitedLounge = invitedLounge.trim();
         var guest = guestRepository.save(new Guest(
                 fullName.trim(),
                 onlyDigits(cpf),
                 normalize(email),
                 normalize(phone),
                 normalize(company),
-                visitReason.trim(),
-                hostName.trim(),
-                visitStart,
-                visitEnd
+                resolvedVisitReason,
+                resolvedHostName,
+                resolvedVisitStart,
+                resolvedVisitEnd,
+                resolvedInvitedDay,
+                resolvedInvitedLounge
         ));
         createInvite(guest);
 
         var oldData = snapshot(guest);
-        if (facePhoto != null && !facePhoto.isEmpty()) {
-            var facePhotoUrl = faceStorageService.store(facePhoto, guest.getId());
-            guest.completeRegistration(phone, company, facePhotoUrl);
-            auditService.record("PUBLIC_GUEST_FACE_UPLOADED", "Guest", guest.getId(), Map.of("facePhotoUrl", facePhotoUrl), oldData, snapshot(guest));
-            eventPublisher.publishEvent(new GuestReadyForSyncEvent(guest.getId()));
-        }
+        var facePhotoUrl = faceStorageService.store(facePhoto, guest.getId());
+        guest.completeRegistration(phone, company, facePhotoUrl);
+        auditService.record("PUBLIC_GUEST_FACE_UPLOADED", "Guest", guest.getId(), Map.of("facePhotoUrl", facePhotoUrl), oldData, snapshot(guest));
 
         auditService.record("PUBLIC_GUEST_CREATED", "Guest", guest.getId(), Map.of("source", "public-home"), Map.of(), snapshot(guest));
         realtimePublisherService.publishSystemAlert(new SystemAlertMessage(
@@ -130,9 +153,7 @@ public class GuestService {
                 "public-visitor-registration",
                 Instant.now()
         ));
-        var message = guest.getStatus() == GuestStatus.COMPLETED
-                ? "Cadastro recebido com foto facial. A equipe responsável foi notificada."
-                : "Solicitação recebida. A equipe responsável foi notificada.";
+        var message = "Cadastro recebido com foto facial. A equipe responsável foi notificada.";
         return PublicVisitorRegistrationResponse.from(guest, message);
     }
 
@@ -159,7 +180,9 @@ public class GuestService {
         var guest = getById(id);
         var oldData = snapshot(guest);
         guest.update(request.fullName(), request.cpf(), request.email(), request.phone(), request.company(),
-                request.visitReason(), request.hostName(), request.visitStart(), request.visitEnd(), request.status());
+                request.visitReason(), request.hostName(), request.visitStart(), request.visitEnd(),
+                resolveInvitedDay(request.invitedDay(), request.visitStart()), normalize(request.invitedLounge()),
+                request.status());
         auditService.record("GUEST_UPDATED", "Guest", guest.getId(), Map.of(), oldData, snapshot(guest));
         return GuestResponse.from(guest, null);
     }
@@ -266,7 +289,6 @@ public class GuestService {
         invite.markUsed();
         auditService.record("GUEST_FACE_UPLOADED", "Guest", guest.getId(), Map.of("facePhotoUrl", facePhotoUrl), oldData, snapshot(guest));
         auditService.record("GUEST_REGISTRATION_COMPLETED", "Guest", guest.getId(), Map.of(), oldData, snapshot(guest));
-        eventPublisher.publishEvent(new GuestReadyForSyncEvent(guest.getId()));
         var delivery = mailService.sendGuestRegistrationCompleted(guest);
         auditMailResult(guest, "GUEST_REGISTRATION_CONFIRMATION_EMAIL", delivery);
         realtimePublisherService.publishSystemAlert(new SystemAlertMessage(
@@ -278,6 +300,30 @@ public class GuestService {
                 Instant.now()
         ));
         return GuestResponse.from(guest, null, null, delivery.status(), delivery.message());
+    }
+
+    @Transactional
+    public GuestResponse requestSync(UUID id) {
+        var guest = getById(id);
+        if (guest.getStatus() != GuestStatus.COMPLETED) {
+            throw new IllegalArgumentException("Visitante precisa estar completo para sincronizar.");
+        }
+        if (isBlank(guest.getFacePhotoUrl())) {
+            throw new IllegalArgumentException("Visitante precisa enviar foto facial antes da sincronização.");
+        }
+        var oldData = snapshot(guest);
+        guest.markPendingSync();
+        guestRepository.save(guest);
+        auditService.record("GUEST_SYNC_REQUESTED", "Guest", guest.getId(),
+                Map.of(
+                        "operator", authenticatedUser(),
+                        "validFrom", guest.getVisitStart(),
+                        "validUntil", guest.getVisitEnd()
+                ),
+                oldData,
+                snapshot(guest));
+        eventPublisher.publishEvent(new GuestReadyForSyncEvent(guest.getId()));
+        return GuestResponse.from(guest, null);
     }
 
     @Transactional
@@ -344,19 +390,45 @@ public class GuestService {
         }
     }
 
-    private void validatePublicRegistration(String fullName, String cpf, String email, String visitReason,
-                                            String hostName, Instant visitStart, Instant visitEnd) {
-        if (isBlank(fullName) || isBlank(cpf) || isBlank(email) || isBlank(visitReason) || isBlank(hostName)
-                || visitStart == null || visitEnd == null) {
+    private void validatePublicRegistration(String fullName, String cpf, String email, String phone,
+                                            LocalDate invitedDay, String invitedLounge, Instant visitStart,
+                                            Instant visitEnd, MultipartFile facePhoto) {
+        if (isBlank(fullName) || isBlank(cpf) || isBlank(phone) || isBlank(invitedLounge)) {
             throw new IllegalArgumentException("Required visitor registration fields are missing.");
+        }
+        if (invitedDay == null && visitStart == null) {
+            throw new IllegalArgumentException("Visitor invited day is required.");
+        }
+        if (facePhoto == null || facePhoto.isEmpty()) {
+            throw new IllegalArgumentException("Face photo is required.");
         }
         if (onlyDigits(cpf).length() != 11) {
             throw new IllegalArgumentException("CPF must contain 11 digits.");
         }
-        if (!EMAIL.matcher(email.trim()).matches()) {
+        if (!isBlank(email) && !EMAIL.matcher(email.trim()).matches()) {
             throw new IllegalArgumentException("Email must be valid.");
         }
-        validateVisitWindow(visitStart, visitEnd);
+        if (!ALLOWED_LOUNGES.contains(invitedLounge.trim())) {
+            throw new IllegalArgumentException("Invited lounge is invalid.");
+        }
+        if (visitStart != null && visitEnd != null) {
+            validateVisitWindow(visitStart, visitEnd);
+        }
+    }
+
+    private LocalDate resolveInvitedDay(LocalDate invitedDay, Instant visitStart) {
+        if (invitedDay != null) {
+            return invitedDay;
+        }
+        return visitStart == null ? null : LocalDate.ofInstant(visitStart, EVENT_ZONE);
+    }
+
+    private Instant invitedAccessStart(LocalDate invitedDay) {
+        return invitedDay.atTime(GUEST_ACCESS_START_TIME).atZone(EVENT_ZONE).toInstant();
+    }
+
+    private Instant invitedAccessEnd(LocalDate invitedDay) {
+        return invitedDay.plusDays(1).atTime(GUEST_ACCESS_END_TIME).atZone(EVENT_ZONE).toInstant();
     }
 
     private boolean isBlank(String value) {
@@ -416,12 +488,18 @@ public class GuestService {
     }
 
     private Map<String, Object> snapshot(Guest guest) {
-        return Map.of(
-                "id", guest.getId(),
-                "fullName", guest.getFullName(),
-                "status", guest.getStatus(),
-                "visitStart", guest.getVisitStart(),
-                "visitEnd", guest.getVisitEnd()
-        );
+        var snapshot = new LinkedHashMap<String, Object>();
+        snapshot.put("id", guest.getId());
+        snapshot.put("fullName", guest.getFullName());
+        snapshot.put("cpf", guest.getCpf());
+        snapshot.put("phone", guest.getPhone());
+        snapshot.put("email", guest.getEmail());
+        snapshot.put("status", guest.getStatus());
+        snapshot.put("visitStart", guest.getVisitStart());
+        snapshot.put("visitEnd", guest.getVisitEnd());
+        snapshot.put("invitedDay", guest.getInvitedDay());
+        snapshot.put("invitedLounge", guest.getInvitedLounge());
+        snapshot.put("syncStatus", guest.getSyncStatus());
+        return snapshot;
     }
 }

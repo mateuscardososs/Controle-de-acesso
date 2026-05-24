@@ -33,7 +33,7 @@ function eventDescription(event: AccessEvent | RealtimeAccessEvent) {
       "eventType" in event ? event.eventType : undefined,
       "deviceName" in event ? event.deviceName : undefined,
       "areaName" in event ? event.areaName : undefined,
-      "personCpf" in event ? event.personCpf : undefined
+      "personCpf" in event ? formatCpf(event.personCpf) : undefined
     ].filter(Boolean);
     if (richPieces.length > 0) return richPieces.join(" · ");
   }
@@ -44,6 +44,13 @@ function eventDescription(event: AccessEvent | RealtimeAccessEvent) {
       "origin" in event ? originLabel(event.origin) : undefined
   ].filter(Boolean);
   return pieces.join(" · ") || "Sinal realtime recebido";
+}
+
+function formatCpf(value?: string | null) {
+  if (!value) return undefined;
+  const digits = value.replace(/\D/g, "");
+  if (digits.length !== 11) return value;
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
 }
 
 function originLabel(origin?: string) {

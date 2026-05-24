@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Instant;
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/public")
@@ -27,17 +28,20 @@ public class PublicVisitorRegistrationController {
     PublicVisitorRegistrationResponse register(
             @RequestParam String fullName,
             @RequestParam String cpf,
-            @RequestParam String email,
-            @RequestParam(required = false) String phone,
+            @RequestParam(required = false) String email,
+            @RequestParam String phone,
             @RequestParam(required = false) String company,
-            @RequestParam String visitReason,
-            @RequestParam String hostName,
-            @RequestParam Instant visitStart,
-            @RequestParam Instant visitEnd,
+            @RequestParam(required = false) String visitReason,
+            @RequestParam(required = false) String hostName,
+            @RequestParam(required = false) LocalDate invitedDay,
+            @RequestParam(required = false) String invitedLounge,
+            @RequestParam(required = false) Instant visitStart,
+            @RequestParam(required = false) Instant visitEnd,
             @RequestPart(required = false) MultipartFile facePhoto
     ) {
         return guestService.publicVisitorRegistration(
-                fullName, cpf, email, phone, company, visitReason, hostName, visitStart, visitEnd, facePhoto
+                fullName, cpf, email, phone, company, visitReason, hostName, invitedDay, invitedLounge,
+                visitStart, visitEnd, facePhoto
         );
     }
 }

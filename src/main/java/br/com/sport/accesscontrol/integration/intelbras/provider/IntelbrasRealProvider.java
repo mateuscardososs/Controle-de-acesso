@@ -16,6 +16,7 @@ import br.com.sport.accesscontrol.integration.provider.ProviderPermission;
 import br.com.sport.accesscontrol.integration.provider.ProviderPerson;
 import br.com.sport.accesscontrol.integration.provider.ProviderSyncResult;
 import br.com.sport.accesscontrol.integration.provider.ProviderSyncStatus;
+import br.com.sport.accesscontrol.metrics.AccessMetricsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -40,16 +41,19 @@ public class IntelbrasRealProvider implements AccessControlProvider {
     private final IntelbrasFaceEncoder faceEncoder;
     private final IntelbrasEventMapper eventMapper;
     private final IntelbrasProperties properties;
+    private final AccessMetricsService accessMetricsService;
 
     public IntelbrasRealProvider(IntelbrasDeviceConnectionService connectionService, IntelbrasCgiClient cgiClient,
                                  IntelbrasFaceEncoder faceEncoder,
                                  IntelbrasEventMapper eventMapper,
-                                 IntelbrasProperties properties) {
+                                 IntelbrasProperties properties,
+                                 AccessMetricsService accessMetricsService) {
         this.connectionService = connectionService;
         this.cgiClient = cgiClient;
         this.faceEncoder = faceEncoder;
         this.eventMapper = eventMapper;
         this.properties = properties;
+        this.accessMetricsService = accessMetricsService;
     }
 
     @Override
@@ -75,6 +79,7 @@ public class IntelbrasRealProvider implements AccessControlProvider {
         var errors = new ArrayList<String>();
         var synced = 0;
         for (IntelbrasDeviceConnection connection : connections) {
+            var requestStart = Instant.now();
             try {
                 var identity = resolveIdentity(person);
                 log.info("intelbras_identity_strategy strategy={} user_id={} card_no={} person_type={} person_id={} document_present={}",
@@ -104,9 +109,14 @@ public class IntelbrasRealProvider implements AccessControlProvider {
                     }
                 }
                 synced++;
+                accessMetricsService.recordControllerRequest(connection.device(), "sync_person", true,
+                        Duration.between(requestStart, Instant.now()));
                 log.info("intelbras_real_sync_person_success protocol=CGI device_id={} person_type={} person_id={} user_id={}",
                         connection.device().getId(), person.personType(), person.personId(), identity.userId());
             } catch (Exception exception) {
+                accessMetricsService.recordControllerRequest(connection.device(), "sync_person", false,
+                        Duration.between(requestStart, Instant.now()));
+                accessMetricsService.recordControllerCommunicationFailure(connection.device());
                 errors.add("device=" + connection.device().getId() + " error=" + safe(exception.getMessage()));
                 log.warn("intelbras_real_sync_person_failed device_id={} host={} person_type={} person_id={} error={}",
                         connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
@@ -134,6 +144,7 @@ public class IntelbrasRealProvider implements AccessControlProvider {
 
         var removed = 0;
         for (IntelbrasDeviceConnection connection : connections) {
+            var requestStart = Instant.now();
             try {
                 var identity = resolveIdentity(person);
                 log.info("intelbras_identity_strategy strategy={} user_id={} card_no={} person_type={} person_id={} document_present={} operation=remove",
@@ -142,7 +153,12 @@ public class IntelbrasRealProvider implements AccessControlProvider {
                 cgiClient.removeFace(connection.host(), connection.username(), connection.password(), identity.userId());
                 cgiClient.removeAccessUser(connection.host(), connection.username(), connection.password(), identity.userId());
                 removed++;
+                accessMetricsService.recordControllerRequest(connection.device(), "remove_person", true,
+                        Duration.between(requestStart, Instant.now()));
             } catch (Exception exception) {
+                accessMetricsService.recordControllerRequest(connection.device(), "remove_person", false,
+                        Duration.between(requestStart, Instant.now()));
+                accessMetricsService.recordControllerCommunicationFailure(connection.device());
                 log.warn("intelbras_real_remove_person_failed device_id={} host={} person_type={} person_id={} error={}",
                         connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
                         person.personType(), person.personId(), safe(exception.getMessage()));
@@ -176,12 +192,17 @@ public class IntelbrasRealProvider implements AccessControlProvider {
             return new ProviderDeviceStatus(deviceId, DeviceStatus.OFFLINE, Instant.now(),
                     "Intelbras real device credentials are not configured.");
         }
+        var requestStart = Instant.now();
         try {
             var deviceType = cgiClient.getDeviceType(connection.host(), connection.username(), connection.password());
             var serial = cgiClient.getSerialNo(connection.host(), connection.username(), connection.password());
+            accessMetricsService.recordControllerRequest(connection.device(), "fetch_status", true,
+                    Duration.between(requestStart, Instant.now()));
             return new ProviderDeviceStatus(deviceId, DeviceStatus.ONLINE, Instant.now(),
                     "Intelbras " + nullToBlank(deviceType) + " serial=" + nullToBlank(serial));
         } catch (Exception exception) {
+            accessMetricsService.recordControllerRequest(connection.device(), "fetch_status", false,
+                    Duration.between(requestStart, Instant.now()));
             log.warn("intelbras_real_fetch_device_status_failed device_id={} host={} error={}",
                     deviceId, IntelbrasHttpSupport.maskHost(connection.host()), safe(exception.getMessage()));
             return new ProviderDeviceStatus(deviceId, DeviceStatus.OFFLINE, Instant.now(), safe(exception.getMessage()));
@@ -194,8 +215,13 @@ public class IntelbrasRealProvider implements AccessControlProvider {
     }
 
     private IntelbrasIdentityCodec.IntelbrasIdentity resolveIdentity(ProviderPerson person) {
-        return IntelbrasIdentityCodec.resolve(properties.getIdentityStrategy(), person.personType(),
+        var identity = IntelbrasIdentityCodec.resolve(properties.getIdentityStrategy(), person.personType(),
                 person.personId(), person.document());
+        var cardNo = digits(person.cardNo());
+        if (!cardNo.isBlank()) {
+            return new IntelbrasIdentityCodec.IntelbrasIdentity(identity.strategy(), identity.userId(), cardNo);
+        }
+        return identity;
     }
 
     private LocalDateTime localDeviceTime(Instant instant, LocalDateTime fallback) {
@@ -216,5 +242,9 @@ public class IntelbrasRealProvider implements AccessControlProvider {
 
     private String nullToBlank(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private String digits(String value) {
+        return value == null ? "" : value.replaceAll("\\D", "");
     }
 }

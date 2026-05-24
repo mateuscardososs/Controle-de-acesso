@@ -8,13 +8,21 @@ const labels: Record<string, string> = {
   OFFLINE: "Offline",
   MAINTENANCE: "Manutenção",
   UNKNOWN: "Desconhecido",
-  ALLOWED: "Permitido",
+  ALLOWED: "Liberado",
   DENIED: "Negado",
   ERROR: "Erro",
   ENTRY: "Entrada",
   EXIT: "Saída",
   ACCESS_DENIED: "Acesso negado",
   COMMUNICATION_FAILURE: "Falha de comunicação",
+  MANUAL_ADMIN_RELEASE: "Liberação manual",
+  RECOGNIZED: "Reconhecido",
+  NOT_RECOGNIZED: "Não reconhecido",
+  NOT_APPLICABLE: "Não se aplica",
+  PASSED: "Passou",
+  NOT_PASSED: "Não passou",
+  FACIAL_RECOGNITION: "Reconhecimento facial",
+  CARD: "Cartão",
   INFO: "Info",
   WARNING: "Atenção",
   CRITICAL: "Crítico",
@@ -24,6 +32,9 @@ const labels: Record<string, string> = {
   EXPIRED: "Expirado",
   CANCELLED: "Cancelado",
   SENT: "Enviado",
+  ADMIN: "Admin",
+  HR: "RH",
+  SECURITY_VIEWER: "Segurança",
   SKIPPED: "Ignorado",
   FAILED: "Falhou",
   NOT_REQUIRED: "Não requer",
@@ -45,11 +56,11 @@ export function humanizeStatus(value?: string | boolean | null) {
 export function StatusBadge({ value }: { value?: string | boolean | null }) {
   const normalized = typeof value === "boolean" ? (value ? "ACTIVE" : "INACTIVE") : value;
   const tone =
-    normalized === "ACTIVE" || normalized === "ONLINE" || normalized === "ALLOWED" || normalized === "SENT" || normalized === "SYNCED"
+    normalized === "ACTIVE" || normalized === "ONLINE" || normalized === "ALLOWED" || normalized === "SENT" || normalized === "SYNCED" || normalized === "RECOGNIZED" || normalized === "PASSED"
       ? "green"
-      : normalized === "DENIED" || normalized === "BLOCKED" || normalized === "OFFLINE" || normalized === "ERROR" || normalized === "FAILED" || normalized === "SYNC_FAILED"
+      : normalized === "DENIED" || normalized === "BLOCKED" || normalized === "OFFLINE" || normalized === "ERROR" || normalized === "FAILED" || normalized === "SYNC_FAILED" || normalized === "NOT_RECOGNIZED" || normalized === "NOT_PASSED"
         ? "red"
-        : normalized === "UNKNOWN" || normalized === "MAINTENANCE"
+        : normalized === "UNKNOWN" || normalized === "MAINTENANCE" || normalized === "MANUAL_ADMIN_RELEASE"
           ? "amber"
           : normalized === "PENDING_SYNC" || normalized === "SYNCING"
             ? "amber"

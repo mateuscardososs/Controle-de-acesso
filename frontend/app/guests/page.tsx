@@ -129,7 +129,7 @@ export default function GuestsPage() {
   });
 
   const sync = useMutation({
-    mutationFn: (id: string) => guestService.retryIntelbrasSync(id),
+    mutationFn: (id: string) => guestService.syncGuest(id),
     onMutate: async (id) => {
       setActiveSyncId(id);
       setToast({ tone: "info", message: "Sincronização Intelbras enfileirada." });
@@ -268,7 +268,7 @@ export default function GuestsPage() {
                 const syncReason = syncDisabledReason(guest, syncEnabled, intelbrasStatus.isLoading, false);
                 const retryReason = syncDisabledReason(guest, syncEnabled, intelbrasStatus.isLoading, true);
                 const isSyncing = activeSyncId === guest.id && sync.isPending;
-                const syncButtonLabel = guest.syncStatus === "SYNCED" ? "Atualizar na Intelbras" : "Sincronizar";
+                const syncButtonLabel = guest.syncStatus === "SYNCED" ? "Atualizar na Intelbras" : "Sincronizar com controladora";
                 const syncButtonTitle = guest.syncStatus === "SYNCED" ? "Atualizar cadastro e face na Intelbras" : "Sincronizar visitante com Intelbras";
                 return (
                   <div className="flex min-w-[430px] flex-wrap items-center gap-2">
@@ -365,6 +365,7 @@ export default function GuestsPage() {
                 <DetailItem label="Erro da última sincronização" value={selectedDetails.lastSyncError ?? "Sem erro registrado"} danger={Boolean(selectedDetails.lastSyncError)} />
                 <DetailItem label="Face enviada" value={selectedDetails.facePhotoUrl ? "sim" : "não"} />
                 <DetailItem label="Usuário Intelbras criado" value={intelbrasUserCreated(selectedDetails)} />
+                <DetailItem label="Validade" value={`${formatDate(selectedDetails.visitStart)} até ${formatDate(selectedDetails.visitEnd)}`} />
                 <DetailItem label="Modo Intelbras" value={syncEnabled ? "real" : `desenvolvimento (${intelbrasMode})`} />
               </div>
             </div>

@@ -32,7 +32,9 @@ export default function OperationsPage() {
   const devices = useQuery({ queryKey: ["devices"], queryFn: deviceService.list });
   const guests = useQuery({ queryKey: ["guests", "today"], queryFn: guestService.today });
 
-  const canSimulate = user.data?.role === "ADMIN" || user.data?.role === "HR";
+  const simulatorEnabled = process.env.NEXT_PUBLIC_SIMULATOR_ENABLED === "true"
+    || (process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_SIMULATOR_ENABLED !== "false");
+  const canSimulate = simulatorEnabled && (user.data?.role === "ADMIN" || user.data?.role === "HR");
   const canImportIntelbrasEvents = user.data?.role === "ADMIN";
   const importEvents = useMutation({
     mutationFn: integrationService.importIntelbrasEventsNow,
@@ -237,21 +239,21 @@ export default function OperationsPage() {
             </CardContent>
           </Card>
 
-          {canSimulate ? (
+          {simulatorEnabled && canSimulate ? (
             <AccessEventSimulator
               onSuccess={() => {
                 queryClient.invalidateQueries({ queryKey: ["access-events"] });
                 queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
               }}
             />
-          ) : (
+          ) : simulatorEnabled ? (
             <Card>
               <CardContent>
                 <p className="text-sm font-semibold text-slate-100">Simulador indisponivel</p>
                 <p className="mt-1 text-sm text-slate-500">Seu perfil possui acesso somente leitura para a operacao ao vivo.</p>
               </CardContent>
             </Card>
-          )}
+          ) : null}
 
           <Card>
             <CardHeader>

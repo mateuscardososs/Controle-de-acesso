@@ -53,6 +53,11 @@ public class GuestController {
         return guestService.resendInvite(id);
     }
 
+    @PostMapping("/{id}/sync")
+    GuestResponse sync(@PathVariable UUID id) {
+        return guestService.requestSync(id);
+    }
+
     @DeleteMapping("/cleanup")
     GuestCleanupResponse cleanup(@Valid @RequestBody GuestCleanupRequest request) {
         return guestService.cleanup(request);

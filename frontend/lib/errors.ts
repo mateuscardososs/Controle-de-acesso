@@ -7,6 +7,9 @@ type ApiError = {
 
 export function apiErrorMessage(error: unknown, fallback: string) {
   const axiosError = error as AxiosError<ApiError>;
+  if (!axiosError.isAxiosError && error instanceof Error) {
+    return error.message;
+  }
   if (axiosError.code === "ERR_NETWORK" || !axiosError.response) {
     return "Erro de conexão ou CORS. Verifique se o backend está acessível e se a origem do frontend foi liberada.";
   }
