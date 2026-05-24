@@ -49,7 +49,7 @@ public class IntelbrasRpcClient {
 
     public IntelbrasRpcSession login(String host, String username, String password) {
         if (username == null || username.isBlank() || password == null || password.isBlank()) {
-            throw new IntelbrasIntegrationException("Intelbras RPC credentials are not configured.");
+            throw new IntelbrasIntegrationException("Credenciais Intelbras não configuradas para este dispositivo.");
         }
 
         var maskedHost = IntelbrasHttpSupport.maskHost(host);

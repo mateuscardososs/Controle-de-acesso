@@ -1,7 +1,9 @@
 package br.com.sport.accesscontrol.config;
 
+import br.com.sport.accesscontrol.realtime.RealtimeAuthenticationInterceptor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
@@ -17,10 +19,13 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public static final String INTEGRATION_SYNC_TOPIC = "/topic/integration-sync";
 
     private final String[] allowedOrigins;
+    private final RealtimeAuthenticationInterceptor authenticationInterceptor;
 
     public WebSocketConfig(
-            @Value("${app.cors.allowed-origins:http://localhost:3000,http://127.0.0.1:3000}") String allowedOrigins
+            @Value("${app.cors.allowed-origins:http://localhost:3000,http://127.0.0.1:3000}") String allowedOrigins,
+            RealtimeAuthenticationInterceptor authenticationInterceptor
     ) {
+        this.authenticationInterceptor = authenticationInterceptor;
         this.allowedOrigins = java.util.Arrays.stream(allowedOrigins.split(","))
                 .map(String::trim)
                 .filter(origin -> !origin.isBlank())
@@ -31,6 +36,11 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public void configureMessageBroker(MessageBrokerRegistry registry) {
         registry.enableSimpleBroker("/topic");
         registry.setApplicationDestinationPrefixes("/app");
+    }
+
+    @Override
+    public void configureClientInboundChannel(ChannelRegistration registration) {
+        registration.interceptors(authenticationInterceptor);
     }
 
     @Override

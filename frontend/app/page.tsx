@@ -1,15 +1,15 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, ShieldCheck } from "lucide-react";
 import { apiErrorMessage } from "@/lib/errors";
+import { formatCpfInput } from "@/lib/cpf";
+import { configService } from "@/services/configService";
 import { guestService } from "@/services/guestService";
 import { CameraCapture } from "@/src/components/shared/CameraCapture";
 import { Input, Select } from "@/src/components/ui/Input";
 import { ErrorState } from "@/src/components/shared/AsyncState";
-
-const loungeOptions = ["Camarote 1", "Camarote 2", "Camarote 3", "Camarote 4", "Camarote 5"];
 
 function localDate() {
   const date = new Date();
@@ -18,6 +18,7 @@ function localDate() {
 }
 
 export default function PublicVisitorRegistrationPage() {
+  const lounges = useQuery({ queryKey: ["config", "lounges"], queryFn: configService.lounges });
   const [form, setForm] = useState({
     fullName: "",
     cpf: "",
@@ -87,7 +88,7 @@ export default function PublicVisitorRegistrationPage() {
             <form onSubmit={submit} className="grid gap-4">
               <Input label="Nome completo" value={form.fullName} onChange={(event) => setForm({ ...form, fullName: event.target.value })} required />
               <div className="grid gap-4 md:grid-cols-2">
-                <Input label="CPF" value={form.cpf} onChange={(event) => setForm({ ...form, cpf: event.target.value })} required placeholder="00000000000" />
+                <Input label="CPF" value={form.cpf} onChange={(event) => setForm({ ...form, cpf: formatCpfInput(event.target.value) })} required placeholder="000.000.000-00" inputMode="numeric" />
                 <Input label="Telefone" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} required placeholder="(81) 99999-0000" />
               </div>
               <div className="grid gap-4 md:grid-cols-2">
@@ -96,7 +97,7 @@ export default function PublicVisitorRegistrationPage() {
               </div>
               <Select label="Camarote convidado" value={form.invitedLounge} onChange={(event) => setForm({ ...form, invitedLounge: event.target.value })} required>
                 <option value="">Selecione</option>
-                {loungeOptions.map((lounge) => <option key={lounge} value={lounge}>{lounge}</option>)}
+                {(lounges.data ?? []).map((lounge) => <option key={lounge} value={lounge}>{lounge}</option>)}
               </Select>
               <div>
                 <span className="mb-2 block text-sm font-medium text-slate-300">Foto facial</span>

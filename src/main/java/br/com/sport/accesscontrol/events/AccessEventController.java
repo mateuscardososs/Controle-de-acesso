@@ -41,13 +41,6 @@ public class AccessEventController {
             @RequestParam(required = false) String origin,
             @RequestParam(required = false) Boolean manualOnly
     ) {
-        if (page == null && size == null && startDate == null && endDate == null && personName == null
-                && personCpf == null && invitedDay == null && invitedLounge == null && deviceId == null
-                && areaId == null && eventType == null
-                && accessResult == null && recognitionStatus == null && passageStatus == null
-                && releaseMethod == null && origin == null && manualOnly == null) {
-            return accessEventService.findAll();
-        }
         return accessEventService.search(new AccessEventSearchRequest(
                 page == null ? 0 : page,
                 size == null ? 50 : size,

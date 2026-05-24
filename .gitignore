@@ -1,5 +1,6 @@
 # Codex/local agent state
 .codex/
+.claude/
 
 # Java/Maven
 target/

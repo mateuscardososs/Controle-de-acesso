@@ -178,7 +178,7 @@ public class IntelbrasCgiClient {
     private HttpResponse<String> exchangeText(String host, String username, String password, String method,
                                               String pathAndQuery, String body, String contentType) {
         if (username == null || username.isBlank() || password == null || password.isBlank()) {
-            throw new IntelbrasIntegrationException("Intelbras CGI credentials are not configured.");
+            throw new IntelbrasIntegrationException("Credenciais Intelbras não configuradas para este dispositivo.");
         }
         var uri = IntelbrasHttpSupport.uri(host, pathAndQuery);
         var firstRequest = request(method, uri, body, contentType, null);
@@ -203,7 +203,7 @@ public class IntelbrasCgiClient {
 
     private HttpResponse<byte[]> getBinary(String host, String username, String password, String pathAndQuery) {
         if (username == null || username.isBlank() || password == null || password.isBlank()) {
-            throw new IntelbrasIntegrationException("Intelbras CGI credentials are not configured.");
+            throw new IntelbrasIntegrationException("Credenciais Intelbras não configuradas para este dispositivo.");
         }
         var uri = IntelbrasHttpSupport.uri(host, pathAndQuery);
         var firstRequest = HttpRequest.newBuilder(uri)

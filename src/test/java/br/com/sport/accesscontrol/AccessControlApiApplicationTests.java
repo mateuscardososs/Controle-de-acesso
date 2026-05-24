@@ -105,7 +105,7 @@ class AccessControlApiApplicationTests {
         mockMvc.perform(multipart("/api/public/visitor-registration")
                         .file(facePhoto())
                         .param("fullName", "Visitante Publico")
-                        .param("cpf", "12345678901")
+                        .param("cpf", "529.982.247-25")
                         .param("email", "visitante.publico@empresa.local")
                         .param("phone", "81999990000")
                         .param("invitedDay", "2026-06-01")
@@ -130,7 +130,7 @@ class AccessControlApiApplicationTests {
         mockMvc.perform(multipart("/api/public/visitor-registration")
                         .file(invalidFile)
                         .param("fullName", "Visitante Upload")
-                        .param("cpf", "12345678902")
+                        .param("cpf", "11144477735")
                         .param("email", "visitante.upload@empresa.local")
                         .param("phone", "81999990000")
                         .param("invitedDay", "2026-06-01")
@@ -334,11 +334,11 @@ class AccessControlApiApplicationTests {
     }
 
     private String employeePayload() {
-        var cpf = "000" + Math.abs(UUID.randomUUID().hashCode());
+        var suffix = Math.abs(UUID.randomUUID().hashCode());
         return """
                 {
                   "fullName": "Colaborador Exemplo",
-                  "cpf": "%s",
+                  "cpf": "52998224725",
                   "email": "colaborador.%s@empresa.local",
                   "password": "Admin@123456",
                   "role": "HR",
@@ -346,7 +346,7 @@ class AccessControlApiApplicationTests {
                   "registrationNumber": "EMP-%s",
                   "status": "ACTIVE"
                 }
-                """.formatted(cpf, cpf, cpf);
+                """.formatted(suffix, suffix);
     }
 
     private UUID createArea() throws Exception {

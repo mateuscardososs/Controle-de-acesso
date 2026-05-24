@@ -1,6 +1,7 @@
 package br.com.sport.accesscontrol.employees;
 
 import br.com.sport.accesscontrol.audit.AuditService;
+import br.com.sport.accesscontrol.common.CpfValidator;
 import br.com.sport.accesscontrol.common.ResourceNotFoundException;
 import br.com.sport.accesscontrol.common.events.EmployeeCreatedEvent;
 import br.com.sport.accesscontrol.common.events.EmployeeDeactivatedEvent;
@@ -268,7 +269,7 @@ public class EmployeeService {
     }
 
     private String normalizeCpf(String cpf) {
-        return cpf == null ? "" : cpf.replaceAll("\\D", "");
+        return CpfValidator.normalizeOrThrow(cpf);
     }
 
     private String normalizeCardNo(String cardNo) {

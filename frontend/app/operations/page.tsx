@@ -111,7 +111,7 @@ export default function OperationsPage() {
             >
               Importar eventos agora
             </Button>
-            <RealtimeIndicator status={realtime.status} />
+            <RealtimeIndicator status={realtime.status} message={realtime.statusMessage} />
             <Badge tone="slate" className="gap-2"><Tv className="h-3.5 w-3.5" /> TV mode</Badge>
           </div>
         }

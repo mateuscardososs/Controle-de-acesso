@@ -4,7 +4,9 @@ import br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasIdentityC
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.time.DateTimeException;
 import java.time.Duration;
+import java.time.ZoneId;
 
 @Component
 @ConfigurationProperties(prefix = "app.intelbras")
@@ -22,6 +24,7 @@ public class IntelbrasProperties {
     private Duration eventsPollingInterval = Duration.ofSeconds(5);
     private Duration dedupWindow = Duration.ofSeconds(300);
     private IntelbrasIdentityCodec.Strategy identityStrategy = IntelbrasIdentityCodec.Strategy.DOCUMENT;
+    private String timezone = "America/Recife";
 
     public Mode getMode() {
         return mode;
@@ -131,6 +134,27 @@ public class IntelbrasProperties {
 
     public void setIdentityStrategy(IntelbrasIdentityCodec.Strategy identityStrategy) {
         this.identityStrategy = identityStrategy == null ? IntelbrasIdentityCodec.Strategy.DOCUMENT : identityStrategy;
+    }
+
+    public String getTimezone() {
+        return timezone;
+    }
+
+    public void setTimezone(String timezone) {
+        var value = blankToNull(timezone);
+        if (value == null) {
+            return;
+        }
+        try {
+            ZoneId.of(value);
+        } catch (DateTimeException exception) {
+            throw new IllegalArgumentException("Invalid app.intelbras.timezone: " + value, exception);
+        }
+        this.timezone = value;
+    }
+
+    public ZoneId zoneId() {
+        return ZoneId.of(timezone);
     }
 
     private String blankToNull(String value) {

@@ -69,7 +69,7 @@ Na tela `/devices`, clique em **Novo dispositivo** e use **Preencher modelo Inte
 - IP: `192.168.15.5`
 - Porta HTTP: `80`
 - Usuário: `admin`
-- Senha: `admin123`
+- Senha: senha real configurada na controladora
 - Área: `Portaria`
 - Localização: `Portaria principal`
 - Operação: `Entrada/Saída`

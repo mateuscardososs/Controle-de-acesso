@@ -66,7 +66,7 @@ Com Intelbras real:
 ```bash
 APP_INTELBRAS_MODE=real \
 APP_INTELBRAS_DEFAULT_USERNAME=admin \
-APP_INTELBRAS_DEFAULT_PASSWORD='admin123' \
+APP_INTELBRAS_DEFAULT_PASSWORD='<senha-real-da-controladora>' \
 APP_CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,https://<frontend-tunnel> \
 ./mvnw spring-boot:run
 ```

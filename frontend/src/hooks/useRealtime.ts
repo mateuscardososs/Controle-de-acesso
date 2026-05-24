@@ -12,11 +12,13 @@ export function useRealtime() {
   const [deviceStatuses, setDeviceStatuses] = useState<RealtimeDeviceStatus[]>([]);
   const [systemAlerts, setSystemAlerts] = useState<SystemAlert[]>([]);
   const [integrationSync, setIntegrationSync] = useState<IntegrationSyncEvent[]>([]);
+  const [statusMessage, setStatusMessage] = useState("");
 
   const client = useMemo(
     () =>
       new RealtimeClient({
         onStatusChange: setStatus,
+        onStatusMessage: setStatusMessage,
         onAccessEvent: (event) => setAccessEvents((current) => [{ ...event, receivedAt: new Date().toISOString() }, ...current].slice(0, 30)),
         onDeviceStatus: (deviceStatus) => setDeviceStatuses((current) => [deviceStatus, ...current.filter((item) => item.deviceId !== deviceStatus.deviceId)].slice(0, 30)),
         onSystemAlert: (alert) => setSystemAlerts((current) => [{ ...alert, createdAt: alert.createdAt ?? new Date().toISOString() }, ...current].slice(0, 30)),
@@ -36,6 +38,7 @@ export function useRealtime() {
     accessEvents,
     deviceStatuses,
     systemAlerts,
-    integrationSync
+    integrationSync,
+    statusMessage
   };
 }

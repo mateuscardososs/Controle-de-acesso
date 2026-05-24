@@ -25,7 +25,6 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.UUID;
@@ -88,6 +87,11 @@ public class IntelbrasRealProvider implements AccessControlProvider {
                 log.info("intelbras_real_sync_person_start protocol=CGI device_id={} host={} person_type={} person_id={} user_id={} card_no={} photo_base64_bytes={}",
                         connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()), person.personType(),
                         person.personId(), identity.userId(), identity.cardNo(), photoData == null ? 0 : photoData.length());
+                var validFrom = localDeviceTime(person.validFrom(), LocalDateTime.now(properties.zoneId()).minusDays(1));
+                var validUntil = localDeviceTime(person.validUntil(), LocalDateTime.of(2037, 12, 31, 23, 59, 59));
+                log.info("intelbras_real_sync_person_validity device_id={} person_type={} person_id={} user_id={} valid_from={} valid_until={} timezone={}",
+                        connection.device().getId(), person.personType(), person.personId(), identity.userId(),
+                        validFrom, validUntil, properties.getTimezone());
                 cgiClient.upsertAccessUser(
                         connection.host(),
                         connection.username(),
@@ -95,8 +99,8 @@ public class IntelbrasRealProvider implements AccessControlProvider {
                         identity.userId(),
                         identity.cardNo(),
                         person.fullName(),
-                        localDeviceTime(person.validFrom(), LocalDateTime.now().minusDays(1)),
-                        localDeviceTime(person.validUntil(), LocalDateTime.of(2037, 12, 31, 23, 59, 59))
+                        validFrom,
+                        validUntil
                 );
                 if (photoData != null) {
                     try {
@@ -190,7 +194,7 @@ public class IntelbrasRealProvider implements AccessControlProvider {
         var connection = connectionService.connectionFor(deviceId);
         if (!connection.configured()) {
             return new ProviderDeviceStatus(deviceId, DeviceStatus.OFFLINE, Instant.now(),
-                    "Intelbras real device credentials are not configured.");
+                    "Credenciais Intelbras não configuradas para este dispositivo.");
         }
         var requestStart = Instant.now();
         try {
@@ -225,7 +229,7 @@ public class IntelbrasRealProvider implements AccessControlProvider {
     }
 
     private LocalDateTime localDeviceTime(Instant instant, LocalDateTime fallback) {
-        return instant == null ? fallback : LocalDateTime.ofInstant(instant, ZoneId.systemDefault());
+        return instant == null ? fallback : LocalDateTime.ofInstant(instant, properties.zoneId());
     }
 
     private ProviderSyncResult result(Instant start, ProviderSyncStatus status, String message) {

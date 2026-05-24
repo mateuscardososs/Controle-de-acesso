@@ -68,7 +68,7 @@ public class IntelbrasDeviceConnectionService {
                 device,
                 hostFor(device),
                 firstNonBlank(device.getIntelbrasUsername(), properties.getDefaultUsername()),
-                firstNonBlank(device.getIntelbrasPassword(), properties.getDefaultPassword())
+                trimToNull(device.getIntelbrasPassword())
         );
     }
 
@@ -96,6 +96,14 @@ public class IntelbrasDeviceConnectionService {
         }
         if (device.getArea() == null || device.getArea().getId() == null) {
             reject(device, "missing_area");
+            return false;
+        }
+        if (!hasText(firstNonBlank(device.getIntelbrasUsername(), properties.getDefaultUsername()))) {
+            reject(device, "missing_username");
+            return false;
+        }
+        if (!hasText(device.getIntelbrasPassword())) {
+            reject(device, "missing_device_password");
             return false;
         }
         var connection = connectionFor(device);
@@ -150,6 +158,10 @@ public class IntelbrasDeviceConnectionService {
 
     private String firstNonBlank(String first, String fallback) {
         return first == null || first.isBlank() ? fallback : first.trim();
+    }
+
+    private String trimToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private String hostFor(Device device) {

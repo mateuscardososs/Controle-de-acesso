@@ -90,7 +90,7 @@ public class IntelbrasEventImportService {
 
     private IntelbrasEventImportResult importAccessControlEvents(IntelbrasDeviceConnection connection) {
         if (!connection.configured()) {
-            throw new IllegalArgumentException("Intelbras device credentials are not configured.");
+            throw new IllegalArgumentException("Credenciais Intelbras não configuradas para este dispositivo.");
         }
         var requestStart = Instant.now();
         java.util.List<Map<String, Object>> records;

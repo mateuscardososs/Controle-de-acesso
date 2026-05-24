@@ -57,10 +57,20 @@ Tambem mantem copias organizadas em:
 
 Use cron no servidor local. E simples, visivel para a equipe e nao depende de um container extra de scheduler.
 
-```cron
-0 * * * * cd /caminho/consuma_catraca && ./scripts/backup.sh hourly >> backups/backup-cron.log 2>&1
-15 2 * * * cd /caminho/consuma_catraca && ./scripts/backup.sh daily >> backups/backup-cron.log 2>&1
+Instalacao assistida:
+
+```bash
+./scripts/install-backup-cron.sh
 ```
+
+O script detecta o caminho atual do projeto, evita entradas duplicadas e mostra o crontab final. Para instalar manualmente, use:
+
+```cron
+0 * * * * cd /caminho/consuma_catraca && ./scripts/backup.sh hourly >> /caminho/consuma_catraca/backups/backup-cron.log 2>&1
+15 2 * * * cd /caminho/consuma_catraca && ./scripts/backup.sh daily >> /caminho/consuma_catraca/backups/backup-cron.log 2>&1
+```
+
+Nota Mac vs Linux: no macOS o cron do usuario nao roda automaticamente quando o sistema hiberna. Em servidor Linux (Ubuntu/Debian), o cron do usuario `deployer` roda continuamente; use o mesmo script de instalacao sem alteracoes.
 
 Retencao padrao:
 
@@ -83,6 +93,7 @@ APP_ENVIRONMENT=production-local
 ```bash
 cat backups/latest-success.txt
 cat backups/manifests/latest-success.txt
+tail -n 100 backups/backup-cron.log
 ```
 
 Valide tambem o tamanho dos arquivos:
@@ -162,5 +173,16 @@ Depois remova apenas diretorios antigos dentro de `backups/runs`, `backups/files
 - `cat backups/latest-success.txt` mostra backup do dia.
 - `du -h backups/runs/<ultimo>/db/postgres.dump` tem tamanho plausivel.
 - `docker compose --env-file .env.production -f docker-compose.prod.yml ps` sem containers reiniciando em loop.
-- Grafana mostra backend, PostgreSQL e host como ativos.
+- Grafana mostra backend e PostgreSQL como ativos.
+- `docker compose --env-file .env.production -f docker-compose.prod.yml exec backend printenv TZ APP_TIMEZONE` mostra `America/Recife`.
 - Disco com espaco livre suficiente para pelo menos 7 dias de operacao.
+
+## Recarregar Nginx sem downtime
+
+Apos alterar `nginx.conf` ou certificados, recarregue sem derrubar conexoes:
+
+```bash
+./scripts/reload-nginx.sh
+```
+
+O script verifica se o container `consuma_catraca-nginx-1` esta rodando e executa `nginx -s reload` dentro dele.

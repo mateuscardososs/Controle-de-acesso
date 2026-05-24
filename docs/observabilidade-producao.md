@@ -6,12 +6,13 @@ Este guia descreve a stack de observabilidade para o ambiente local de producao 
 
 O `docker-compose.prod.yml` sobe:
 
-- `prometheus`: coleta metricas da API, host, PostgreSQL e do proprio Prometheus.
+- `prometheus`: coleta metricas da API, PostgreSQL e do proprio Prometheus.
 - `grafana`: dashboards provisionados automaticamente.
-- `node-exporter`: metricas de CPU, memoria, disco e host.
 - `postgres-exporter`: status, conexoes e metricas do PostgreSQL.
 
 Os servicos de observabilidade ficam na rede Docker interna. Apenas Prometheus e Grafana possuem porta local exposta para operacao.
+
+Nota operacional: o `node-exporter` esta desativado nesta composicao Mac/local para evitar target inexistente no Prometheus. Em servidor Linux, reative depois adicionando o servico no Compose e o job correspondente no `infra/prometheus/prometheus.yml` no mesmo deploy.
 
 Portas padrao:
 
@@ -81,7 +82,7 @@ Login:
 - Usuario: valor de `GRAFANA_ADMIN_USER`
 - Senha: valor de `GRAFANA_ADMIN_PASSWORD`
 
-O datasource `Prometheus` e o dashboard `Controle de Acesso - Produção Local` sao provisionados automaticamente.
+O datasource `Prometheus`, o dashboard `Controle de Acesso - Produção Local` e os alertas de operacao sao provisionados automaticamente.
 
 ## Validar Prometheus
 
@@ -95,7 +96,6 @@ Targets esperados como `UP`:
 
 - `prometheus`
 - `access-control-api`
-- `node-exporter`
 - `postgres-exporter`
 
 Consulta rapida:
@@ -114,12 +114,6 @@ PostgreSQL:
 
 ```promql
 up{job="postgres-exporter"}
-```
-
-Host:
-
-```promql
-up{job="node-exporter"}
 ```
 
 ## Validar Actuator
@@ -161,7 +155,6 @@ O dashboard provisionado cobre:
 - erros HTTP 5xx por minuto;
 - latencia HTTP;
 - memoria JVM;
-- CPU e memoria do host;
 - PostgreSQL up/down;
 - conexoes e transacoes PostgreSQL;
 - status dos targets Prometheus.
@@ -174,6 +167,90 @@ O dashboard provisionado cobre:
 - falhas de comunicacao por controladora;
 - status online/offline das controladoras;
 - latencia de comunicacao com controladoras.
+- cards operacionais de controladoras offline, falhas Intelbras em 5 minutos, acessos negados em 5 minutos e targets Prometheus down.
+
+## Alertas provisionados
+
+Os alertas ficam em `infra/grafana/provisioning/alerting` e sao carregados pelo Grafana no boot. O contact point `Operacao` usa o email definido em `GRAFANA_ALERT_EMAIL_TO`. Se a variavel nao estiver configurada, o fallback `operacao-alertas@example.invalid` e usado e as notificacoes nao chegam; configure antes do evento.
+
+Regras criadas:
+
+- Backend down: `1 - max(up{job="access-control-api"}) > 0` por 1 minuto. Critico.
+- PostgreSQL down: `1 - max(pg_up) > 0` por 1 minuto. Critico.
+- Controladora offline: `sum(controller_online_status == bool 0) > 0` por 1 minuto. Critico.
+- Falhas de comunicacao Intelbras: `sum(increase(controller_communication_failures_total[5m])) > 3`. Warning.
+- Erros HTTP 5xx: `sum(increase(http_server_requests_seconds_count{job="access-control-api", status=~"5.."}[5m])) > 5`. Warning.
+- Alto numero de acessos negados: `sum(increase(access_events_denied_total[5m])) > 20`. Warning.
+- Prometheus target down: `sum(1 - up) > 0` por 1 minuto. Critico.
+
+Backup atrasado ainda nao tem alerta provisionado porque hoje o sucesso do backup fica em arquivo (`backups/latest-success.txt`), nao em metrica Prometheus. Ate existir um exporter ou script que publique essa idade como metrica, valide pelo checklist operacional:
+
+```bash
+cat backups/latest-success.txt
+tail -n 100 backups/backup-cron.log
+```
+
+## Configurar alertas por email (Gmail SMTP)
+
+O `docker-compose.prod.yml` ja repassa as variaveis SMTP para o Grafana. Para ativar:
+
+1. Crie uma App Password no Google (nao use a senha normal da conta):
+   - Conta Google > Seguranca > Verificacao em 2 etapas (ativar se nao estiver).
+   - Seguranca > Pesquisar "senhas de aplicativo" > Outro (nome personalizado) > "Grafana Consuma Catraca" > Gerar.
+   - Copie a senha de 16 caracteres sem espacos.
+
+2. Preencha no `.env.production` (nao versionar):
+
+```env
+GRAFANA_SMTP_ENABLED=true
+GRAFANA_SMTP_USER=seu-email@gmail.com
+GRAFANA_SMTP_PASSWORD=abcdefghijklmnop
+GRAFANA_SMTP_FROM_ADDRESS=seu-email@gmail.com
+GRAFANA_ALERT_EMAIL_TO=destino-alertas@empresa.local
+```
+
+3. Reinicie o Grafana:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml restart grafana
+```
+
+4. Teste em Grafana > Alerting > Contact points > Operacao > Test.
+
+O contact point `Operacao` usa `${GRAFANA_ALERT_EMAIL_TO}` e ja aponta para a politica de notificacao padrao. Nenhuma alteracao em arquivos versionados e necessaria.
+
+## Testar alertas
+
+Validar arquivos e subir observabilidade:
+
+```bash
+docker compose -f docker-compose.prod.yml config
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d prometheus grafana
+docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail=100 grafana
+```
+
+No Grafana, abra:
+
+```text
+Alerting > Alert rules
+```
+
+Teste operacional simples:
+
+- Backend down: pare o backend por mais de 1 minuto e confira `Backend down`.
+- PostgreSQL down: pare o PostgreSQL apenas em janela controlada e confira `PostgreSQL down`.
+- Target down: pare `postgres-exporter` ou backend e confira `Prometheus target down`.
+- Controladora offline/falhas Intelbras: desligue a controladora ou bloqueie a comunicacao em teste controlado.
+- Erros 5xx e negados: gere carga de teste em ambiente de homologacao, nao durante entrada ativa.
+
+## Silenciar alertas
+
+Durante manutencao planejada:
+
+1. Acesse `Alerting > Silences`.
+2. Crie silence por labels, por exemplo `component=backend` ou `severity=warning`.
+3. Defina janela curta e motivo claro.
+4. Remova o silence ao fim da manutencao se ainda estiver ativo.
 
 ## Metricas customizadas
 
@@ -245,7 +322,7 @@ sum(rate(manual_admin_release_total[5m])) * 60
 Controladoras offline:
 
 ```promql
-controller_online_status == 0
+controller_online_status == bool 0
 ```
 
 Falhas de comunicacao por controladora:
@@ -264,8 +341,8 @@ histogram_quantile(0.95, sum(rate(controller_request_duration_seconds_bucket[5m]
 
 - Backend down: `up{job="access-control-api"} == 0` por 1 minuto.
 - PostgreSQL down: `up{job="postgres-exporter"} == 0` por 1 minuto.
-- Controladora offline: `controller_online_status == 0` por 2 minutos.
+- Controladora offline: `controller_online_status == bool 0` por 2 minutos.
 - Erro alto por minuto: `sum(rate(access_events_error_total[5m])) * 60 > 1`.
 - Falhas consecutivas de reconhecimento: `sum(rate(recognition_failure_total[5m])) * 60 > 10`, ajustar conforme operacao real.
-- Disco alto: `1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) > 0.85`.
+- Disco alto: monitorar pelo sistema operacional do servidor enquanto `node-exporter` estiver desativado.
 - Backup atrasado: validar `backups/latest-success.txt` via checklist operacional. Ainda nao ha metrica Prometheus nativa para esse arquivo.

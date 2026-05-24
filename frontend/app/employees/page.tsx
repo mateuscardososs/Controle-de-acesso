@@ -3,6 +3,7 @@
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
+import { formatCpfDisplay, formatCpfInput } from "@/lib/cpf";
 import { apiErrorMessage } from "@/lib/errors";
 import { Button } from "@/src/components/ui/Button";
 import { Card, CardContent } from "@/src/components/ui/Card";
@@ -12,6 +13,7 @@ import { DataTable } from "@/src/components/shared/DataTable";
 import { StatusBadge } from "@/src/components/shared/StatusBadge";
 import { CameraCapture } from "@/src/components/shared/CameraCapture";
 import { employeeService, Employee } from "@/services/employeeService";
+import { adminCleanupService } from "@/services/adminCleanupService";
 import { authService } from "@/services/authService";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
@@ -22,6 +24,7 @@ export default function EmployeesPage() {
   const employees = useQuery({ queryKey: ["employees"], queryFn: employeeService.list });
   const user = useQuery({ queryKey: ["me"], queryFn: authService.me, retry: false });
   const canManage = user.data?.role === "ADMIN" || user.data?.role === "HR";
+  const canCleanup = user.data?.role === "ADMIN";
 
   const [fullName, setFullName] = useState("");
   const [cpf, setCpf] = useState("");
@@ -37,6 +40,8 @@ export default function EmployeesPage() {
 
   const [confirmDelete, setConfirmDelete] = useState<Employee | null>(null);
   const [deleteError, setDeleteError] = useState("");
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [cleanupConfirmation, setCleanupConfirmation] = useState("");
 
   const create = useMutation({
     mutationFn: () => employeeService.create({ fullName, cpf, email, password, role, cardNo, facePhoto, status: "ACTIVE" }),
@@ -76,6 +81,17 @@ export default function EmployeesPage() {
     onError: (error) => setDeleteError(apiErrorMessage(error, "Não foi possível desativar o colaborador."))
   });
 
+  const cleanupEmployees = useMutation({
+    mutationFn: () => adminCleanupService.employees(cleanupConfirmation),
+    onSuccess: (response) => {
+      setCleanupOpen(false);
+      setCleanupConfirmation("");
+      setMessage(response.message);
+      queryClient.invalidateQueries({ queryKey: ["employees"] });
+    },
+    onError: (error) => setMessage(apiErrorMessage(error, "Não foi possível limpar colaboradores."))
+  });
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     create.mutate();
@@ -93,7 +109,16 @@ export default function EmployeesPage() {
         eyebrow="Pessoas"
         title="Colaboradores"
         description="Cadastro, perfil de acesso ao admin e situação operacional de pessoas internas."
-        actions={<Button icon={Plus} className="h-12 px-5 text-base" onClick={() => setOpen(true)}>Novo colaborador</Button>}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            {canCleanup ? (
+              <Button variant="danger" icon={Trash2} className="h-12 px-5 text-base" onClick={() => { setCleanupOpen(true); setMessage(""); }}>
+                Limpar lista
+              </Button>
+            ) : null}
+            <Button icon={Plus} className="h-12 px-5 text-base" onClick={() => setOpen(true)}>Novo colaborador</Button>
+          </div>
+        }
       />
       <Card className="mb-5">
         <CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
@@ -123,7 +148,7 @@ export default function EmployeesPage() {
           getRowKey={(employee) => employee.id}
           columns={[
             { key: "name", header: "Nome", className: "font-semibold text-slate-100", render: (employee) => employee.fullName },
-            { key: "cpf", header: "CPF", render: (employee) => employee.cpf },
+            { key: "cpf", header: "CPF", className: "whitespace-nowrap font-mono text-xs", render: (employee) => formatCpfDisplay(employee.cpf) },
             { key: "email", header: "Email", render: (employee) => employee.email ?? "Nao informado" },
             { key: "cardNo", header: "Tag/cartão", render: (employee) => employee.cardNo ?? "Nao informado" },
             { key: "role", header: "Perfil", render: (employee) => employee.role ? <StatusBadge value={employee.role} /> : "Sem acesso" },
@@ -179,7 +204,7 @@ export default function EmployeesPage() {
         <form onSubmit={submit} className="grid gap-5">
           <Input label="Nome completo" value={fullName} onChange={(event) => setFullName(event.target.value)} required />
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="CPF" value={cpf} onChange={(event) => setCpf(event.target.value)} required />
+            <Input label="CPF" value={cpf} onChange={(event) => setCpf(formatCpfInput(event.target.value))} required inputMode="numeric" placeholder="000.000.000-00" />
             <Input label="Email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -232,6 +257,40 @@ export default function EmployeesPage() {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        title="Limpar lista de colaboradores"
+        description="Remove colaboradores não administrativos e usuários vinculados que não sejam ADMIN. O admin logado e usuários ADMIN essenciais são preservados."
+        open={cleanupOpen}
+        onClose={() => {
+          if (!cleanupEmployees.isPending) {
+            setCleanupOpen(false);
+            setCleanupConfirmation("");
+          }
+        }}
+      >
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            cleanupEmployees.mutate();
+          }}
+          className="space-y-4"
+        >
+          <div className="rounded-xl border border-amber-300/20 bg-amber-400/12 p-3 text-sm text-amber-100">
+            Digite <span className="font-semibold">LIMPAR_COLABORADORES</span> para confirmar. Visitantes, dispositivos e áreas não serão apagados.
+          </div>
+          <Input label="Confirmação" value={cleanupConfirmation} onChange={(event) => setCleanupConfirmation(event.target.value)} />
+          {cleanupEmployees.isError ? <ErrorState label={message || "Não foi possível limpar colaboradores."} /> : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="secondary" disabled={cleanupEmployees.isPending} onClick={() => setCleanupOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="submit" variant="danger" icon={Trash2} loading={cleanupEmployees.isPending} disabled={cleanupConfirmation !== "LIMPAR_COLABORADORES"}>
+              Limpar colaboradores
+            </Button>
+          </div>
+        </form>
       </Modal>
     </AdminShell>
   );

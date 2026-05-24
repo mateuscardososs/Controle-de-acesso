@@ -3,6 +3,7 @@ package br.com.sport.accesscontrol.integration.intelbras.mapper;
 import br.com.sport.accesscontrol.devices.Device;
 import br.com.sport.accesscontrol.events.AccessEventType;
 import br.com.sport.accesscontrol.events.AccessResult;
+import br.com.sport.accesscontrol.integration.intelbras.config.IntelbrasProperties;
 import br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasAccessControlCardRecord;
 import br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasPersonIdentity;
 import br.com.sport.accesscontrol.integration.provider.NormalizedAccessEvent;
@@ -10,7 +11,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Locale;
@@ -20,6 +20,15 @@ import java.util.Map;
 public class IntelbrasEventMapper {
 
     private static final DateTimeFormatter DEVICE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private final IntelbrasProperties properties;
+
+    public IntelbrasEventMapper(IntelbrasProperties properties) {
+        this.properties = properties;
+    }
+
+    public IntelbrasEventMapper() {
+        this(new IntelbrasProperties());
+    }
 
     public IntelbrasAccessControlCardRecord parseAccessControlCardRec(Map<String, Object> payload) {
         return new IntelbrasAccessControlCardRecord(
@@ -110,7 +119,7 @@ public class IntelbrasEventMapper {
             // Device firmwares usually return local time as yyyy-MM-dd HH:mm:ss.
         }
         try {
-            return LocalDateTime.parse(value, DEVICE_TIME).atZone(ZoneId.systemDefault()).toInstant();
+            return LocalDateTime.parse(value, DEVICE_TIME).atZone(properties.zoneId()).toInstant();
         } catch (DateTimeParseException ignored) {
             return null;
         }

@@ -98,7 +98,7 @@ export default function DashboardPage() {
         eyebrow="Operacao"
         title="Dashboard"
         description="Indicadores, eventos recentes e saude dos dispositivos conectados aos endpoints reais da plataforma."
-        actions={<RealtimeIndicator status={realtime.status} />}
+        actions={<RealtimeIndicator status={realtime.status} message={realtime.statusMessage} />}
       />
       {summary.isLoading ? <LoadingState label="Carregando indicadores..." /> : null}
       {summary.isError ? <ErrorState label="Não foi possível carregar o dashboard." /> : null}

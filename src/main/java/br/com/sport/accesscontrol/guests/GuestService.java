@@ -1,6 +1,8 @@
 package br.com.sport.accesscontrol.guests;
 
 import br.com.sport.accesscontrol.audit.AuditService;
+import br.com.sport.accesscontrol.appconfig.LoungeConfig;
+import br.com.sport.accesscontrol.common.CpfValidator;
 import br.com.sport.accesscontrol.common.ResourceNotFoundException;
 import br.com.sport.accesscontrol.guests.GuestDtos.GuestRequest;
 import br.com.sport.accesscontrol.guests.GuestDtos.GuestCleanupRequest;
@@ -35,7 +37,6 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -50,6 +51,7 @@ public class GuestService {
     private final RealtimePublisherService realtimePublisherService;
     private final MailService mailService;
     private final ApplicationEventPublisher eventPublisher;
+    private final LoungeConfig loungeConfig;
     private final String publicBaseUrl;
     private final SecureRandom secureRandom = new SecureRandom();
     private final Duration inviteTtl;
@@ -57,18 +59,11 @@ public class GuestService {
     private static final ZoneId EVENT_ZONE = ZoneId.of("America/Recife");
     private static final LocalTime GUEST_ACCESS_START_TIME = LocalTime.of(15, 0);
     private static final LocalTime GUEST_ACCESS_END_TIME = LocalTime.of(4, 0);
-    private static final Set<String> ALLOWED_LOUNGES = Set.of(
-            "Camarote 1",
-            "Camarote 2",
-            "Camarote 3",
-            "Camarote 4",
-            "Camarote 5"
-    );
 
     public GuestService(GuestRepository guestRepository, GuestInviteRepository inviteRepository,
                         FaceStorageService faceStorageService, AuditService auditService,
                         RealtimePublisherService realtimePublisherService, MailService mailService,
-                        ApplicationEventPublisher eventPublisher,
+                        ApplicationEventPublisher eventPublisher, LoungeConfig loungeConfig,
                         @Value("${app.frontend.public-base-url:http://localhost:3000}") String publicBaseUrl,
                         @Value("${app.guests.invite-expiration-hours:72}") long inviteExpirationHours) {
         this.guestRepository = guestRepository;
@@ -78,6 +73,7 @@ public class GuestService {
         this.realtimePublisherService = realtimePublisherService;
         this.mailService = mailService;
         this.eventPublisher = eventPublisher;
+        this.loungeConfig = loungeConfig;
         this.publicBaseUrl = publicBaseUrl;
         this.inviteTtl = Duration.ofHours(inviteExpirationHours);
     }
@@ -85,8 +81,9 @@ public class GuestService {
     @Transactional
     public GuestResponse create(GuestRequest request) {
         validateVisitWindow(request.visitStart(), request.visitEnd());
+        var normalizedCpf = CpfValidator.normalizeOrThrow(request.cpf());
         var guest = guestRepository.save(new Guest(
-                request.fullName(), request.cpf(), request.email(), request.phone(), request.company(),
+                request.fullName(), normalizedCpf, request.email(), request.phone(), request.company(),
                 request.visitReason(), request.hostName(), request.visitStart(), request.visitEnd(),
                 resolveInvitedDay(request.invitedDay(), request.visitStart()), normalize(request.invitedLounge())
         ));
@@ -124,9 +121,10 @@ public class GuestService {
         var resolvedVisitReason = normalize(visitReason) == null ? "Convidado São João/Superfeito" : visitReason.trim();
         var resolvedHostName = normalize(hostName) == null ? "Credenciamento São João/Superfeito" : hostName.trim();
         var resolvedInvitedLounge = invitedLounge.trim();
+        var normalizedCpf = CpfValidator.normalizeOrThrow(cpf);
         var guest = guestRepository.save(new Guest(
                 fullName.trim(),
-                onlyDigits(cpf),
+                normalizedCpf,
                 normalize(email),
                 normalize(phone),
                 normalize(company),
@@ -179,7 +177,8 @@ public class GuestService {
         validateVisitWindow(request.visitStart(), request.visitEnd());
         var guest = getById(id);
         var oldData = snapshot(guest);
-        guest.update(request.fullName(), request.cpf(), request.email(), request.phone(), request.company(),
+        var normalizedCpf = CpfValidator.normalizeOrThrow(request.cpf());
+        guest.update(request.fullName(), normalizedCpf, request.email(), request.phone(), request.company(),
                 request.visitReason(), request.hostName(), request.visitStart(), request.visitEnd(),
                 resolveInvitedDay(request.invitedDay(), request.visitStart()), normalize(request.invitedLounge()),
                 request.status());
@@ -402,13 +401,11 @@ public class GuestService {
         if (facePhoto == null || facePhoto.isEmpty()) {
             throw new IllegalArgumentException("Face photo is required.");
         }
-        if (onlyDigits(cpf).length() != 11) {
-            throw new IllegalArgumentException("CPF must contain 11 digits.");
-        }
+        CpfValidator.normalizeOrThrow(cpf);
         if (!isBlank(email) && !EMAIL.matcher(email.trim()).matches()) {
             throw new IllegalArgumentException("Email must be valid.");
         }
-        if (!ALLOWED_LOUNGES.contains(invitedLounge.trim())) {
+        if (!loungeConfig.isValid(invitedLounge)) {
             throw new IllegalArgumentException("Invited lounge is invalid.");
         }
         if (visitStart != null && visitEnd != null) {
@@ -440,7 +437,7 @@ public class GuestService {
     }
 
     private String onlyDigits(String value) {
-        return value == null ? "" : value.replaceAll("\\D", "");
+        return CpfValidator.onlyDigits(value);
     }
 
     private boolean isTestRecord(Guest guest) {

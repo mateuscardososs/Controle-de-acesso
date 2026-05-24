@@ -61,6 +61,7 @@ app:
     mode: ${APP_INTELBRAS_MODE:fake}
     default-username: ${APP_INTELBRAS_DEFAULT_USERNAME:}
     default-password: ${APP_INTELBRAS_DEFAULT_PASSWORD:}
+    timezone: ${APP_TIMEZONE:America/Recife}
     connection-timeout: ${INTELBRAS_CONNECT_TIMEOUT_MS:${APP_INTELBRAS_CONNECTION_TIMEOUT:3s}}
     read-timeout: ${INTELBRAS_READ_TIMEOUT_MS:${APP_INTELBRAS_READ_TIMEOUT:5s}}
     retry-attempts: ${INTELBRAS_RETRY_ATTEMPTS:2}
@@ -77,6 +78,7 @@ app:
     from: ${APP_MAIL_FROM:no-reply@empresa.local}
   uploads:
     faces-dir: ${FACE_UPLOAD_DIR:uploads/faces}
+  lounges: ${APP_LOUNGES:Camarote 1,Camarote 2,Camarote 3,Camarote 4,Camarote 5}
   guests:
     invite-expiration-hours: ${GUEST_INVITE_EXPIRATION_HOURS:72}
     expiration-scan-delay-ms: ${GUEST_EXPIRATION_SCAN_DELAY_MS:300000}

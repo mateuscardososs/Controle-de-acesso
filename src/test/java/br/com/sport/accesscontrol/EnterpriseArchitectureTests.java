@@ -16,6 +16,7 @@ import br.com.sport.accesscontrol.employees.EmployeeRequest;
 import br.com.sport.accesscontrol.employees.EmployeeService;
 import br.com.sport.accesscontrol.employees.EmployeeStatus;
 import br.com.sport.accesscontrol.events.*;
+import br.com.sport.accesscontrol.appconfig.LoungeConfig;
 import br.com.sport.accesscontrol.guests.*;
 import br.com.sport.accesscontrol.integration.intelbras.scheduler.IntelbrasSyncScheduler;
 import br.com.sport.accesscontrol.integration.intelbras.config.IntelbrasProperties;
@@ -838,7 +839,7 @@ class EnterpriseArchitectureTests {
         when(mailService.sendGuestInvite(any(), any())).thenReturn(MailDeliveryResult.skipped("disabled"));
         var service = new GuestService(guestRepository, inviteRepository, mock(FaceStorageService.class),
                 auditService, realtimePublisher, mailService, mock(ApplicationEventPublisher.class),
-                "http://localhost:3000", 72);
+                defaultLoungeConfig(), "http://localhost:3000", 72);
         var response = service.create(guestRequest());
 
         assertThat(response.status()).isEqualTo(GuestStatus.PENDING_REGISTRATION);
@@ -861,7 +862,7 @@ class EnterpriseArchitectureTests {
         when(mailService.sendGuestInviteResent(eq(guest), any())).thenReturn(MailDeliveryResult.failed("smtp down"));
         var service = new GuestService(guestRepository, inviteRepository, mock(FaceStorageService.class),
                 mock(AuditService.class), mock(RealtimePublisherService.class), mailService,
-                mock(ApplicationEventPublisher.class), "http://localhost:3000", 72);
+                mock(ApplicationEventPublisher.class), defaultLoungeConfig(), "http://localhost:3000", 72);
 
         var response = service.resendInvite(guest.getId());
 
@@ -876,7 +877,7 @@ class EnterpriseArchitectureTests {
         when(inviteRepository.findByToken("missing")).thenReturn(Optional.empty());
         var service = new GuestService(mock(GuestRepository.class), inviteRepository, mock(FaceStorageService.class),
                 mock(AuditService.class), mock(RealtimePublisherService.class), mock(MailService.class),
-                mock(ApplicationEventPublisher.class), "http://localhost:3000", 72);
+                mock(ApplicationEventPublisher.class), defaultLoungeConfig(), "http://localhost:3000", 72);
 
         assertThatThrownBy(() -> service.publicRegistration("missing"))
                 .isInstanceOf(br.com.sport.accesscontrol.common.ResourceNotFoundException.class);
@@ -896,7 +897,7 @@ class EnterpriseArchitectureTests {
         when(faceStorage.store(any(), eq(guest.getId()))).thenReturn("/uploads/faces/photo.png");
         when(mailService.sendGuestRegistrationCompleted(guest)).thenReturn(MailDeliveryResult.delivered());
         var service = new GuestService(mock(GuestRepository.class), inviteRepository, faceStorage, auditService,
-                realtimePublisher, mailService, eventPublisher, "http://localhost:3000", 72);
+                realtimePublisher, mailService, eventPublisher, defaultLoungeConfig(), "http://localhost:3000", 72);
 
         var response = service.completeRegistration("token", "81999990000", "Empresa", png());
 
@@ -926,11 +927,11 @@ class EnterpriseArchitectureTests {
         when(faceStorage.store(any(), any())).thenReturn("/uploads/faces/public.png");
         var service = new GuestService(guestRepository, inviteRepository, faceStorage, mock(AuditService.class),
                 mock(RealtimePublisherService.class), mock(MailService.class), eventPublisher,
-                "http://localhost:3000", 72);
+                defaultLoungeConfig(), "http://localhost:3000", 72);
 
         var response = service.publicVisitorRegistration(
                 "Visitante Publico",
-                "12345678901",
+                "52998224725",
                 "visitante.publico@empresa.local",
                 "81999990000",
                 null,
@@ -966,7 +967,7 @@ class EnterpriseArchitectureTests {
         when(guestRepository.save(guest)).thenReturn(guest);
         var service = new GuestService(guestRepository, mock(GuestInviteRepository.class), mock(FaceStorageService.class),
                 auditService, mock(RealtimePublisherService.class), mock(MailService.class),
-                eventPublisher, "http://localhost:3000", 72);
+                eventPublisher, defaultLoungeConfig(), "http://localhost:3000", 72);
 
         var response = service.requestSync(guest.getId());
 
@@ -995,7 +996,7 @@ class EnterpriseArchitectureTests {
         when(inviteRepository.findByGuestIn(any())).thenReturn(List.of());
         var service = new GuestService(guestRepository, inviteRepository, mock(FaceStorageService.class),
                 auditService, mock(RealtimePublisherService.class), mock(MailService.class),
-                mock(ApplicationEventPublisher.class), "http://localhost:3000", 72);
+                mock(ApplicationEventPublisher.class), defaultLoungeConfig(), "http://localhost:3000", 72);
 
         var result = service.cleanup(new GuestDtos.GuestCleanupRequest(
                 List.of(GuestStatus.CANCELLED),
@@ -1024,7 +1025,7 @@ class EnterpriseArchitectureTests {
         when(inviteRepository.findByGuestIn(any())).thenReturn(List.of());
         var service = new GuestService(guestRepository, inviteRepository, mock(FaceStorageService.class),
                 mock(AuditService.class), mock(RealtimePublisherService.class), mock(MailService.class),
-                mock(ApplicationEventPublisher.class), "http://localhost:3000", 72);
+                mock(ApplicationEventPublisher.class), defaultLoungeConfig(), "http://localhost:3000", 72);
 
         var result = service.cleanup(new GuestDtos.GuestCleanupRequest(
                 GuestDtos.GuestCleanupMode.CANCELLED,
@@ -1045,7 +1046,7 @@ class EnterpriseArchitectureTests {
     void guestCleanupAllRequiresTypedConfirmation() {
         var service = new GuestService(mock(GuestRepository.class), mock(GuestInviteRepository.class),
                 mock(FaceStorageService.class), mock(AuditService.class), mock(RealtimePublisherService.class),
-                mock(MailService.class), mock(ApplicationEventPublisher.class), "http://localhost:3000", 72);
+                mock(MailService.class), mock(ApplicationEventPublisher.class), defaultLoungeConfig(), "http://localhost:3000", 72);
 
         assertThatThrownBy(() -> service.cleanup(new GuestDtos.GuestCleanupRequest(
                 GuestDtos.GuestCleanupMode.ALL,
@@ -1069,7 +1070,7 @@ class EnterpriseArchitectureTests {
                 .thenReturn(List.of(guest()));
         var service = new GuestService(guestRepository, mock(GuestInviteRepository.class), mock(FaceStorageService.class),
                 auditService, realtimePublisher, mock(MailService.class), mock(ApplicationEventPublisher.class),
-                "http://localhost:3000", 72);
+                defaultLoungeConfig(), "http://localhost:3000", 72);
 
         var cancelled = service.cancel(guest.getId());
         var expired = service.expireOverdueGuests();
@@ -1118,7 +1119,7 @@ class EnterpriseArchitectureTests {
 
         var response = service.create(new EmployeeRequest(
                 "Colaborador Admin",
-                "123.456.789-01",
+                "529.982.247-25",
                 "Colaborador@Empresa.Local",
                 null,
                 null,
@@ -1131,7 +1132,7 @@ class EnterpriseArchitectureTests {
                 null
         ));
 
-        assertThat(response.cpf()).isEqualTo("12345678901");
+        assertThat(response.cpf()).isEqualTo("52998224725");
         assertThat(response.email()).isEqualTo("colaborador@empresa.local");
         assertThat(response.role()).isEqualTo(UserRole.HR);
         assertThat(response.cardNo()).isEqualTo("445566");
@@ -1461,7 +1462,7 @@ class EnterpriseArchitectureTests {
     private GuestDtos.GuestRequest guestRequest() {
         return new GuestDtos.GuestRequest(
                 "Visitante",
-                "123",
+                "52998224725",
                 "visitante@empresa.local",
                 "81999990000",
                 "Empresa",
@@ -1478,6 +1479,10 @@ class EnterpriseArchitectureTests {
                 "Host", Instant.now().minusSeconds(7200), Instant.now().minusSeconds(3600));
         ReflectionTestUtils.setField(guest, "id", UUID.randomUUID());
         return guest;
+    }
+
+    private static LoungeConfig defaultLoungeConfig() {
+        return new LoungeConfig(List.of("Camarote 1", "Camarote 2", "Camarote 3", "Camarote 4", "Camarote 5"));
     }
 
     private MockMultipartFile png() {

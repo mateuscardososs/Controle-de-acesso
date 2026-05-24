@@ -16,11 +16,6 @@ scrape_configs:
         labels:
           application: access-control-api
 
-  - job_name: node-exporter
-    static_configs:
-      - targets:
-          - node-exporter:9100
-
   - job_name: postgres-exporter
     static_configs:
       - targets:

@@ -6,6 +6,7 @@ import { AlertCircle, CalendarDays, CheckCircle2, Copy, Eye, Loader2, Mail, Plus
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
+import { formatCpfDisplay, formatCpfInput } from "@/lib/cpf";
 import { apiErrorMessage } from "@/lib/errors";
 import { Device, deviceService } from "@/services/deviceService";
 import { guestService, Guest, GuestStatus, SyncStatus } from "@/services/guestService";
@@ -254,6 +255,7 @@ export default function GuestsPage() {
           getRowKey={(guest) => guest.id}
           columns={[
             { key: "name", header: "Visitante", className: "min-w-[180px] font-semibold text-slate-100", render: (guest) => guest.fullName },
+            { key: "cpf", header: "CPF", className: "whitespace-nowrap font-mono text-xs", render: (guest) => formatCpfDisplay(guest.cpf) },
             { key: "company", header: "Empresa", render: (guest) => guest.company ?? "Não informada" },
             { key: "host", header: "Responsável", render: (guest) => guest.hostName },
             { key: "visit", header: "Visita", className: "min-w-[190px]", render: (guest) => <span className="inline-flex items-center gap-2"><CalendarDays className="h-4 w-4 text-slate-400" />{new Date(guest.visitStart).toLocaleString("pt-BR")}</span> },
@@ -288,7 +290,7 @@ export default function GuestsPage() {
         <form onSubmit={submit} className="grid gap-4">
           <Input label="Nome" value={form.fullName} onChange={(event) => setForm({ ...form, fullName: event.target.value })} required />
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="CPF" value={form.cpf} onChange={(event) => setForm({ ...form, cpf: event.target.value })} required />
+            <Input label="CPF" value={form.cpf} onChange={(event) => setForm({ ...form, cpf: formatCpfInput(event.target.value) })} required inputMode="numeric" placeholder="000.000.000-00" />
             <Input label="E-mail" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -371,7 +373,7 @@ export default function GuestsPage() {
             </div>
 
             <div className="grid gap-3 text-sm sm:grid-cols-2">
-              <p><span className="font-semibold text-slate-300">CPF:</span> {selectedDetails.cpf}</p>
+              <p><span className="font-semibold text-slate-300">CPF:</span> {formatCpfDisplay(selectedDetails.cpf)}</p>
               <p><span className="font-semibold text-slate-300">E-mail:</span> {selectedDetails.email ?? "Não informado"}</p>
               <p><span className="font-semibold text-slate-300">Início:</span> {new Date(selectedDetails.visitStart).toLocaleString("pt-BR")}</p>
               <p><span className="font-semibold text-slate-300">Fim:</span> {new Date(selectedDetails.visitEnd).toLocaleString("pt-BR")}</p>
