@@ -101,5 +101,18 @@ export const accessEventService = {
   async createManualRelease(payload: ManualReleasePayload) {
     const { data } = await api.post<AccessEvent>("/api/access-events/manual-release", payload);
     return data;
+  },
+  async exportCsv(filters: AccessEventFilters = {}) {
+    const params = compactParams(filters);
+    const response = await api.get<Blob>("/api/access-events/export.csv", {
+      params,
+      responseType: "blob"
+    });
+    const disposition = response.headers["content-disposition"];
+    const match = typeof disposition === "string" ? disposition.match(/filename="?([^";]+)"?/i) : null;
+    return {
+      blob: response.data,
+      filename: match?.[1] ?? `eventos-acesso-${new Date().toISOString().slice(0, 10)}.csv`
+    };
   }
 };

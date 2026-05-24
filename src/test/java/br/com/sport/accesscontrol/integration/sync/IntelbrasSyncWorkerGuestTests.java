@@ -130,7 +130,7 @@ class IntelbrasSyncWorkerGuestTests {
 
     private Guest completedGuestWithDates(LocalDate invitedDay, Instant visitStart, Instant visitEnd) {
         var guest = new Guest("Visitante Teste", "12345678901", null, "11999999999",
-                null, "Evento", "Host", visitStart, visitEnd, invitedDay, "Camarote 1");
+                null, "Evento", "Host", visitStart, visitEnd, invitedDay, "Front 1");
         guest.completeRegistration(null, null, "/uploads/faces/fake.jpg");
         try {
             var idField = Guest.class.getDeclaredField("id");

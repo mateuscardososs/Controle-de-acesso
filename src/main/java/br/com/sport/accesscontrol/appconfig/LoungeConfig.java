@@ -10,7 +10,7 @@ public class LoungeConfig {
 
     private final List<String> lounges;
 
-    public LoungeConfig(@Value("${app.lounges:Camarote 1,Camarote 2,Camarote 3,Camarote 4,Camarote 5}") List<String> lounges) {
+    public LoungeConfig(@Value("${app.lounges:Front 1,Front 2,Front 3,Institucional 1,Institucional Vereador}") List<String> lounges) {
         this.lounges = lounges.stream().map(String::trim).toList();
     }
 

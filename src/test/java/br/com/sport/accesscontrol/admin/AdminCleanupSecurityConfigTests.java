@@ -16,4 +16,12 @@ class AdminCleanupSecurityConfigTests {
         assertThat(securityConfig)
                 .contains(".requestMatchers(HttpMethod.POST, \"/api/admin/cleanup/**\").hasRole(\"ADMIN\")");
     }
+
+    @Test
+    void accessEventCsvExportUsesAuthenticatedLogViewerPolicy() throws Exception {
+        var securityConfig = Files.readString(Path.of("src/main/java/br/com/sport/accesscontrol/config/SecurityConfig.java"));
+
+        assertThat(securityConfig)
+                .contains(".requestMatchers(HttpMethod.GET, \"/api/access-events/**\").hasAnyRole(\"ADMIN\", \"HR\", \"SECURITY_VIEWER\")");
+    }
 }

@@ -109,7 +109,7 @@ class AccessControlApiApplicationTests {
                         .param("email", "visitante.publico@empresa.local")
                         .param("phone", "81999990000")
                         .param("invitedDay", "2026-06-01")
-                        .param("invitedLounge", "Camarote 1"))
+                        .param("invitedLounge", "Front 1"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.fullName").value("Visitante Publico"))
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
@@ -134,7 +134,7 @@ class AccessControlApiApplicationTests {
                         .param("email", "visitante.upload@empresa.local")
                         .param("phone", "81999990000")
                         .param("invitedDay", "2026-06-01")
-                        .param("invitedLounge", "Camarote 1"))
+                        .param("invitedLounge", "Front 1"))
                 .andExpect(status().isBadRequest());
     }
 

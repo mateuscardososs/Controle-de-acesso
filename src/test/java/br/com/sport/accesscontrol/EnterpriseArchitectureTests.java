@@ -740,7 +740,7 @@ class EnterpriseArchitectureTests {
         var invitedDay = java.time.LocalDate.of(2026, 6, 24);
         var guest = new Guest("Visitante Real", "05731650411", "visitante@empresa.local", "81999990000",
                 "Empresa", "Reuniao", "Host", Instant.now().minusSeconds(3600),
-                Instant.now().plusSeconds(3600), invitedDay, "Camarote 3");
+                Instant.now().plusSeconds(3600), invitedDay, "Front 3");
         ReflectionTestUtils.setField(guest, "id", UUID.randomUUID());
         when(deviceService.getById(device.getId())).thenReturn(device);
         when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
@@ -785,9 +785,9 @@ class EnterpriseArchitectureTests {
         assertThat(response.get().personEmail()).isEqualTo("visitante@empresa.local");
         assertThat(response.get().personPhone()).isEqualTo("81999990000");
         assertThat(response.get().invitedDay()).isEqualTo(invitedDay);
-        assertThat(response.get().invitedLounge()).isEqualTo("Camarote 3");
+        assertThat(response.get().invitedLounge()).isEqualTo("Front 3");
         verify(realtimePublisher).publishAccessEvent(argThat(event ->
-                invitedDay.equals(event.getInvitedDay()) && "Camarote 3".equals(event.getInvitedLounge())));
+                invitedDay.equals(event.getInvitedDay()) && "Front 3".equals(event.getInvitedLounge())));
     }
 
     @Test
@@ -938,7 +938,7 @@ class EnterpriseArchitectureTests {
                 null,
                 null,
                 LocalDate.of(2026, 6, 10),
-                "Camarote 1",
+                "Front 1",
                 null,
                 null,
                 png()
@@ -1482,7 +1482,7 @@ class EnterpriseArchitectureTests {
     }
 
     private static LoungeConfig defaultLoungeConfig() {
-        return new LoungeConfig(List.of("Camarote 1", "Camarote 2", "Camarote 3", "Camarote 4", "Camarote 5"));
+        return new LoungeConfig(List.of("Front 1", "Front 2", "Front 3", "Institucional 1", "Institucional Vereador"));
     }
 
     private MockMultipartFile png() {

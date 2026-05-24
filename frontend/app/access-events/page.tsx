@@ -2,7 +2,7 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ChevronLeft, ChevronRight, Eraser, FileClock, Plus, RefreshCcw, Search, ShieldCheck, Trash2 } from "lucide-react";
+import { Activity, ChevronLeft, ChevronRight, Eraser, FileClock, FileDown, Plus, RefreshCcw, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
@@ -106,6 +106,19 @@ export default function AccessEventsPage() {
     },
     onError: (error) => setCleanupMessage(apiErrorMessage(error, "Não foi possível limpar os eventos."))
   });
+  const exportEvents = useMutation({
+    mutationFn: () => accessEventService.exportCsv(toExportFilters(appliedFilters)),
+    onSuccess: ({ blob, filename }) => {
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    }
+  });
 
   const deviceById = useMemo(() => new Map((devices.data ?? []).map((device) => [device.id, device])), [devices.data]);
   const areaById = useMemo(() => new Map((areas.data ?? []).map((area) => [area.id, area])), [areas.data]);
@@ -148,9 +161,12 @@ export default function AccessEventsPage() {
             ) : null}
             {canCleanup ? (
               <Button variant="danger" icon={Trash2} onClick={() => { setCleanupOpen(true); setCleanupMessage(""); }}>
-                Limpar eventos de teste
+                Limpar lista
               </Button>
             ) : null}
+            <Button variant="secondary" icon={FileDown} loading={exportEvents.isPending} onClick={() => exportEvents.mutate()}>
+              Exportar eventos
+            </Button>
             <Button variant="secondary" icon={RefreshCcw} loading={eventQuery.isFetching} onClick={() => eventQuery.refetch()}>
               Atualizar
             </Button>
@@ -220,6 +236,7 @@ export default function AccessEventsPage() {
 
       {eventQuery.isLoading ? <LoadingState label="Carregando logs de eventos..." /> : null}
       {cleanupMessage ? <div className="mb-4 rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm font-medium text-slate-200">{cleanupMessage}</div> : null}
+      {exportEvents.isError ? <ErrorState label={apiErrorMessage(exportEvents.error, "Não foi possível exportar os eventos.")} /> : null}
       {eventQuery.isError ? <ErrorState label="Não foi possível carregar os logs de eventos. Verifique sua sessão e tente novamente." /> : null}
       {!eventQuery.isLoading && !eventQuery.isError && rows.length === 0 ? (
         <EmptyState label="Nenhum evento encontrado." description="Ajuste os filtros ou aguarde novos eventos das catracas." />
@@ -367,6 +384,14 @@ function toApiFilters(filters: FilterForm, page: number): AccessEventFilters {
     ...filters,
     page,
     size: pageSize,
+    startDate: toIso(filters.startDate),
+    endDate: toIso(filters.endDate)
+  };
+}
+
+function toExportFilters(filters: FilterForm): AccessEventFilters {
+  return {
+    ...filters,
     startDate: toIso(filters.startDate),
     endDate: toIso(filters.endDate)
   };

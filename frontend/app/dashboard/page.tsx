@@ -5,6 +5,8 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/StatCard";
 import { Card, CardContent, CardHeader } from "@/src/components/ui/Card";
+import { Button } from "@/src/components/ui/Button";
+import { Input } from "@/src/components/ui/Input";
 import { Badge } from "@/src/components/ui/Badge";
 import { Modal } from "@/src/components/ui/Modal";
 import { DataTable } from "@/src/components/shared/DataTable";
@@ -12,13 +14,16 @@ import { StatusBadge } from "@/src/components/shared/StatusBadge";
 import { AccessEvent } from "@/services/accessEventService";
 import { deviceService } from "@/services/deviceService";
 import { dashboardService } from "@/services/dashboardService";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, CalendarClock, IdCard, MonitorCog, RadioTower, ShieldAlert } from "lucide-react";
+import { adminCleanupService } from "@/services/adminCleanupService";
+import { authService } from "@/services/authService";
+import { apiErrorMessage } from "@/lib/errors";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Activity, CalendarClock, IdCard, MonitorCog, RadioTower, ShieldAlert, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useRealtime } from "@/src/hooks/useRealtime";
 import { RealtimeIndicator } from "@/src/components/shared/RealtimeIndicator";
 import { RealtimeFeed } from "@/src/components/shared/RealtimeFeed";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 function metricTrend(value: number) {
   const safeValue = Math.max(value, 1);
@@ -58,6 +63,10 @@ export default function DashboardPage() {
   const realtime = useRealtime();
   const [peaksOpen, setPeaksOpen] = useState(false);
   const [peaksDate, setPeaksDate] = useState(() => localDate());
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [cleanupConfirmation, setCleanupConfirmation] = useState("");
+  const [cleanupMessage, setCleanupMessage] = useState("");
+  const user = useQuery({ queryKey: ["me"], queryFn: authService.me, retry: false });
   const summary = useQuery({ queryKey: ["dashboard-summary"], queryFn: dashboardService.summary });
   const trafficPeaks = useQuery({
     queryKey: ["traffic-peaks", peaksDate],
@@ -72,6 +81,20 @@ export default function DashboardPage() {
   const devices = useQuery({ queryKey: ["devices"], queryFn: deviceService.list });
   const recentEvents = (events.data ?? []).slice(0, 6);
   const offlineDevices = (devices.data ?? []).filter((device) => device.status !== "ONLINE");
+  const canCleanup = user.data?.role === "ADMIN";
+  const cleanupAccessEvents = useMutation({
+    mutationFn: () => adminCleanupService.accessEvents(cleanupConfirmation),
+    onSuccess: (response) => {
+      setCleanupOpen(false);
+      setCleanupConfirmation("");
+      setCleanupMessage(response.message);
+      queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-recent-events"] });
+      queryClient.invalidateQueries({ queryKey: ["access-events"] });
+      queryClient.invalidateQueries({ queryKey: ["traffic-peaks"] });
+    },
+    onError: (error) => setCleanupMessage(apiErrorMessage(error, "Não foi possível limpar os eventos."))
+  });
 
   useEffect(() => {
     if (realtime.accessEvents.length === 0) return;
@@ -98,10 +121,20 @@ export default function DashboardPage() {
         eyebrow="Operacao"
         title="Dashboard"
         description="Indicadores, eventos recentes e saude dos dispositivos conectados aos endpoints reais da plataforma."
-        actions={<RealtimeIndicator status={realtime.status} message={realtime.statusMessage} />}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {canCleanup ? (
+              <Button variant="danger" icon={Trash2} onClick={() => { setCleanupOpen(true); setCleanupMessage(""); }}>
+                Limpar lista
+              </Button>
+            ) : null}
+            <RealtimeIndicator status={realtime.status} message={realtime.statusMessage} />
+          </div>
+        }
       />
       {summary.isLoading ? <LoadingState label="Carregando indicadores..." /> : null}
       {summary.isError ? <ErrorState label="Não foi possível carregar o dashboard." /> : null}
+      {cleanupMessage ? <div className="mb-4 rounded-xl border border-white/10 bg-white/[0.055] px-4 py-3 text-sm font-medium text-slate-200">{cleanupMessage}</div> : null}
       {!summary.isLoading && !summary.isError ? (
         <div className="space-y-6">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -248,43 +281,63 @@ export default function DashboardPage() {
 
             <div className="h-[300px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 0, right: 0, left: -10, bottom: 0 }} barCategoryGap="18%">
+                <LineChart data={chartData} margin={{ top: 8, right: 18, left: -6, bottom: 0 }}>
                   <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} strokeDasharray="3 3" />
                   <XAxis dataKey="label" stroke="#64748b" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
                   <YAxis stroke="#64748b" tickLine={false} axisLine={false} allowDecimals={false} tick={{ fontSize: 11 }} />
                   <Tooltip
-                    cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                    cursor={{ stroke: "rgba(148,163,184,0.35)", strokeWidth: 1 }}
                     contentStyle={{ background: "#0f172a", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, color: "#e2e8f0", fontSize: 12 }}
                     labelStyle={{ color: "#94a3b8", marginBottom: 6, fontWeight: 600 }}
                   />
                   <Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} />
-                  <Bar dataKey="entries" name="Entradas" stackId="stack">
-                    {chartData.map((entry) => (
-                      <Cell key={entry.label} fill={hourColor(entry.hour)} />
-                    ))}
-                  </Bar>
-                  <Bar dataKey="passages" name="Passagens" stackId="stack" fill="#22c55e" opacity={0.82} />
-                  <Bar dataKey="allowed" name="Liberados" stackId="stack" fill="#f59e0b" opacity={0.82} />
-                  <Bar dataKey="denied" name="Negados" stackId="stack" fill="#ef4444" opacity={0.9} radius={[3, 3, 0, 0]} />
-                </BarChart>
+                  {busyHourItem ? (
+                    <ReferenceLine x={`${String(busyHourItem.hour).padStart(2, "0")}h`} stroke="rgba(245,158,11,0.75)" strokeDasharray="4 4" label={{ value: "pico", fill: "#fbbf24", fontSize: 11, position: "insideTopRight" }} />
+                  ) : null}
+                  <Line type="monotone" dataKey="entries" name="Entradas" stroke="#38bdf8" strokeWidth={3} dot={false} activeDot={{ r: 5, strokeWidth: 2 }} />
+                  <Line type="monotone" dataKey="allowed" name="Liberados" stroke="#22c55e" strokeWidth={3} dot={false} activeDot={{ r: 5, strokeWidth: 2 }} />
+                  <Line type="monotone" dataKey="denied" name="Negados" stroke="#ef4444" strokeWidth={3} dot={false} activeDot={{ r: 5, strokeWidth: 2 }} />
+                  <Line type="monotone" dataKey="passages" name="Passagens/saídas" stroke="#f59e0b" strokeWidth={3} dot={false} activeDot={{ r: 5, strokeWidth: 2 }} />
+                </LineChart>
               </ResponsiveContainer>
             </div>
           </>
         ) : null}
       </Modal>
+
+      <Modal
+        open={cleanupOpen}
+        title="Limpar eventos do dashboard"
+        description="Esta ação limpa eventos/logs operacionais de acesso. Visitantes, colaboradores, dispositivos, áreas, configurações e backups não serão apagados."
+        onClose={() => {
+          if (!cleanupAccessEvents.isPending) {
+            setCleanupOpen(false);
+            setCleanupConfirmation("");
+          }
+        }}
+      >
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            cleanupAccessEvents.mutate();
+          }}
+          className="space-y-4"
+        >
+          <div className="rounded-xl border border-amber-300/20 bg-amber-400/12 p-3 text-sm text-amber-100">
+            Digite <span className="font-semibold">LIMPAR_EVENTOS</span> para confirmar a limpeza dos eventos exibidos no dashboard.
+          </div>
+          <Input label="Confirmação" value={cleanupConfirmation} onChange={(event) => setCleanupConfirmation(event.target.value)} />
+          {cleanupAccessEvents.isError ? <ErrorState label={cleanupMessage || "Não foi possível limpar os eventos."} /> : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="secondary" disabled={cleanupAccessEvents.isPending} onClick={() => setCleanupOpen(false)}>Cancelar</Button>
+            <Button type="submit" variant="danger" icon={Trash2} loading={cleanupAccessEvents.isPending} disabled={cleanupConfirmation !== "LIMPAR_EVENTOS"}>
+              Limpar eventos
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </AdminShell>
   );
-}
-
-function hourColor(hour: number): string {
-  if (hour <= 4) return "#5b21b6";
-  if (hour <= 7) return "#1d4ed8";
-  if (hour <= 10) return "#0284c7";
-  if (hour <= 13) return "#0d9488";
-  if (hour <= 16) return "#15803d";
-  if (hour <= 19) return "#d97706";
-  if (hour <= 21) return "#9333ea";
-  return "#6d28d9";
 }
 
 function originLabel(origin?: string) {

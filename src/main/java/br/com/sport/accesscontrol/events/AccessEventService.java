@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -29,6 +30,9 @@ import java.util.Optional;
 
 @Service
 public class AccessEventService {
+
+    private static final int EXPORT_MAX_ROWS = 10_000;
+    private static final DateTimeFormatter CSV_INSTANT_FORMATTER = DateTimeFormatter.ISO_INSTANT;
 
     private final AccessEventRepository accessEventRepository;
     private final DeviceService deviceService;
@@ -186,6 +190,50 @@ public class AccessEventService {
         var pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "eventTime"));
         return AccessEventPageResponse.from(accessEventRepository.findAll(specification(request), pageable)
                 .map(AccessEventResponse::from));
+    }
+
+    @Transactional(readOnly = true)
+    public String exportCsv(AccessEventSearchRequest request) {
+        var size = Math.min(Math.max(request.size(), 1), EXPORT_MAX_ROWS);
+        var pageable = PageRequest.of(0, size, Sort.by(Sort.Direction.DESC, "eventTime"));
+        var events = accessEventRepository.findAll(specification(request), pageable).getContent();
+        var csv = new StringBuilder();
+        appendRow(csv, List.of(
+                "horário",
+                "pessoa",
+                "CPF",
+                "telefone",
+                "e-mail",
+                "dia convidado",
+                "camarote",
+                "catraca/controladora",
+                "entrada/local",
+                "resultado",
+                "reconhecimento",
+                "passagem",
+                "método/liberação",
+                "operador",
+                "motivo manual"
+        ));
+        events.forEach(event -> appendRow(csv, java.util.Arrays.asList(
+                formatInstant(event.getOccurredAt() == null ? event.getEventTime() : event.getOccurredAt()),
+                firstNonBlank(event.getPersonName(), event.getRawCardName(), event.getExternalUserId(), "Usuário não identificado"),
+                event.getPersonCpf(),
+                event.getPersonPhone(),
+                event.getPersonEmail(),
+                event.getInvitedDay() == null ? null : event.getInvitedDay().toString(),
+                event.getInvitedLounge(),
+                event.getDevice() == null ? null : event.getDevice().getName(),
+                event.getArea() == null ? null : event.getArea().getName(),
+                enumName(event.getAccessResult()),
+                enumName(event.getRecognitionStatus()),
+                enumName(event.getPassageStatus()),
+                firstNonBlank(enumName(event.getReleaseMethod()), event.getControllerMethod()),
+                firstNonBlank(rawText(event.getRawPayload(), "operatorName"),
+                        event.getOperatorUserId() == null ? null : event.getOperatorUserId().toString()),
+                firstNonBlank(event.getManualReason(), event.getDecisionReason(), rawText(event.getRawPayload(), "reason"))
+        )));
+        return csv.toString();
     }
 
     @Transactional
@@ -459,6 +507,47 @@ public class AccessEventService {
             return null;
         }
         return value.toString();
+    }
+
+    private void appendRow(StringBuilder csv, List<String> values) {
+        for (int index = 0; index < values.size(); index++) {
+            if (index > 0) {
+                csv.append(',');
+            }
+            csv.append(csvValue(values.get(index)));
+        }
+        csv.append("\r\n");
+    }
+
+    private String csvValue(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        var trimmed = value.trim();
+        if (trimmed.startsWith("=") || trimmed.startsWith("+") || trimmed.startsWith("-") || trimmed.startsWith("@")) {
+            trimmed = "'" + trimmed;
+        }
+        return "\"" + trimmed.replace("\"", "\"\"") + "\"";
+    }
+
+    private String formatInstant(Instant instant) {
+        return instant == null ? null : CSV_INSTANT_FORMATTER.format(instant);
+    }
+
+    private String enumName(Enum<?> value) {
+        return value == null ? null : value.name();
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
     }
 
     private boolean hasText(String value) {

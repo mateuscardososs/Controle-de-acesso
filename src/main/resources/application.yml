@@ -78,7 +78,7 @@ app:
     from: ${APP_MAIL_FROM:no-reply@empresa.local}
   uploads:
     faces-dir: ${FACE_UPLOAD_DIR:uploads/faces}
-  lounges: ${APP_LOUNGES:Camarote 1,Camarote 2,Camarote 3,Camarote 4,Camarote 5}
+  lounges: ${APP_LOUNGES:Front 1,Front 2,Front 3,Institucional 1,Institucional Vereador}
   guests:
     invite-expiration-hours: ${GUEST_INVITE_EXPIRATION_HOURS:72}
     expiration-scan-delay-ms: ${GUEST_EXPIRATION_SCAN_DELAY_MS:300000}

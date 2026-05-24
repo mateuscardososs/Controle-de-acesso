@@ -6,7 +6,6 @@ contactPoints:
     receivers:
       - uid: operacao-email
         type: email
-        disableResolveMessage: false
         settings:
-          addresses: ${GRAFANA_ALERT_EMAIL_TO:-operacao-alertas@example.invalid}
+          addresses: "mateusdasilvacardoso091@gmail.com"
           singleEmail: true

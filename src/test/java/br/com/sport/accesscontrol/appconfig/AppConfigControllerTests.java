@@ -10,15 +10,15 @@ class AppConfigControllerTests {
 
     @Test
     void loungesEndpointReturnsCentralizedList() {
-        var config = new LoungeConfig(List.of("Camarote 1", "Camarote 2", "Camarote 3", "Camarote 4", "Camarote 5"));
+        var config = new LoungeConfig(List.of("Front 1", "Front 2", "Front 3", "Institucional 1", "Institucional Vereador"));
         var response = new AppConfigController(config).lounges();
 
         assertThat(response.get("lounges")).containsExactly(
-                "Camarote 1",
-                "Camarote 2",
-                "Camarote 3",
-                "Camarote 4",
-                "Camarote 5"
+                "Front 1",
+                "Front 2",
+                "Front 3",
+                "Institucional 1",
+                "Institucional Vereador"
         );
     }
 }
