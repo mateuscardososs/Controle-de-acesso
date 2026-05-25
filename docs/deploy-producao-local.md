@@ -60,10 +60,14 @@ Parar removendo volumes persistentes, apenas quando quiser apagar dados:
 
 ## Rotas expostas pelo Nginx
 
-- `/` encaminha para o frontend Next.js.
-- `/api` encaminha para o backend Spring Boot.
-- `/ws` encaminha WebSocket/STOMP para o backend.
-- `/nginx-health` retorna healthcheck simples do proxy.
+O Nginx separa o hostname publico do hostname interno/admin. Para o cenario com dominio publico apontando para o servidor local, siga o guia completo em `docs/deploy-rede-local-publica.md`.
+
+Resumo:
+
+- `cadastro.seudominio.com.br` libera apenas cadastro publico e endpoints publicos minimos.
+- `admin.local`, `localhost` e IPs privados acessam o painel/admin pela LAN.
+- `/ws`, `/actuator`, Grafana, Prometheus e APIs administrativas nao ficam publicos.
+- `/nginx-health` retorna healthcheck simples do proxy apenas no bloco interno/admin.
 
 O frontend de producao e buildado para usar o mesmo host do Nginx:
 

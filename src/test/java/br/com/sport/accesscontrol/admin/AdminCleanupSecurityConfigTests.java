@@ -24,4 +24,13 @@ class AdminCleanupSecurityConfigTests {
         assertThat(securityConfig)
                 .contains(".requestMatchers(HttpMethod.GET, \"/api/access-events/**\").hasAnyRole(\"ADMIN\", \"HR\", \"SECURITY_VIEWER\")");
     }
+
+    @Test
+    void employeeCleanupPageRefreshesTableAfterSuccessfulCleanup() throws Exception {
+        var page = Files.readString(Path.of("frontend/app/employees/page.tsx"));
+
+        assertThat(page).contains("queryClient.setQueryData<Employee[]>([\"employees\"], [])");
+        assertThat(page).contains("await queryClient.invalidateQueries({ queryKey: [\"employees\"] })");
+        assertThat(page).contains("cleanupEmployees.isPending");
+    }
 }

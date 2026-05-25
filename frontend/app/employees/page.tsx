@@ -42,6 +42,7 @@ export default function EmployeesPage() {
   const [deleteError, setDeleteError] = useState("");
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [cleanupConfirmation, setCleanupConfirmation] = useState("");
+  const [cleanupError, setCleanupError] = useState("");
 
   const create = useMutation({
     mutationFn: () => employeeService.create({ fullName, cpf, email, password, role, cardNo, facePhoto, status: "ACTIVE" }),
@@ -83,18 +84,36 @@ export default function EmployeesPage() {
 
   const cleanupEmployees = useMutation({
     mutationFn: () => adminCleanupService.employees(cleanupConfirmation),
-    onSuccess: (response) => {
-      setCleanupOpen(false);
+    onSuccess: async (response) => {
       setCleanupConfirmation("");
+      setCleanupError("");
+      setCleanupOpen(false);
       setMessage(response.message);
-      queryClient.invalidateQueries({ queryKey: ["employees"] });
+      queryClient.setQueryData<Employee[]>(["employees"], []);
+      await queryClient.invalidateQueries({ queryKey: ["employees"] });
     },
-    onError: (error) => setMessage(apiErrorMessage(error, "Não foi possível limpar colaboradores."))
+    onError: (error) => setCleanupError(apiErrorMessage(error, "Não foi possível limpar colaboradores."))
   });
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     create.mutate();
+  }
+
+  function openCleanupModal() {
+    setCleanupOpen(true);
+    setCleanupConfirmation("");
+    setCleanupError("");
+    setMessage("");
+    cleanupEmployees.reset();
+  }
+
+  function closeCleanupModal() {
+    if (cleanupEmployees.isPending) return;
+    setCleanupOpen(false);
+    setCleanupConfirmation("");
+    setCleanupError("");
+    cleanupEmployees.reset();
   }
 
   const filteredEmployees = (employees.data ?? []).filter((employee) => {
@@ -112,7 +131,13 @@ export default function EmployeesPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             {canCleanup ? (
-              <Button variant="danger" icon={Trash2} className="h-12 px-5 text-base" onClick={() => { setCleanupOpen(true); setMessage(""); }}>
+              <Button
+                variant="danger"
+                icon={Trash2}
+                className="h-12 px-5 text-base"
+                disabled={cleanupEmployees.isPending}
+                onClick={openCleanupModal}
+              >
                 Limpar lista
               </Button>
             ) : null}
@@ -261,32 +286,40 @@ export default function EmployeesPage() {
 
       <Modal
         title="Limpar lista de colaboradores"
-        description="Remove colaboradores não administrativos e usuários vinculados que não sejam ADMIN. O admin logado e usuários ADMIN essenciais são preservados."
+        description="Remove todos os colaboradores e usuários vinculados que não sejam ADMIN. O admin logado e usuários ADMIN essenciais são preservados."
         open={cleanupOpen}
-        onClose={() => {
-          if (!cleanupEmployees.isPending) {
-            setCleanupOpen(false);
-            setCleanupConfirmation("");
-          }
-        }}
+        onClose={closeCleanupModal}
       >
         <form
           onSubmit={(event) => {
             event.preventDefault();
+            if (cleanupConfirmation !== "LIMPAR_COLABORADORES" || cleanupEmployees.isPending) return;
+            setCleanupError("");
             cleanupEmployees.mutate();
           }}
           className="space-y-4"
         >
           <div className="rounded-xl border border-amber-300/20 bg-amber-400/12 p-3 text-sm text-amber-100">
-            Digite <span className="font-semibold">LIMPAR_COLABORADORES</span> para confirmar. Visitantes, dispositivos e áreas não serão apagados.
+            Digite <span className="font-semibold">LIMPAR_COLABORADORES</span> para confirmar. Eventos, visitantes, dispositivos e áreas não serão apagados.
           </div>
-          <Input label="Confirmação" value={cleanupConfirmation} onChange={(event) => setCleanupConfirmation(event.target.value)} />
-          {cleanupEmployees.isError ? <ErrorState label={message || "Não foi possível limpar colaboradores."} /> : null}
+          <Input
+            label="Confirmação"
+            value={cleanupConfirmation}
+            disabled={cleanupEmployees.isPending}
+            onChange={(event) => setCleanupConfirmation(event.target.value)}
+          />
+          {cleanupEmployees.isError ? <ErrorState label={cleanupError || "Não foi possível limpar colaboradores."} /> : null}
           <div className="flex flex-wrap justify-end gap-2">
-            <Button variant="secondary" disabled={cleanupEmployees.isPending} onClick={() => setCleanupOpen(false)}>
+            <Button variant="secondary" disabled={cleanupEmployees.isPending} onClick={closeCleanupModal}>
               Cancelar
             </Button>
-            <Button type="submit" variant="danger" icon={Trash2} loading={cleanupEmployees.isPending} disabled={cleanupConfirmation !== "LIMPAR_COLABORADORES"}>
+            <Button
+              type="submit"
+              variant="danger"
+              icon={Trash2}
+              loading={cleanupEmployees.isPending}
+              disabled={cleanupConfirmation !== "LIMPAR_COLABORADORES"}
+            >
               Limpar colaboradores
             </Button>
           </div>

@@ -3,13 +3,21 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, ShieldCheck } from "lucide-react";
+import type { AxiosError } from "axios";
 import { apiErrorMessage } from "@/lib/errors";
-import { formatCpfInput } from "@/lib/cpf";
+import { formatCpfInput, isValidCpf } from "@/lib/cpf";
 import { configService } from "@/services/configService";
 import { guestService } from "@/services/guestService";
 import { CameraCapture } from "@/src/components/shared/CameraCapture";
 import { Input, Select } from "@/src/components/ui/Input";
 import { ErrorState } from "@/src/components/shared/AsyncState";
+
+type ApiError = {
+  error?: string;
+  details?: string[];
+};
+
+const SUCCESS_MESSAGE = "Cadastro recebido com sucesso. Aguarde validação da organização.";
 
 function localDate() {
   const date = new Date();
@@ -29,6 +37,7 @@ export default function PublicVisitorRegistrationPage() {
   });
   const [facePhoto, setFacePhoto] = useState<File | null>(null);
   const [message, setMessage] = useState("");
+  const [cpfError, setCpfError] = useState("");
 
   const register = useMutation({
     mutationFn: () => {
@@ -40,16 +49,22 @@ export default function PublicVisitorRegistrationPage() {
       })
       );
     },
-    onSuccess: (response) => setMessage(response.message),
-    onError: (error) => setMessage(apiErrorMessage(error, "Não foi possível enviar o cadastro. Revise os dados e tente novamente."))
+    onSuccess: () => setMessage(SUCCESS_MESSAGE),
+    onError: (error) => setMessage(publicRegistrationErrorMessage(error))
   });
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!isValidCpf(form.cpf)) {
+      setCpfError("CPF inválido. Verifique os números informados.");
+      setMessage("CPF inválido. Verifique os números informados.");
+      return;
+    }
     if (!facePhoto) {
       setMessage("Tire a foto pela câmera para continuar.");
       return;
     }
+    setCpfError("");
     register.mutate();
   }
 
@@ -88,11 +103,22 @@ export default function PublicVisitorRegistrationPage() {
             <form onSubmit={submit} className="grid gap-4">
               <Input label="Nome completo" value={form.fullName} onChange={(event) => setForm({ ...form, fullName: event.target.value })} required />
               <div className="grid gap-4 md:grid-cols-2">
-                <Input label="CPF" value={form.cpf} onChange={(event) => setForm({ ...form, cpf: formatCpfInput(event.target.value) })} required placeholder="000.000.000-00" inputMode="numeric" />
+                <Input
+                  label="CPF"
+                  value={form.cpf}
+                  onChange={(event) => {
+                    setForm({ ...form, cpf: formatCpfInput(event.target.value) });
+                    setCpfError("");
+                  }}
+                  error={cpfError}
+                  required
+                  placeholder="000.000.000-00"
+                  inputMode="numeric"
+                />
                 <Input label="Telefone" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} required placeholder="(81) 99999-0000" />
               </div>
               <div className="grid gap-4 md:grid-cols-2">
-                <Input label="E-mail" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+                <Input label="E-mail (opcional)" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
                 <Input label="Dia convidado" type="date" value={form.invitedDay} onChange={(event) => setForm({ ...form, invitedDay: event.target.value })} required />
               </div>
               <Select label="Camarote convidado" value={form.invitedLounge} onChange={(event) => setForm({ ...form, invitedLounge: event.target.value })} required>
@@ -109,7 +135,7 @@ export default function PublicVisitorRegistrationPage() {
                 disabled={register.isPending}
                 className="mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-full bg-white px-5 text-sm font-semibold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {register.isPending ? "Enviando..." : "Enviar cadastro"}
+                {register.isPending ? "Finalizando..." : "Finalizar cadastro"}
                 {!register.isPending ? <ArrowRight className="h-4 w-4" /> : null}
               </button>
             </form>
@@ -120,4 +146,29 @@ export default function PublicVisitorRegistrationPage() {
       <footer className="pb-2 text-center text-xs text-slate-700">Cadastro seguro</footer>
     </main>
   );
+}
+
+function publicRegistrationErrorMessage(error: unknown) {
+  const axiosError = error as AxiosError<ApiError>;
+
+  if (!axiosError.isAxiosError && error instanceof Error) {
+    return error.message;
+  }
+  if (axiosError.code === "ERR_NETWORK" || !axiosError.response) {
+    return "Conexão indisponível. Verifique sua internet e tente novamente.";
+  }
+
+  const details = axiosError.response.data?.details?.join(" ") ?? "";
+  const rawMessage = `${axiosError.response.data?.error ?? ""} ${details}`.toLowerCase();
+
+  if (axiosError.response.status === 409 || rawMessage.includes("conflict") || rawMessage.includes("duplicate")) {
+    return "Cadastro duplicado. Já existe um cadastro com esses dados. Aguarde validação da organização.";
+  }
+  if (rawMessage.includes("cpf")) {
+    return "CPF inválido. Verifique os números informados.";
+  }
+  if (axiosError.response.status === 429) {
+    return "Muitas tentativas de cadastro. Aguarde um minuto e tente novamente.";
+  }
+  return apiErrorMessage(error, "Não foi possível enviar o cadastro. Revise os dados e tente novamente.");
 }

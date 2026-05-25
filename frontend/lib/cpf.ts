@@ -16,3 +16,20 @@ export function formatCpfDisplay(value?: string | null) {
   if (digits.length !== 11) return value;
   return formatCpfInput(digits);
 }
+
+export function isValidCpf(value?: string | null) {
+  const digits = onlyCpfDigits(value);
+  if (digits.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(digits)) return false;
+
+  const numbers = digits.split("").map(Number);
+  const firstDigit = cpfCheckDigit(numbers.slice(0, 9));
+  const secondDigit = cpfCheckDigit(numbers.slice(0, 10));
+  return firstDigit === numbers[9] && secondDigit === numbers[10];
+}
+
+function cpfCheckDigit(numbers: number[]) {
+  const sum = numbers.reduce((total, number, index) => total + number * (numbers.length + 1 - index), 0);
+  const remainder = (sum * 10) % 11;
+  return remainder === 10 ? 0 : remainder;
+}

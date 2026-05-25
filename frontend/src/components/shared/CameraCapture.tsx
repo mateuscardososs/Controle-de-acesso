@@ -44,7 +44,7 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
       }
       setActive(true);
     } catch (cameraError) {
-      setError(cameraError instanceof Error ? cameraError.message : "Não foi possível acessar a câmera.");
+      setError(cameraAccessErrorMessage(cameraError));
       setActive(false);
     }
   }
@@ -120,4 +120,22 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
       </div>
     </div>
   );
+}
+
+function cameraAccessErrorMessage(error: unknown) {
+  if (error instanceof DOMException) {
+    if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+      return "Câmera não autorizada. Permita o acesso à câmera no navegador e tente novamente.";
+    }
+    if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
+      return "Câmera indisponível neste dispositivo.";
+    }
+    if (error.name === "NotReadableError" || error.name === "TrackStartError") {
+      return "Não foi possível iniciar a câmera. Feche outros aplicativos que possam estar usando a câmera.";
+    }
+    if (error.name === "SecurityError") {
+      return "Câmera bloqueada. Use HTTPS ou localhost e autorize o navegador.";
+    }
+  }
+  return error instanceof Error ? error.message : "Não foi possível acessar a câmera.";
 }
