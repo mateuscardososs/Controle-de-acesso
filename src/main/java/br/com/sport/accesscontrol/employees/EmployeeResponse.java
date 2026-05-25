@@ -1,6 +1,7 @@
 package br.com.sport.accesscontrol.employees;
 
 import br.com.sport.accesscontrol.integration.sync.SyncStatus;
+import br.com.sport.accesscontrol.users.UserRole;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -12,7 +13,10 @@ public record EmployeeResponse(
         String email,
         String phone,
         String registrationNumber,
+        String cardNo,
         String facePhotoUrl,
+        UUID userId,
+        UserRole role,
         EmployeeStatus status,
         Instant accessValidFrom,
         Instant accessValidUntil,
@@ -28,10 +32,13 @@ public record EmployeeResponse(
                 employee.getId(),
                 employee.getFullName(),
                 employee.getCpf(),
-                employee.getEmail(),
-                employee.getPhone(),
-                employee.getRegistrationNumber(),
-                employee.getFacePhotoUrl(),
+                    employee.getEmail(),
+                    employee.getPhone(),
+                    employee.getRegistrationNumber(),
+                    employee.getCardNo(),
+                    employee.getFacePhotoUrl(),
+                employee.getUserId(),
+                employee.getRole(),
                 employee.getStatus(),
                 employee.getAccessValidFrom(),
                 employee.getAccessValidUntil(),

@@ -2,6 +2,7 @@ package br.com.sport.accesscontrol.employees;
 
 import br.com.sport.accesscontrol.common.TimestampedEntity;
 import br.com.sport.accesscontrol.integration.sync.SyncStatus;
+import br.com.sport.accesscontrol.users.UserRole;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -34,8 +35,18 @@ public class Employee extends TimestampedEntity {
     @Column(name = "registration_number")
     private String registrationNumber;
 
+    @Column(name = "card_no")
+    private String cardNo;
+
     @Column(name = "face_photo_url")
     private String facePhotoUrl;
+
+    @Column(name = "user_id")
+    private UUID userId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "role")
+    private UserRole role;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -65,12 +76,27 @@ public class Employee extends TimestampedEntity {
 
     public Employee(String fullName, String cpf, String email, String phone, String registrationNumber,
                     String facePhotoUrl, EmployeeStatus status, Instant accessValidFrom, Instant accessValidUntil) {
+        this(fullName, cpf, email, phone, registrationNumber, null, facePhotoUrl, null, status, accessValidFrom, accessValidUntil);
+    }
+
+    public Employee(String fullName, String cpf, String email, String phone, String registrationNumber,
+                    String facePhotoUrl, UserRole role, EmployeeStatus status, Instant accessValidFrom,
+                    Instant accessValidUntil) {
+        this(fullName, cpf, email, phone, registrationNumber, null, facePhotoUrl, role, status, accessValidFrom,
+                accessValidUntil);
+    }
+
+    public Employee(String fullName, String cpf, String email, String phone, String registrationNumber,
+                    String cardNo, String facePhotoUrl, UserRole role, EmployeeStatus status, Instant accessValidFrom,
+                    Instant accessValidUntil) {
         this.fullName = fullName;
         this.cpf = cpf;
         this.email = email;
         this.phone = phone;
         this.registrationNumber = registrationNumber;
+        this.cardNo = cardNo;
         this.facePhotoUrl = facePhotoUrl;
+        this.role = role;
         this.status = status == null ? EmployeeStatus.ACTIVE : status;
         this.accessValidFrom = accessValidFrom;
         this.accessValidUntil = accessValidUntil;
@@ -120,12 +146,36 @@ public class Employee extends TimestampedEntity {
         this.registrationNumber = registrationNumber;
     }
 
+    public String getCardNo() {
+        return cardNo;
+    }
+
+    public void setCardNo(String cardNo) {
+        this.cardNo = cardNo;
+    }
+
     public String getFacePhotoUrl() {
         return facePhotoUrl;
     }
 
     public void setFacePhotoUrl(String facePhotoUrl) {
         this.facePhotoUrl = facePhotoUrl;
+    }
+
+    public UUID getUserId() {
+        return userId;
+    }
+
+    public void setUserId(UUID userId) {
+        this.userId = userId;
+    }
+
+    public UserRole getRole() {
+        return role;
+    }
+
+    public void setRole(UserRole role) {
+        this.role = role;
     }
 
     public EmployeeStatus getStatus() {

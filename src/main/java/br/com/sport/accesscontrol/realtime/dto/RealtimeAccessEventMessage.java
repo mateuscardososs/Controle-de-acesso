@@ -5,6 +5,7 @@ import br.com.sport.accesscontrol.events.AccessEventType;
 import br.com.sport.accesscontrol.events.AccessResult;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 public record RealtimeAccessEventMessage(
@@ -13,6 +14,12 @@ public record RealtimeAccessEventMessage(
         UUID personId,
         String personName,
         String personCpf,
+        String personEmail,
+        String personPhone,
+        LocalDate invitedDay,
+        String invitedLounge,
+        String externalUserId,
+        String rawCardName,
         UUID deviceId,
         String deviceName,
         UUID areaId,
@@ -21,6 +28,7 @@ public record RealtimeAccessEventMessage(
         AccessResult accessResult,
         Instant eventTime,
         String origin,
+        String source,
         Instant createdAt
 ) {
 }

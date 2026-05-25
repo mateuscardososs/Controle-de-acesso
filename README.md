@@ -1,6 +1,6 @@
 # access-control-api
 
-Backend base enterprise para plataforma multiempresa de controle de acesso, preparado para integração operacional futura com controladoras Intelbras. Nesta etapa a comunicação Intelbras real ainda não foi implementada: eventos, sincronização e webhooks estão estruturados em modo preparado/simulado.
+Backend base enterprise para plataforma multiempresa de controle de acesso, preparado para integração operacional com controladoras Intelbras. O provider fake continua como padrão de desenvolvimento, e o provider real pode ser habilitado por configuração.
 
 ## Stack
 
@@ -205,7 +205,7 @@ O workflow de convidados com convite por token, cadastro publico e upload facial
 
 Configuração de SMTP e modo dev sem envio estão em [`docs/mail-setup.md`](docs/mail-setup.md).
 
-O pipeline fake/profissional de sincronização Intelbras está em [`docs/intelbras-sync-pipeline.md`](docs/intelbras-sync-pipeline.md).
+O pipeline de sincronização Intelbras está em [`docs/intelbras-sync-pipeline.md`](docs/intelbras-sync-pipeline.md). O provider real, RPC2/CGI Digest e importação de eventos estão documentados em [`docs/intelbras-real-provider.md`](docs/intelbras-real-provider.md).
 
 ## Exemplos REST
 

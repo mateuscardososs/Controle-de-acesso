@@ -8,6 +8,7 @@ import br.com.sport.accesscontrol.integration.provider.ProviderPermission;
 import br.com.sport.accesscontrol.integration.provider.ProviderPerson;
 import br.com.sport.accesscontrol.integration.provider.ProviderSyncResult;
 import br.com.sport.accesscontrol.integration.provider.ProviderSyncStatus;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -19,6 +20,7 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Component
+@ConditionalOnProperty(prefix = "app.intelbras", name = "mode", havingValue = "fake", matchIfMissing = true)
 public class IntelbrasProvider implements AccessControlProvider {
 
     private static final Logger log = LoggerFactory.getLogger(IntelbrasProvider.class);

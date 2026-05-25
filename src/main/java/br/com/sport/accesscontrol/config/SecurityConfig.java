@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -26,6 +27,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 
 @Configuration
@@ -36,11 +38,12 @@ public class SecurityConfig {
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             JwtAuthenticationFilter jwtAuthenticationFilter,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            CorsConfigurationSource corsConfigurationSource
     ) throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
-                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint((request, response, exception) ->
@@ -54,21 +57,23 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/guest-registration/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/guest-registration/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/public/visitor-registration").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/config/lounges").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/guests/*/complete-registration").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/auth/register").hasRole("ADMIN")
-                        .requestMatchers("/api/health", "/actuator/health").permitAll()
+                        .requestMatchers("/api/health", "/actuator/health", "/actuator/prometheus").permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/dashboard/**").hasAnyRole("ADMIN", "HR", "SECURITY_VIEWER")
                         .requestMatchers(HttpMethod.GET, "/api/devices/**").hasAnyRole("ADMIN", "HR", "SECURITY_VIEWER")
                         .requestMatchers("/api/devices/**").hasAnyRole("ADMIN", "HR")
+                        .requestMatchers(HttpMethod.GET, "/api/integration/**").hasAnyRole("ADMIN", "HR", "SECURITY_VIEWER")
                         .requestMatchers(HttpMethod.POST, "/api/integration/retry/**").hasAnyRole("ADMIN", "HR")
                         .requestMatchers(HttpMethod.GET, "/api/access-events/**").hasAnyRole("ADMIN", "HR", "SECURITY_VIEWER")
                         .requestMatchers("/api/access-events/**").hasAnyRole("ADMIN", "HR")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/cleanup/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/guests/cleanup").hasRole("ADMIN")
                         .requestMatchers("/api/employees/**", "/api/guests/**", "/api/areas/**", "/api/permissions/**")
                         .hasAnyRole("ADMIN", "HR")
-                        .requestMatchers("/api/simulator/**").hasAnyRole("ADMIN", "HR")
-                        .requestMatchers("/actuator/prometheus").authenticated()
                         .anyRequest().hasRole("ADMIN")
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
@@ -89,9 +94,14 @@ public class SecurityConfig {
     }
 
     @Bean
-    CorsConfigurationSource corsConfigurationSource() {
+    CorsConfigurationSource corsConfigurationSource(
+            @Value("${app.cors.allowed-origins:http://localhost:3000,http://127.0.0.1:3000}") String allowedOrigins
+    ) {
         var configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:3000"));
+        configuration.setAllowedOrigins(Arrays.stream(allowedOrigins.split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isBlank())
+                .toList());
         configuration.setAllowedMethods(List.of(
                 HttpMethod.GET.name(),
                 HttpMethod.POST.name(),
@@ -100,7 +110,13 @@ public class SecurityConfig {
                 HttpMethod.DELETE.name(),
                 HttpMethod.OPTIONS.name()
         ));
-        configuration.setAllowedHeaders(List.of("*"));
+        configuration.setAllowedHeaders(List.of(
+                "Authorization",
+                "Content-Type",
+                "Accept",
+                "X-Request-Id"
+        ));
+        configuration.setExposedHeaders(List.of("X-Request-Id"));
         configuration.setAllowCredentials(true);
 
         var source = new UrlBasedCorsConfigurationSource();

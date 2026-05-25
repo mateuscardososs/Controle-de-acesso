@@ -4,6 +4,9 @@ import br.com.sport.accesscontrol.audit.AuditService;
 import br.com.sport.accesscontrol.common.PersonType;
 import br.com.sport.accesscontrol.common.messaging.IntegrationEventPublisher;
 import br.com.sport.accesscontrol.config.RabbitMqConfig;
+import br.com.sport.accesscontrol.devices.Device;
+import br.com.sport.accesscontrol.devices.DeviceRepository;
+import br.com.sport.accesscontrol.devices.DeviceStatus;
 import br.com.sport.accesscontrol.employees.Employee;
 import br.com.sport.accesscontrol.employees.EmployeeRepository;
 import br.com.sport.accesscontrol.guests.Guest;
@@ -12,6 +15,8 @@ import br.com.sport.accesscontrol.integration.provider.AccessControlProvider;
 import br.com.sport.accesscontrol.integration.provider.ProviderPerson;
 import br.com.sport.accesscontrol.integration.provider.ProviderSyncResult;
 import br.com.sport.accesscontrol.integration.provider.ProviderSyncStatus;
+import br.com.sport.accesscontrol.mail.MailDeliveryResult;
+import br.com.sport.accesscontrol.mail.MailService;
 import br.com.sport.accesscontrol.realtime.RealtimePublisherService;
 import br.com.sport.accesscontrol.realtime.dto.SystemAlertMessage;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -25,6 +30,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.Map;
 import java.util.UUID;
 
@@ -35,28 +42,34 @@ public class IntelbrasSyncWorker {
 
     private final EmployeeRepository employeeRepository;
     private final GuestRepository guestRepository;
+    private final DeviceRepository deviceRepository;
     private final AccessControlProvider provider;
     private final AuditService auditService;
     private final IntegrationEventPublisher eventPublisher;
     private final IntegrationSyncRealtimePublisher realtimePublisher;
     private final RealtimePublisherService systemRealtimePublisher;
+    private final MailService mailService;
     private final MeterRegistry meterRegistry;
     private final int maxAttempts;
 
     public IntelbrasSyncWorker(EmployeeRepository employeeRepository, GuestRepository guestRepository,
+                               DeviceRepository deviceRepository,
                                AccessControlProvider provider, AuditService auditService,
                                IntegrationEventPublisher eventPublisher,
                                IntegrationSyncRealtimePublisher realtimePublisher,
                                RealtimePublisherService systemRealtimePublisher,
+                               MailService mailService,
                                MeterRegistry meterRegistry,
                                @Value("${app.integration.intelbras.sync.max-attempts:3}") int maxAttempts) {
         this.employeeRepository = employeeRepository;
         this.guestRepository = guestRepository;
+        this.deviceRepository = deviceRepository;
         this.provider = provider;
         this.auditService = auditService;
         this.eventPublisher = eventPublisher;
         this.realtimePublisher = realtimePublisher;
         this.systemRealtimePublisher = systemRealtimePublisher;
+        this.mailService = mailService;
         this.meterRegistry = meterRegistry;
         this.maxAttempts = maxAttempts;
     }
@@ -68,13 +81,18 @@ public class IntelbrasSyncWorker {
 
     @Transactional
     public void process(IntelbrasSyncMessage message) {
+        if (invalid(message)) {
+            log.warn("intelbras_sync_worker_invalid_message message={}", message);
+            return;
+        }
         log.info("intelbras_sync_worker_start person_type={} person_id={} attempt={}",
                 message.personType(), message.personId(), message.attempt());
         var sample = Timer.start(meterRegistry);
         try {
             ProviderSyncResult result = switch (message.personType()) {
-                case EMPLOYEE -> syncEmployee(message.personId());
-                case GUEST -> syncGuest(message.personId());
+                case EMPLOYEE -> syncEmployee(message.personId(), message.attempt());
+                case GUEST -> syncGuest(message.personId(), message.attempt());
+                case UNKNOWN -> new ProviderSyncResult(ProviderSyncStatus.FAILED, "Unknown person type cannot be synced.", java.time.Duration.ZERO);
             };
             sample.stop(meterRegistry.timer("intelbras.sync.latency", "result", result.status().name()));
             if (result.successful()) {
@@ -88,8 +106,12 @@ public class IntelbrasSyncWorker {
         }
     }
 
-    private ProviderSyncResult syncEmployee(UUID employeeId) {
+    private ProviderSyncResult syncEmployee(UUID employeeId, int attempt) {
         var employee = employeeRepository.findById(employeeId).orElseThrow();
+        if (attempt > 1 && employee.getSyncStatus() == SyncStatus.SYNCED) {
+            log.info("intelbras_sync_employee_retry_skipped_already_synced employee_id={} attempt={}", employeeId, attempt);
+            return new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "Employee already synced.", java.time.Duration.ZERO);
+        }
         employee.markSyncing();
         auditStart(PersonType.EMPLOYEE, employeeId, employee.getSyncAttempts());
         realtimePublisher.publish(PersonType.EMPLOYEE, employeeId, SyncStatus.SYNCING, "Sincronizando Intelbras");
@@ -97,6 +119,7 @@ public class IntelbrasSyncWorker {
                 PersonType.EMPLOYEE,
                 employee.getId(),
                 employee.getCpf(),
+                employee.getCardNo(),
                 employee.getFullName(),
                 employee.getFacePhotoUrl(),
                 employee.getStatus() == br.com.sport.accesscontrol.employees.EmployeeStatus.ACTIVE,
@@ -107,11 +130,25 @@ public class IntelbrasSyncWorker {
         return result;
     }
 
-    private ProviderSyncResult syncGuest(UUID guestId) {
+    private ProviderSyncResult syncGuest(UUID guestId, int attempt) {
         var guest = guestRepository.findById(guestId).orElseThrow();
+        if (attempt > 1 && guest.getSyncStatus() == SyncStatus.SYNCED) {
+            log.info("intelbras_sync_guest_retry_skipped_already_synced guest_id={} attempt={}", guestId, attempt);
+            return new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "Guest already synced.", java.time.Duration.ZERO);
+        }
+        var target = intelbrasTarget();
+        var targetDeviceId = intelbrasTargetDeviceId();
         guest.markSyncing();
         auditStart(PersonType.GUEST, guestId, guest.getSyncAttempts());
-        realtimePublisher.publish(PersonType.GUEST, guestId, SyncStatus.SYNCING, "Sincronizando Intelbras");
+        log.info("intelbras_sync_guest_start person_type={} guest_id={} device_id={} face_photo_configured={} attempt={}",
+                PersonType.GUEST, guestId, targetDeviceId, guest.getFacePhotoUrl() != null && !guest.getFacePhotoUrl().isBlank(),
+                guest.getSyncAttempts());
+        realtimePublisher.publish(PersonType.GUEST, guestId, SyncStatus.SYNCING,
+                "Sincronizando visitante " + guest.getFullName() + " com " + target);
+        var validFrom = guestValidFrom(guest);
+        var validUntil = guestValidUntil(guest);
+        log.info("intelbras_sync_guest_validity guest_id={} invited_day={} valid_from={} valid_until={}",
+                guestId, guest.getInvitedDay(), validFrom, validUntil);
         var result = provider.syncPerson(new ProviderPerson(
                 PersonType.GUEST,
                 guest.getId(),
@@ -119,35 +156,59 @@ public class IntelbrasSyncWorker {
                 guest.getFullName(),
                 guest.getFacePhotoUrl(),
                 guest.getStatus() == br.com.sport.accesscontrol.guests.GuestStatus.COMPLETED,
-                guest.getVisitStart(),
-                guest.getVisitEnd()
+                validFrom,
+                validUntil
         ));
-        finishGuest(guest, result);
+        finishGuest(guest, result, target);
         return result;
     }
 
     private void finishEmployee(Employee employee, ProviderSyncResult result) {
         if (result.status() == ProviderSyncStatus.SUCCESS) {
             employee.markSynced();
+            employeeRepository.save(employee);
             auditSuccess(PersonType.EMPLOYEE, employee.getId(), result);
             realtimePublisher.publish(PersonType.EMPLOYEE, employee.getId(), SyncStatus.SYNCED, result.message());
         } else {
             employee.markSyncFailed(result.message());
+            employeeRepository.save(employee);
             auditFailure(PersonType.EMPLOYEE, employee.getId(), result.message());
             realtimePublisher.publish(PersonType.EMPLOYEE, employee.getId(), SyncStatus.SYNC_FAILED, result.message());
         }
     }
 
-    private void finishGuest(Guest guest, ProviderSyncResult result) {
+    private void finishGuest(Guest guest, ProviderSyncResult result, String target) {
         if (result.status() == ProviderSyncStatus.SUCCESS) {
             guest.markSynced();
+            guestRepository.save(guest);
             auditSuccess(PersonType.GUEST, guest.getId(), result);
-            realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNCED, result.message());
+            auditGuestSyncResult(guest, target, "SYNCED", null);
+            sendGuestAccessApprovalEmail(guest);
+            guestRepository.save(guest);
+            realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNCED,
+                    "Visitante " + guest.getFullName() + " sincronizado com " + target);
         } else {
             guest.markSyncFailed(result.message());
+            guestRepository.save(guest);
             auditFailure(PersonType.GUEST, guest.getId(), result.message());
-            realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNC_FAILED, result.message());
+            auditGuestSyncResult(guest, target, "SYNC_FAILED", result.message());
+            realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNC_FAILED,
+                    "Falha ao sincronizar visitante " + guest.getFullName() + " com " + target + ": " + safe(result.message()));
         }
+    }
+
+    private void auditGuestSyncResult(Guest guest, String target, String result, String error) {
+        auditService.record("GUEST_SYNC_RESULT", "Guest", guest.getId(),
+                Map.of(
+                        "visitor", guest.getFullName(),
+                        "target", safe(target),
+                        "result", result,
+                        "error", safe(error),
+                        "validFrom", guest.getVisitStart(),
+                        "validUntil", guest.getVisitEnd()
+                ),
+                Map.of(),
+                Map.of());
     }
 
     private void handleFailure(IntelbrasSyncMessage message, String error) {
@@ -183,7 +244,98 @@ public class IntelbrasSyncWorker {
         auditService.record("INTELBRAS_SYNC_FAILED", type.name(), id, Map.of("error", safe(error)), Map.of(), Map.of());
     }
 
+    private void sendGuestAccessApprovalEmail(Guest guest) {
+        if (guest.hasAccessApprovedEmailBeenSent()) {
+            log.info("guest_access_approval_email_skipped_already_sent guest_id={} sent_at={}",
+                    guest.getId(), guest.getAccessApprovedEmailSentAt());
+            return;
+        }
+
+        MailDeliveryResult delivery;
+        try {
+            delivery = mailService.sendGuestAccessApproved(guest);
+        } catch (Exception exception) {
+            delivery = MailDeliveryResult.failed(exception.getMessage());
+        }
+
+        guest.markAccessApprovedEmail(delivery.status(), safe(delivery.message()), delivery.sent());
+        auditService.record("GUEST_ACCESS_APPROVAL_EMAIL_" + delivery.status(), "Guest", guest.getId(),
+                Map.of("status", delivery.status(), "message", safe(delivery.message())), Map.of(), Map.of());
+    }
+
     private String safe(String value) {
         return value == null ? "" : value;
+    }
+
+    private boolean invalid(IntelbrasSyncMessage message) {
+        return message == null || message.personType() == null || message.personId() == null || message.attempt() < 1;
+    }
+
+    private String intelbrasTarget() {
+        return deviceRepository.findAll().stream()
+                .filter(this::eligibleIntelbrasDeviceForWorkerLog)
+                .findFirst()
+                .map(device -> device.getModel() == null || device.getModel().isBlank() ? device.getName() : device.getModel())
+                .orElse("Intelbras");
+    }
+
+    private String intelbrasTargetDeviceId() {
+        return deviceRepository.findAll().stream()
+                .filter(this::eligibleIntelbrasDeviceForWorkerLog)
+                .findFirst()
+                .map(device -> device.getId() == null ? "unknown" : device.getId().toString())
+                .orElse("none");
+    }
+
+    private boolean eligibleIntelbrasDeviceForWorkerLog(Device device) {
+        return device != null
+                && looksLikeIntelbrasDevice(device)
+                && hasText(device.getIpAddress())
+                && (device.getStatus() == DeviceStatus.ONLINE || device.getOnlineStatus() == DeviceStatus.ONLINE)
+                && device.getArea() != null
+                && hasText(device.getIntelbrasUsername())
+                && hasText(device.getIntelbrasPassword());
+    }
+
+    private boolean looksLikeIntelbrasDevice(Device device) {
+        return containsIntelbras(device.getModel())
+                || containsIntelbras(device.getName())
+                || containsIntelbrasSs55xx(device.getModel())
+                || containsIntelbrasSs55xx(device.getName());
+    }
+
+    private boolean containsIntelbras(String value) {
+        return value != null && value.toLowerCase(java.util.Locale.ROOT).contains("intelbras");
+    }
+
+    private boolean containsIntelbrasSs55xx(String value) {
+        if (value == null) {
+            return false;
+        }
+        var normalized = value.toLowerCase(java.util.Locale.ROOT).replaceAll("\\s+", " ").trim();
+        return normalized.contains("ss 5531")
+                || normalized.contains("ss5531")
+                || normalized.contains("ss 5541")
+                || normalized.contains("ss5541");
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static final ZoneId EVENT_ZONE = ZoneId.of("America/Recife");
+
+    private Instant guestValidFrom(br.com.sport.accesscontrol.guests.Guest guest) {
+        if (guest.getInvitedDay() != null) {
+            return guest.getInvitedDay().atTime(LocalTime.of(15, 0)).atZone(EVENT_ZONE).toInstant();
+        }
+        return guest.getVisitStart();
+    }
+
+    private Instant guestValidUntil(br.com.sport.accesscontrol.guests.Guest guest) {
+        if (guest.getInvitedDay() != null) {
+            return guest.getInvitedDay().plusDays(1).atTime(LocalTime.of(4, 0)).atZone(EVENT_ZONE).toInstant();
+        }
+        return guest.getVisitEnd();
     }
 }

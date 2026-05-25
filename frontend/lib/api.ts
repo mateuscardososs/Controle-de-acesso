@@ -2,8 +2,10 @@ import axios from "axios";
 
 export const TOKEN_KEY = "access_control_token";
 
+const apiBaseUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080").replace(/\/+$/, "");
+
 export const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"
+  baseURL: apiBaseUrl
 });
 
 api.interceptors.request.use((config) => {

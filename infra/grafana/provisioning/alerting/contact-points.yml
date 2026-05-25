@@ -1,0 +1,11 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: Operacao
+    receivers:
+      - uid: operacao-email
+        type: email
+        settings:
+          addresses: "mateusdasilvacardoso091@gmail.com"
+          singleEmail: true

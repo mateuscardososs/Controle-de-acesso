@@ -4,5 +4,6 @@ public enum AccessEventType {
     ENTRY,
     EXIT,
     ACCESS_DENIED,
-    COMMUNICATION_FAILURE
+    COMMUNICATION_FAILURE,
+    MANUAL_ADMIN_RELEASE
 }

@@ -11,7 +11,7 @@ public record MailDeliveryResult(
     }
 
     public static MailDeliveryResult delivered() {
-        return new MailDeliveryResult(true, true, "SENT", "Email sent.");
+        return new MailDeliveryResult(true, true, "SENT", "E-mail enviado.");
     }
 
     public static MailDeliveryResult failed(String message) {

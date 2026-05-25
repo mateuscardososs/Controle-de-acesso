@@ -94,6 +94,8 @@ Alertas realtime sao publicados em `/topic/system-alerts` quando o visitante e c
 
 O envio SMTP e opcional e esta descrito em [`mail-setup.md`](mail-setup.md). Mesmo quando o envio e desabilitado ou falha, o admin continua recebendo o `inviteUrl` para copiar manualmente.
 
+Quando a sincronização Intelbras do visitante termina com sucesso, o backend envia o e-mail “Acesso de visitante liberado”. Se o envio estiver desabilitado ou falhar, a sincronização continua como `SYNCED` e o resultado fica registrado no detalhe do visitante e na auditoria.
+
 ## Proximos passos Intelbras
 
 - sincronizar visitantes `COMPLETED` com o provider Intelbras

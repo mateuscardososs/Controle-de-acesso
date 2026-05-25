@@ -1,0 +1,2 @@
+ALTER TABLE devices
+    ADD COLUMN http_port INTEGER DEFAULT 80;

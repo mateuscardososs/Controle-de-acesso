@@ -1,11 +1,14 @@
 package br.com.sport.accesscontrol.guests;
 
 import br.com.sport.accesscontrol.integration.sync.SyncStatus;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 
 public final class GuestDtos {
@@ -22,8 +25,48 @@ public final class GuestDtos {
             @NotBlank String hostName,
             @NotNull Instant visitStart,
             @NotNull Instant visitEnd,
+            LocalDate invitedDay,
+            String invitedLounge,
             GuestStatus status
     ) {
+        public GuestRequest(
+                String fullName,
+                String cpf,
+                String email,
+                String phone,
+                String company,
+                String visitReason,
+                String hostName,
+                Instant visitStart,
+                Instant visitEnd,
+                GuestStatus status
+        ) {
+            this(fullName, cpf, email, phone, company, visitReason, hostName, visitStart, visitEnd, null, null, status);
+        }
+    }
+
+    public record GuestCleanupRequest(
+            GuestCleanupMode mode,
+            List<GuestStatus> status,
+            List<SyncStatus> integrationStatus,
+            @Min(0) int olderThanDays,
+            boolean onlyTestRecords,
+            String confirmationPhrase
+    ) {
+        public GuestCleanupRequest(List<GuestStatus> status, List<SyncStatus> integrationStatus,
+                                   int olderThanDays, boolean onlyTestRecords) {
+            this(null, status, integrationStatus, olderThanDays, onlyTestRecords, null);
+        }
+    }
+
+    public enum GuestCleanupMode {
+        CANCELLED,
+        FAILED,
+        TEST_RECORDS,
+        ALL
+    }
+
+    public record GuestCleanupResponse(int removedCount, String message) {
     }
 
     public record GuestResponse(
@@ -37,6 +80,8 @@ public final class GuestDtos {
             String hostName,
             Instant visitStart,
             Instant visitEnd,
+            LocalDate invitedDay,
+            String invitedLounge,
             GuestStatus status,
             String facePhotoUrl,
             Instant invitedAt,
@@ -49,7 +94,10 @@ public final class GuestDtos {
             SyncStatus syncStatus,
             Instant lastSyncAt,
             String lastSyncError,
-            int syncAttempts
+            int syncAttempts,
+            Instant accessApprovedEmailSentAt,
+            String accessApprovedEmailStatus,
+            String accessApprovedEmailMessage
     ) {
         static GuestResponse from(Guest guest, GuestInvite invite) {
             return from(guest, invite, null, null, null);
@@ -68,6 +116,8 @@ public final class GuestDtos {
                     guest.getHostName(),
                     guest.getVisitStart(),
                     guest.getVisitEnd(),
+                    guest.getInvitedDay(),
+                    guest.getInvitedLounge(),
                     guest.getStatus(),
                     guest.getFacePhotoUrl(),
                     guest.getInvitedAt(),
@@ -80,7 +130,10 @@ public final class GuestDtos {
                     guest.getSyncStatus(),
                     guest.getLastSyncAt(),
                     guest.getLastSyncError(),
-                    guest.getSyncAttempts()
+                    guest.getSyncAttempts(),
+                    guest.getAccessApprovedEmailSentAt(),
+                    guest.getAccessApprovedEmailStatus(),
+                    guest.getAccessApprovedEmailMessage()
             );
         }
     }
@@ -93,6 +146,8 @@ public final class GuestDtos {
             String hostName,
             Instant visitStart,
             Instant visitEnd,
+            LocalDate invitedDay,
+            String invitedLounge,
             GuestStatus status,
             boolean requiresFacePhoto
     ) {
@@ -105,6 +160,8 @@ public final class GuestDtos {
                     guest.getHostName(),
                     guest.getVisitStart(),
                     guest.getVisitEnd(),
+                    guest.getInvitedDay(),
+                    guest.getInvitedLounge(),
                     guest.getStatus(),
                     guest.getFacePhotoUrl() == null || guest.getFacePhotoUrl().isBlank()
             );

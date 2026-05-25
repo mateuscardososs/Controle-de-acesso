@@ -26,6 +26,15 @@ public class Device extends TimestampedEntity {
     @Column(name = "ip_address", nullable = false)
     private String ipAddress;
 
+    @Column(name = "http_port")
+    private Integer httpPort = 80;
+
+    @Column(name = "intelbras_username")
+    private String intelbrasUsername;
+
+    @Column(name = "intelbras_password")
+    private String intelbrasPassword;
+
     private String location;
 
     @Enumerated(EnumType.STRING)
@@ -46,6 +55,15 @@ public class Device extends TimestampedEntity {
     @Column(name = "last_heartbeat_at")
     private Instant lastHeartbeatAt;
 
+    @Column(name = "last_success_at")
+    private Instant lastSuccessAt;
+
+    @Column(name = "last_failure_at")
+    private Instant lastFailureAt;
+
+    @Column(name = "last_error")
+    private String lastError;
+
     @Column(name = "communication_failures", nullable = false)
     private int communicationFailures;
 
@@ -58,10 +76,16 @@ public class Device extends TimestampedEntity {
 
     public Device(String name, String model, String serialNumber, String ipAddress, String location,
                   DeviceOperationType operationType, DeviceStatus status, Area area) {
+        this(name, model, serialNumber, ipAddress, 80, location, operationType, status, area);
+    }
+
+    public Device(String name, String model, String serialNumber, String ipAddress, Integer httpPort, String location,
+                  DeviceOperationType operationType, DeviceStatus status, Area area) {
         this.name = name;
         this.model = model;
         this.serialNumber = serialNumber;
         this.ipAddress = ipAddress;
+        this.httpPort = normalizeHttpPort(httpPort);
         this.location = location;
         this.operationType = operationType == null ? DeviceOperationType.ENTRY_EXIT : operationType;
         this.status = status == null ? DeviceStatus.UNKNOWN : status;
@@ -87,6 +111,26 @@ public class Device extends TimestampedEntity {
 
     public String getIpAddress() {
         return ipAddress;
+    }
+
+    public Integer getHttpPort() {
+        return httpPort;
+    }
+
+    public String getIntelbrasUsername() {
+        return intelbrasUsername;
+    }
+
+    public void setIntelbrasUsername(String intelbrasUsername) {
+        this.intelbrasUsername = blankToNull(intelbrasUsername);
+    }
+
+    public String getIntelbrasPassword() {
+        return intelbrasPassword;
+    }
+
+    public void setIntelbrasPassword(String intelbrasPassword) {
+        this.intelbrasPassword = blankToNull(intelbrasPassword);
     }
 
     public String getLocation() {
@@ -119,6 +163,18 @@ public class Device extends TimestampedEntity {
         return lastHeartbeatAt;
     }
 
+    public Instant getLastSuccessAt() {
+        return lastSuccessAt;
+    }
+
+    public Instant getLastFailureAt() {
+        return lastFailureAt;
+    }
+
+    public String getLastError() {
+        return lastError;
+    }
+
     public int getCommunicationFailures() {
         return communicationFailures;
     }
@@ -129,14 +185,49 @@ public class Device extends TimestampedEntity {
 
     public void markHeartbeat() {
         this.lastHeartbeatAt = Instant.now();
+        this.lastSuccessAt = this.lastHeartbeatAt;
+        this.lastError = null;
         this.communicationFailures = 0;
         setStatus(DeviceStatus.ONLINE);
     }
 
-    public void registerCommunicationFailure() {
+    public void registerCommunicationFailure(String error) {
         this.communicationFailures++;
+        this.lastFailureAt = Instant.now();
+        this.lastError = blankToNull(error);
         if (communicationFailures >= 3) {
             setStatus(DeviceStatus.OFFLINE);
         }
+    }
+
+    public void registerCommunicationFailure() {
+        registerCommunicationFailure(null);
+    }
+
+    public void update(String name, String model, String serialNumber, String ipAddress, Integer httpPort,
+                       String location, DeviceOperationType operationType, DeviceStatus status, Area area) {
+        this.name = name;
+        this.model = model;
+        this.serialNumber = serialNumber;
+        this.ipAddress = ipAddress;
+        this.httpPort = normalizeHttpPort(httpPort);
+        this.location = location;
+        if (operationType != null) {
+            this.operationType = operationType;
+        }
+        if (status != null) {
+            setStatus(status);
+        }
+        if (area != null) {
+            this.area = area;
+        }
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private Integer normalizeHttpPort(Integer value) {
+        return value == null ? 80 : value;
     }
 }

@@ -9,7 +9,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
-public class UserPrincipal implements UserDetails {
+public class UserPrincipal implements UserDetails, java.security.Principal {
 
     private final UUID id;
     private final String name;
@@ -33,6 +33,11 @@ public class UserPrincipal implements UserDetails {
 
     public String name() {
         return name;
+    }
+
+    @Override
+    public String getName() {
+        return email;
     }
 
     public String email() {

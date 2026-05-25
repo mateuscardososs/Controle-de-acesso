@@ -5,14 +5,14 @@ spring:
   application:
     name: access-control-api
   datasource:
-    url: jdbc:postgresql://localhost:5432/access_control
-    username: access_user
-    password: access_pass
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/access_control}
+    username: ${SPRING_DATASOURCE_USERNAME:access_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:access_pass}
   rabbitmq:
-    host: localhost
-    port: 5672
-    username: access_user
-    password: access_pass
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:access_user}
+    password: ${SPRING_RABBITMQ_PASSWORD:access_pass}
   mail:
     host: ${SMTP_HOST:localhost}
     port: ${SMTP_PORT:1025}
@@ -26,6 +26,10 @@ spring:
             enable: ${SMTP_STARTTLS:false}
   flyway:
     enabled: true
+  servlet:
+    multipart:
+      max-file-size: ${SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE:8MB}
+      max-request-size: ${SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE:10MB}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -49,6 +53,24 @@ logging:
     br.com.sport.accesscontrol: INFO
 
 app:
+  simulator:
+    enabled: ${APP_SIMULATOR_ENABLED:true}
+  cors:
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
+  intelbras:
+    mode: ${APP_INTELBRAS_MODE:fake}
+    default-username: ${APP_INTELBRAS_DEFAULT_USERNAME:}
+    default-password: ${APP_INTELBRAS_DEFAULT_PASSWORD:}
+    timezone: ${APP_TIMEZONE:America/Recife}
+    connection-timeout: ${INTELBRAS_CONNECT_TIMEOUT_MS:${APP_INTELBRAS_CONNECTION_TIMEOUT:3s}}
+    read-timeout: ${INTELBRAS_READ_TIMEOUT_MS:${APP_INTELBRAS_READ_TIMEOUT:5s}}
+    retry-attempts: ${INTELBRAS_RETRY_ATTEMPTS:2}
+    retry-backoff: ${INTELBRAS_RETRY_BACKOFF_MS:300ms}
+    health-interval: ${INTELBRAS_HEALTH_INTERVAL_SECONDS:30s}
+    identity-strategy: ${APP_INTELBRAS_IDENTITY_STRATEGY:document}
+    events-polling-enabled: ${APP_INTELBRAS_EVENTS_POLLING_ENABLED:true}
+    events-polling-interval: ${INTELBRAS_IMPORT_INTERVAL_SECONDS:${APP_INTELBRAS_EVENTS_POLLING_INTERVAL:5s}}
+    dedup-window: ${INTELBRAS_DEDUP_WINDOW_SECONDS:300s}
   frontend:
     public-base-url: ${FRONTEND_PUBLIC_BASE_URL:http://localhost:3000}
   mail:
@@ -56,6 +78,7 @@ app:
     from: ${APP_MAIL_FROM:no-reply@empresa.local}
   uploads:
     faces-dir: ${FACE_UPLOAD_DIR:uploads/faces}
+  lounges: ${APP_LOUNGES:Front 1,Front 2,Front 3,Institucional 1,Institucional Vereador}
   guests:
     invite-expiration-hours: ${GUEST_INVITE_EXPIRATION_HOURS:72}
     expiration-scan-delay-ms: ${GUEST_EXPIRATION_SCAN_DELAY_MS:300000}

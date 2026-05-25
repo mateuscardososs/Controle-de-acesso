@@ -14,7 +14,7 @@ export function Modal({ title, description, open, onClose, children }: { title: 
         initial={{ opacity: 0, y: 18, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.18, ease: "easeOut" }}
-        className="enterprise-surface w-full max-w-2xl rounded-t-2xl shadow-enterprise sm:rounded-2xl"
+        className="enterprise-surface max-h-[92vh] w-full max-w-3xl overflow-hidden rounded-t-2xl shadow-enterprise sm:rounded-2xl"
       >
         <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4">
           <div>
@@ -23,7 +23,7 @@ export function Modal({ title, description, open, onClose, children }: { title: 
           </div>
           <Button aria-label="Fechar" variant="ghost" icon={X} className="h-9 w-9 px-0" onClick={onClose} />
         </div>
-        <div className="p-5">{children}</div>
+        <div className="max-h-[calc(92vh-88px)] overflow-y-auto p-5">{children}</div>
       </motion.div>
     </div>
   );

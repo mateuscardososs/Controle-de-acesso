@@ -14,6 +14,8 @@ export type Guest = {
   hostName: string;
   visitStart: string;
   visitEnd: string;
+  invitedDay?: string;
+  invitedLounge?: string;
   status: GuestStatus;
   facePhotoUrl?: string;
   invitedAt?: string;
@@ -27,6 +29,9 @@ export type Guest = {
   lastSyncAt?: string;
   lastSyncError?: string;
   syncAttempts?: number;
+  accessApprovedEmailSentAt?: string;
+  accessApprovedEmailStatus?: "SENT" | "SKIPPED" | "FAILED" | string;
+  accessApprovedEmailMessage?: string;
 };
 
 export type GuestPayload = {
@@ -39,7 +44,19 @@ export type GuestPayload = {
   hostName: string;
   visitStart: string;
   visitEnd: string;
+  invitedDay?: string;
+  invitedLounge?: string;
   status?: GuestStatus;
+};
+
+export type GuestCleanupPayload = {
+  mode: "CANCELLED" | "FAILED" | "TEST_RECORDS" | "ALL";
+  confirmationPhrase?: string;
+};
+
+export type GuestCleanupResponse = {
+  removedCount: number;
+  message: string;
 };
 
 export type PublicGuestRegistration = {
@@ -50,6 +67,8 @@ export type PublicGuestRegistration = {
   hostName: string;
   visitStart: string;
   visitEnd: string;
+  invitedDay?: string;
+  invitedLounge?: string;
   status: GuestStatus;
   requiresFacePhoto: boolean;
 };
@@ -57,14 +76,11 @@ export type PublicGuestRegistration = {
 export type PublicVisitorRegistrationPayload = {
   fullName: string;
   cpf: string;
-  email: string;
-  phone?: string;
-  company?: string;
-  visitReason: string;
-  hostName: string;
-  visitStart: string;
-  visitEnd: string;
-  facePhoto?: File | null;
+  phone: string;
+  email?: string;
+  invitedDay: string;
+  invitedLounge: string;
+  facePhoto: File;
 };
 
 export type PublicVisitorRegistrationResponse = {
@@ -100,6 +116,18 @@ export const guestService = {
     const { data } = await api.post<Guest>(`/api/guests/${id}/resend-invite`);
     return data;
   },
+  async syncGuest(id: string) {
+    const { data } = await api.post<Guest>(`/api/guests/${id}/sync`);
+    return data;
+  },
+  async retryIntelbrasSync(id: string) {
+    const { data } = await api.post<{ status: string; type: string; id: string }>(`/api/integration/retry/guest/${id}`);
+    return data;
+  },
+  async cleanup(payload: GuestCleanupPayload) {
+    const { data } = await api.delete<GuestCleanupResponse>("/api/guests/cleanup", { data: payload });
+    return data;
+  },
   async publicRegistration(token: string) {
     const { data } = await api.get<PublicGuestRegistration>(`/api/guest-registration/${token}`);
     return data;
@@ -116,14 +144,11 @@ export const guestService = {
     const formData = new FormData();
     formData.append("fullName", payload.fullName);
     formData.append("cpf", payload.cpf);
-    formData.append("email", payload.email);
-    if (payload.phone) formData.append("phone", payload.phone);
-    if (payload.company) formData.append("company", payload.company);
-    formData.append("visitReason", payload.visitReason);
-    formData.append("hostName", payload.hostName);
-    formData.append("visitStart", payload.visitStart);
-    formData.append("visitEnd", payload.visitEnd);
-    if (payload.facePhoto) formData.append("facePhoto", payload.facePhoto);
+    formData.append("phone", payload.phone);
+    if (payload.email) formData.append("email", payload.email);
+    formData.append("invitedDay", payload.invitedDay);
+    formData.append("invitedLounge", payload.invitedLounge);
+    formData.append("facePhoto", payload.facePhoto);
     const { data } = await api.post<PublicVisitorRegistrationResponse>("/api/public/visitor-registration", formData);
     return data;
   }

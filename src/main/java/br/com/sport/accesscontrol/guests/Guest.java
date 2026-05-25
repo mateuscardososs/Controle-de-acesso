@@ -5,6 +5,7 @@ import br.com.sport.accesscontrol.integration.sync.SyncStatus;
 import jakarta.persistence.*;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.UUID;
 
 @Entity
@@ -40,6 +41,12 @@ public class Guest extends TimestampedEntity {
     @Column(name = "visit_end", nullable = false)
     private Instant visitEnd;
 
+    @Column(name = "invited_day")
+    private LocalDate invitedDay;
+
+    @Column(name = "invited_lounge")
+    private String invitedLounge;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private GuestStatus status = GuestStatus.PENDING_REGISTRATION;
@@ -63,11 +70,25 @@ public class Guest extends TimestampedEntity {
     @Column(name = "sync_attempts", nullable = false)
     private int syncAttempts;
 
+    @Column(name = "access_approved_email_sent_at")
+    private Instant accessApprovedEmailSentAt;
+
+    @Column(name = "access_approved_email_status")
+    private String accessApprovedEmailStatus;
+
+    @Column(name = "access_approved_email_message")
+    private String accessApprovedEmailMessage;
+
     protected Guest() {
     }
 
     public Guest(String fullName, String cpf, String email, String phone, String company, String visitReason,
                  String hostName, Instant visitStart, Instant visitEnd) {
+        this(fullName, cpf, email, phone, company, visitReason, hostName, visitStart, visitEnd, null, null);
+    }
+
+    public Guest(String fullName, String cpf, String email, String phone, String company, String visitReason,
+                 String hostName, Instant visitStart, Instant visitEnd, LocalDate invitedDay, String invitedLounge) {
         this.fullName = fullName;
         this.cpf = cpf;
         this.email = email;
@@ -77,6 +98,8 @@ public class Guest extends TimestampedEntity {
         this.hostName = hostName;
         this.visitStart = visitStart;
         this.visitEnd = visitEnd;
+        this.invitedDay = invitedDay;
+        this.invitedLounge = invitedLounge;
         this.status = GuestStatus.PENDING_REGISTRATION;
         this.invitedAt = Instant.now();
     }
@@ -90,7 +113,8 @@ public class Guest extends TimestampedEntity {
     }
 
     public void update(String fullName, String cpf, String email, String phone, String company, String visitReason,
-                       String hostName, Instant visitStart, Instant visitEnd, GuestStatus status) {
+                       String hostName, Instant visitStart, Instant visitEnd, LocalDate invitedDay,
+                       String invitedLounge, GuestStatus status) {
         this.fullName = fullName;
         this.cpf = cpf;
         this.email = email;
@@ -100,6 +124,8 @@ public class Guest extends TimestampedEntity {
         this.hostName = hostName;
         this.visitStart = visitStart;
         this.visitEnd = visitEnd;
+        this.invitedDay = invitedDay;
+        this.invitedLounge = invitedLounge;
         if (status != null) {
             this.status = status;
         }
@@ -139,6 +165,14 @@ public class Guest extends TimestampedEntity {
 
     public Instant getVisitEnd() {
         return visitEnd;
+    }
+
+    public LocalDate getInvitedDay() {
+        return invitedDay;
+    }
+
+    public String getInvitedLounge() {
+        return invitedLounge;
     }
 
     public GuestStatus getStatus() {
@@ -193,6 +227,30 @@ public class Guest extends TimestampedEntity {
 
     public int getSyncAttempts() {
         return syncAttempts;
+    }
+
+    public Instant getAccessApprovedEmailSentAt() {
+        return accessApprovedEmailSentAt;
+    }
+
+    public String getAccessApprovedEmailStatus() {
+        return accessApprovedEmailStatus;
+    }
+
+    public String getAccessApprovedEmailMessage() {
+        return accessApprovedEmailMessage;
+    }
+
+    public boolean hasAccessApprovedEmailBeenSent() {
+        return accessApprovedEmailSentAt != null;
+    }
+
+    public void markAccessApprovedEmail(String status, String message, boolean sent) {
+        accessApprovedEmailStatus = status;
+        accessApprovedEmailMessage = message;
+        if (sent) {
+            accessApprovedEmailSentAt = Instant.now();
+        }
     }
 
     public void markPendingSync() {

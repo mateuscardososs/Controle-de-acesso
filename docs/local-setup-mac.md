@@ -90,6 +90,13 @@ npm install
 npm run dev
 ```
 
+O arquivo `frontend/.env.local` deve apontar para o backend local:
+
+```properties
+NEXT_PUBLIC_API_URL=http://localhost:8080
+NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws
+```
+
 Acesse:
 
 - `http://localhost:3000`
