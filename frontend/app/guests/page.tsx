@@ -259,6 +259,14 @@ export default function GuestsPage() {
             { key: "company", header: "Empresa", render: (guest) => guest.company ?? "Não informada" },
             { key: "host", header: "Responsável", render: (guest) => guest.hostName },
             { key: "visit", header: "Visita", className: "min-w-[190px]", render: (guest) => <span className="inline-flex items-center gap-2"><CalendarDays className="h-4 w-4 text-slate-400" />{new Date(guest.visitStart).toLocaleString("pt-BR")}</span> },
+            { key: "areas", header: "Áreas permitidas", className: "min-w-[200px]", render: (guest) => (
+              <span className="text-xs text-slate-300">
+                {guest.displayAllowedAreas
+                  ?? (guest.allowedAreaNames && guest.allowedAreaNames.length > 0
+                    ? guest.allowedAreaNames.join(" / ")
+                    : (guest.invitedLounge ? `Portaria / ${guest.invitedLounge}` : "—"))}
+              </span>
+            ) },
             { key: "status", header: "Status", render: (guest) => <StatusBadge value={guest.status} /> },
             { key: "integration", header: "Integração", className: "min-w-[180px]", render: (guest) => <SyncBadge guest={guest} /> },
             {

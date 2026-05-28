@@ -1,5 +1,6 @@
 package br.com.sport.accesscontrol.employees;
 
+import br.com.sport.accesscontrol.areas.LoungeAreaResolver;
 import br.com.sport.accesscontrol.audit.AuditService;
 import br.com.sport.accesscontrol.common.CpfValidator;
 import br.com.sport.accesscontrol.common.ResourceNotFoundException;
@@ -35,18 +36,38 @@ public class EmployeeService {
     private final FaceStorageService faceStorageService;
     private final ApplicationEventPublisher eventPublisher;
     private final AuditService auditService;
+    private final LoungeAreaResolver loungeAreaResolver;
     private static final ZoneId ACCESS_ZONE = ZoneId.of("America/Recife");
 
+    /** Backward-compatible constructor (testes legados sem LoungeAreaResolver). */
     public EmployeeService(EmployeeRepository employeeRepository, UserRepository userRepository,
                            PasswordEncoder passwordEncoder, FaceStorageService faceStorageService,
                            ApplicationEventPublisher eventPublisher,
                            AuditService auditService) {
+        this(employeeRepository, userRepository, passwordEncoder, faceStorageService, eventPublisher,
+                auditService, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public EmployeeService(EmployeeRepository employeeRepository, UserRepository userRepository,
+                           PasswordEncoder passwordEncoder, FaceStorageService faceStorageService,
+                           ApplicationEventPublisher eventPublisher,
+                           AuditService auditService,
+                           LoungeAreaResolver loungeAreaResolver) {
         this.employeeRepository = employeeRepository;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.faceStorageService = faceStorageService;
         this.eventPublisher = eventPublisher;
         this.auditService = auditService;
+        this.loungeAreaResolver = loungeAreaResolver;
+    }
+
+    private void applyFullAccessAreas(Employee employee) {
+        if (loungeAreaResolver == null) {
+            return;
+        }
+        employee.replaceAllowedAreas(loungeAreaResolver.resolveAllForEmployee());
     }
 
     @Transactional
@@ -89,6 +110,7 @@ public class EmployeeService {
             saved.setFacePhotoUrl(faceStorageService.store(facePhoto, saved.getId()));
             saved = employeeRepository.save(saved);
         }
+        applyFullAccessAreas(saved);
         auditService.record("EMPLOYEE_CREATED", "Employee", saved.getId(), Map.of("cpf", saved.getCpf(), "role", saved.getRole()),
                 Map.of(), employeeSnapshot(saved));
         eventPublisher.publishEvent(new EmployeeCreatedEvent(saved.getId()));
@@ -125,6 +147,7 @@ public class EmployeeService {
         employee.setAccessValidFrom(monthlyValidFrom(request.accessValidFrom()));
         employee.setAccessValidUntil(monthlyValidUntil(request.accessValidUntil()));
         employee.markPendingSync();
+        applyFullAccessAreas(employee);
         auditService.record("EMPLOYEE_UPDATED", "Employee", employee.getId(), Map.of("cpf", employee.getCpf(), "role", employee.getRole()),
                 oldData, employeeSnapshot(employee));
         eventPublisher.publishEvent(new EmployeeUpdatedEvent(employee.getId()));

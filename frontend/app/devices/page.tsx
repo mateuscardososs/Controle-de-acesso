@@ -348,7 +348,7 @@ function DeviceForm({ form, formError, areas, isPending, onSubmit, onCancel, upd
           <Input label="Nome" value={form.name} onChange={(e) => updateForm("name", e.target.value)} required />
           <Input label="Modelo" value={form.model} onChange={(e) => updateForm("model", e.target.value)} required />
           <Input label="Número de série" value={form.serialNumber} onChange={(e) => updateForm("serialNumber", e.target.value)} placeholder="DRWL3903457HU" />
-          <Select label="Area" value={form.areaId} onChange={(e) => updateForm("areaId", e.target.value)} required>
+          <Select label="Área" value={form.areaId} onChange={(e) => updateForm("areaId", e.target.value)} required>
             <option value="">Selecione</option>
             {areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
           </Select>
@@ -412,7 +412,7 @@ function validateForm(form: DeviceForm) {
   if (!form.name.trim()) return "Informe o nome do dispositivo.";
   if (!form.model.trim()) return "Informe o modelo do dispositivo.";
   if (!form.ipAddress.trim()) return "Informe o IP do dispositivo.";
-  if (!form.areaId) return "Selecione a area do dispositivo.";
+  if (!form.areaId) return "Selecione a área do dispositivo.";
   if (!Number.isInteger(port) || port < 1 || port > 65535) return "Informe uma porta HTTP entre 1 e 65535.";
   if (intelbrasModel && !form.intelbrasUsername.trim()) return "Informe o usuário Intelbras para este modelo.";
   return "";

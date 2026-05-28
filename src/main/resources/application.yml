@@ -86,6 +86,8 @@ app:
     intelbras:
       sync:
         max-attempts: ${INTELBRAS_SYNC_MAX_ATTEMPTS:3}
+  access:
+    release-cooldown-seconds: ${ACCESS_RELEASE_COOLDOWN_SECONDS:15}
   security:
     jwt:
       secret: ${JWT_SECRET:dev-only-change-this-secret-please-keep-it-long}

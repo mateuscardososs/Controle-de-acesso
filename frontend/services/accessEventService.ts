@@ -33,7 +33,9 @@ export type AccessEvent = {
   externalUserId?: string | null;
   rawCardName?: string | null;
   deviceId: string;
+  deviceName?: string | null;
   areaId: string;
+  areaName?: string | null;
   eventType: string;
   accessResult: "ALLOWED" | "DENIED" | "ERROR";
   eventCategory?: string | null;
@@ -51,6 +53,8 @@ export type AccessEvent = {
   occurredAt?: string | null;
   origin: string;
   rawPayload?: Record<string, unknown>;
+  cooldownBlocked?: boolean;
+  cooldownReason?: string | null;
 };
 
 export type AccessEventPage = {

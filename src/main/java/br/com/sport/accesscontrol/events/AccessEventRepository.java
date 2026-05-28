@@ -97,6 +97,29 @@ public interface AccessEventRepository extends JpaRepository<AccessEvent, UUID>,
             @Param("method") String method
     );
 
+    @Query(value = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM access_events
+                WHERE device_id = :deviceId
+                  AND access_result = 'ALLOWED'
+                  AND cooldown_blocked = FALSE
+                  AND event_time >= :since
+                  AND (
+                      (person_cpf IS NOT NULL AND person_cpf = :personCpf)
+                   OR (person_id IS NOT NULL AND CAST(person_id AS VARCHAR) = :personId)
+                   OR (external_user_id IS NOT NULL AND external_user_id = :externalUserId)
+                  )
+            )
+            """, nativeQuery = true)
+    boolean existsAllowedEventInCooldownWindow(
+            @Param("deviceId") UUID deviceId,
+            @Param("since") Instant since,
+            @Param("personCpf") String personCpf,
+            @Param("personId") String personId,
+            @Param("externalUserId") String externalUserId
+    );
+
     interface TrafficPeakRow {
         Integer getHour();
 

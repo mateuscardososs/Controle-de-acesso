@@ -177,6 +177,11 @@ export default function EmployeesPage() {
             { key: "email", header: "Email", render: (employee) => employee.email ?? "Nao informado" },
             { key: "cardNo", header: "Tag/cartão", render: (employee) => employee.cardNo ?? "Nao informado" },
             { key: "role", header: "Perfil", render: (employee) => employee.role ? <StatusBadge value={employee.role} /> : "Sem acesso" },
+            { key: "areas", header: "Áreas", render: (employee) => (
+              <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 ring-1 ring-inset ring-emerald-500/30">
+                {employee.fullAccess ? "Acesso Total" : (employee.displayAllowedAreas ?? "—")}
+              </span>
+            ) },
             { key: "status", header: "Status", render: (employee) => <StatusBadge value={employee.status} /> },
             { key: "sync", header: "Integração", render: (employee) => <StatusBadge value={employee.syncStatus ?? "PENDING_SYNC"} /> },
             {

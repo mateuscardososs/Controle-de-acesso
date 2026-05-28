@@ -18,6 +18,10 @@ export type Employee = {
   lastSyncAt?: string;
   lastSyncError?: string;
   syncAttempts?: number;
+  allowedAreaIds?: string[];
+  allowedAreaNames?: string[];
+  displayAllowedAreas?: string | null;
+  fullAccess?: boolean;
 };
 
 export type EmployeePayload = {

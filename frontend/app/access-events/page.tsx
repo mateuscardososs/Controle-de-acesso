@@ -255,9 +255,18 @@ export default function AccessEventsPage() {
               { key: "email", header: "E-mail", className: "min-w-[190px]", render: (event) => event.personEmail ?? "Não informado" },
               { key: "invitedDay", header: "Dia", render: (event) => formatDateOnly(event.invitedDay) },
               { key: "lounge", header: "Camarote", render: (event) => event.invitedLounge ?? "Não informado" },
-              { key: "device", header: "Catraca/controladora", className: "min-w-[180px]", render: (event) => deviceById.get(event.deviceId)?.name ?? event.deviceId.slice(0, 8) },
-              { key: "area", header: "Entrada/local", className: "min-w-[140px]", render: (event) => areaById.get(event.areaId)?.name ?? event.areaId.slice(0, 8) },
-              { key: "result", header: "Resultado", render: (event) => <StatusBadge value={event.accessResult} /> },
+              { key: "device", header: "Catraca/controladora", className: "min-w-[180px]", render: (event) => event.deviceName ?? deviceById.get(event.deviceId)?.name ?? event.deviceId.slice(0, 8) },
+              { key: "area", header: "Entrada/local", className: "min-w-[160px]", render: (event) => event.areaName ?? areaById.get(event.areaId)?.name ?? event.areaId.slice(0, 8) },
+              { key: "result", header: "Resultado", className: "min-w-[140px]", render: (event) => (
+                <div className="flex flex-wrap items-center gap-1">
+                  <StatusBadge value={event.accessResult} />
+                  {event.cooldownBlocked && (
+                    <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-400 ring-1 ring-inset ring-amber-500/30" title={event.cooldownReason ?? "Bloqueado por intervalo mínimo"}>
+                      Bloqueado 15s
+                    </span>
+                  )}
+                </div>
+              ) },
               { key: "recognition", header: "Reconhecimento", render: (event) => <StatusBadge value={event.recognitionStatus} /> },
               { key: "passage", header: "Passagem", render: (event) => <StatusBadge value={event.passageStatus} /> },
               { key: "manualReason", header: "Motivo manual", className: "min-w-[220px]", render: (event) => event.manualReason ?? "Não se aplica" }

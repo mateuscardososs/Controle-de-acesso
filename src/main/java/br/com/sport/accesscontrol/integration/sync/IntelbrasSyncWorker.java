@@ -115,6 +115,10 @@ public class IntelbrasSyncWorker {
         employee.markSyncing();
         auditStart(PersonType.EMPLOYEE, employeeId, employee.getSyncAttempts());
         realtimePublisher.publish(PersonType.EMPLOYEE, employeeId, SyncStatus.SYNCING, "Sincronizando Intelbras");
+        java.util.Set<java.util.UUID> allowedEmployeeAreas = employee.getAllowedAreas() == null
+                ? java.util.Collections.<java.util.UUID>emptySet()
+                : employee.getAllowedAreas().stream().map(br.com.sport.accesscontrol.areas.Area::getId)
+                        .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
         var result = provider.syncPerson(new ProviderPerson(
                 PersonType.EMPLOYEE,
                 employee.getId(),
@@ -124,7 +128,9 @@ public class IntelbrasSyncWorker {
                 employee.getFacePhotoUrl(),
                 employee.getStatus() == br.com.sport.accesscontrol.employees.EmployeeStatus.ACTIVE,
                 employee.getAccessValidFrom(),
-                employee.getAccessValidUntil()
+                employee.getAccessValidUntil(),
+                null,
+                allowedEmployeeAreas
         ));
         finishEmployee(employee, result);
         return result;
@@ -149,15 +155,22 @@ public class IntelbrasSyncWorker {
         var validUntil = guestValidUntil(guest);
         log.info("intelbras_sync_guest_validity guest_id={} invited_day={} valid_from={} valid_until={}",
                 guestId, guest.getInvitedDay(), validFrom, validUntil);
+        java.util.Set<java.util.UUID> allowedGuestAreas = guest.getAllowedAreas() == null
+                ? java.util.Collections.<java.util.UUID>emptySet()
+                : guest.getAllowedAreas().stream().map(br.com.sport.accesscontrol.areas.Area::getId)
+                        .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
         var result = provider.syncPerson(new ProviderPerson(
                 PersonType.GUEST,
                 guest.getId(),
                 guest.getCpf(),
+                null,
                 guest.getFullName(),
                 guest.getFacePhotoUrl(),
                 guest.getStatus() == br.com.sport.accesscontrol.guests.GuestStatus.COMPLETED,
                 validFrom,
-                validUntil
+                validUntil,
+                null,
+                allowedGuestAreas
         ));
         finishGuest(guest, result, target);
         return result;

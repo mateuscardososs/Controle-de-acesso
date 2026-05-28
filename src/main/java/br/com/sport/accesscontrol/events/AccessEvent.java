@@ -117,6 +117,12 @@ public class AccessEvent {
     @Column(name = "raw_payload", columnDefinition = "jsonb")
     private Map<String, Object> rawPayload;
 
+    @Column(name = "cooldown_blocked", nullable = false)
+    private boolean cooldownBlocked = false;
+
+    @Column(name = "cooldown_reason")
+    private String cooldownReason;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -310,6 +316,25 @@ public class AccessEvent {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public boolean isCooldownBlocked() {
+        return cooldownBlocked;
+    }
+
+    public String getCooldownReason() {
+        return cooldownReason;
+    }
+
+    public void applyCooldownBlock(String reason) {
+        this.cooldownBlocked = true;
+        this.cooldownReason = reason;
+    }
+
+    public void overrideAccessResult(AccessResult result) {
+        if (result != null) {
+            this.accessResult = result;
+        }
     }
 
     private String blankToNull(String value) {

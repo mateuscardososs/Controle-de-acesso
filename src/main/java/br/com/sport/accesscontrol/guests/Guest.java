@@ -1,11 +1,14 @@
 package br.com.sport.accesscontrol.guests;
 
+import br.com.sport.accesscontrol.areas.Area;
 import br.com.sport.accesscontrol.common.TimestampedEntity;
 import br.com.sport.accesscontrol.integration.sync.SyncStatus;
 import jakarta.persistence.*;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.UUID;
 
 @Entity
@@ -78,6 +81,14 @@ public class Guest extends TimestampedEntity {
 
     @Column(name = "access_approved_email_message")
     private String accessApprovedEmailMessage;
+
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+            name = "guest_allowed_areas",
+            joinColumns = @JoinColumn(name = "guest_id"),
+            inverseJoinColumns = @JoinColumn(name = "area_id")
+    )
+    private Set<Area> allowedAreas = new LinkedHashSet<>();
 
     protected Guest() {
     }
@@ -273,5 +284,23 @@ public class Guest extends TimestampedEntity {
         syncStatus = SyncStatus.SYNC_FAILED;
         lastSyncAt = Instant.now();
         lastSyncError = error;
+    }
+
+    public Set<Area> getAllowedAreas() {
+        if (allowedAreas == null) {
+            allowedAreas = new LinkedHashSet<>();
+        }
+        return allowedAreas;
+    }
+
+    public void replaceAllowedAreas(Set<Area> areas) {
+        if (allowedAreas == null) {
+            allowedAreas = new LinkedHashSet<>();
+        } else {
+            allowedAreas.clear();
+        }
+        if (areas != null) {
+            allowedAreas.addAll(areas);
+        }
     }
 }

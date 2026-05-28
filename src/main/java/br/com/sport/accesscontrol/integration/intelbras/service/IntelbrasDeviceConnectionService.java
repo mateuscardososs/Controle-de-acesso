@@ -35,6 +35,24 @@ public class IntelbrasDeviceConnectionService {
         return configuredCandidates(true);
     }
 
+    /**
+     * Seleciona todos os dispositivos online cuja área esteja na lista de áreas permitidas.
+     * Usado para sincronizar uma pessoa nas controladoras das áreas que ela pode acessar.
+     */
+    public List<IntelbrasDeviceConnection> selectOnlineConfiguredDevicesForAreas(java.util.Set<UUID> allowedAreaIds) {
+        var candidates = onlineConfiguredDevices();
+        if (allowedAreaIds == null || allowedAreaIds.isEmpty()) {
+            log.info("intelbras_multi_area_selection allowed_areas=empty selected=0");
+            return List.of();
+        }
+        var selected = candidates.stream()
+                .filter(connection -> allowedAreaIds.contains(areaId(connection.device())))
+                .toList();
+        log.info("intelbras_multi_area_selection allowed_areas_count={} selected={} candidates={}",
+                allowedAreaIds.size(), selected.size(), candidates.size());
+        return selected;
+    }
+
     public Optional<IntelbrasDeviceConnection> selectOnlineConfiguredDevice(UUID preferredAreaId) {
         var candidates = onlineConfiguredDevices();
         Optional<IntelbrasDeviceConnection> selected = Optional.empty();

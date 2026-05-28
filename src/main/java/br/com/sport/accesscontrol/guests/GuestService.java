@@ -1,5 +1,6 @@
 package br.com.sport.accesscontrol.guests;
 
+import br.com.sport.accesscontrol.areas.LoungeAreaResolver;
 import br.com.sport.accesscontrol.audit.AuditService;
 import br.com.sport.accesscontrol.appconfig.LoungeConfig;
 import br.com.sport.accesscontrol.common.CpfValidator;
@@ -52,6 +53,7 @@ public class GuestService {
     private final MailService mailService;
     private final ApplicationEventPublisher eventPublisher;
     private final LoungeConfig loungeConfig;
+    private final LoungeAreaResolver loungeAreaResolver;
     private final String publicBaseUrl;
     private final SecureRandom secureRandom = new SecureRandom();
     private final Duration inviteTtl;
@@ -60,10 +62,23 @@ public class GuestService {
     private static final LocalTime GUEST_ACCESS_START_TIME = LocalTime.of(15, 0);
     private static final LocalTime GUEST_ACCESS_END_TIME = LocalTime.of(4, 0);
 
+    /** Backward-compatible constructor (testes legados sem LoungeAreaResolver). */
     public GuestService(GuestRepository guestRepository, GuestInviteRepository inviteRepository,
                         FaceStorageService faceStorageService, AuditService auditService,
                         RealtimePublisherService realtimePublisherService, MailService mailService,
                         ApplicationEventPublisher eventPublisher, LoungeConfig loungeConfig,
+                        String publicBaseUrl,
+                        long inviteExpirationHours) {
+        this(guestRepository, inviteRepository, faceStorageService, auditService, realtimePublisherService,
+                mailService, eventPublisher, loungeConfig, null, publicBaseUrl, inviteExpirationHours);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public GuestService(GuestRepository guestRepository, GuestInviteRepository inviteRepository,
+                        FaceStorageService faceStorageService, AuditService auditService,
+                        RealtimePublisherService realtimePublisherService, MailService mailService,
+                        ApplicationEventPublisher eventPublisher, LoungeConfig loungeConfig,
+                        LoungeAreaResolver loungeAreaResolver,
                         @Value("${app.frontend.public-base-url:http://localhost:3000}") String publicBaseUrl,
                         @Value("${app.guests.invite-expiration-hours:72}") long inviteExpirationHours) {
         this.guestRepository = guestRepository;
@@ -74,6 +89,7 @@ public class GuestService {
         this.mailService = mailService;
         this.eventPublisher = eventPublisher;
         this.loungeConfig = loungeConfig;
+        this.loungeAreaResolver = loungeAreaResolver;
         this.publicBaseUrl = publicBaseUrl;
         this.inviteTtl = Duration.ofHours(inviteExpirationHours);
     }
@@ -87,6 +103,7 @@ public class GuestService {
                 request.visitReason(), request.hostName(), request.visitStart(), request.visitEnd(),
                 resolveInvitedDay(request.invitedDay(), request.visitStart()), normalize(request.invitedLounge())
         ));
+        applyAllowedAreas(guest);
         var invite = createInvite(guest);
         var inviteUrl = inviteUrl(invite);
         var delivery = sendInviteEmail(guest, inviteUrl, false);
@@ -135,6 +152,7 @@ public class GuestService {
                 resolvedInvitedDay,
                 resolvedInvitedLounge
         ));
+        applyAllowedAreas(guest);
         createInvite(guest);
 
         var oldData = snapshot(guest);
@@ -182,8 +200,17 @@ public class GuestService {
                 request.visitReason(), request.hostName(), request.visitStart(), request.visitEnd(),
                 resolveInvitedDay(request.invitedDay(), request.visitStart()), normalize(request.invitedLounge()),
                 request.status());
+        applyAllowedAreas(guest);
         auditService.record("GUEST_UPDATED", "Guest", guest.getId(), Map.of(), oldData, snapshot(guest));
         return GuestResponse.from(guest, null);
+    }
+
+    private void applyAllowedAreas(Guest guest) {
+        if (loungeAreaResolver == null) {
+            return;
+        }
+        var areas = loungeAreaResolver.resolveForLounge(guest.getInvitedLounge());
+        guest.replaceAllowedAreas(areas);
     }
 
     @Transactional

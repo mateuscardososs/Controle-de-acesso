@@ -1,5 +1,6 @@
 package br.com.sport.accesscontrol.employees;
 
+import br.com.sport.accesscontrol.areas.Area;
 import br.com.sport.accesscontrol.common.TimestampedEntity;
 import br.com.sport.accesscontrol.integration.sync.SyncStatus;
 import br.com.sport.accesscontrol.users.UserRole;
@@ -7,12 +8,18 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.UUID;
 
 @Entity
@@ -70,6 +77,14 @@ public class Employee extends TimestampedEntity {
 
     @Column(name = "sync_attempts", nullable = false)
     private int syncAttempts;
+
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+            name = "employee_allowed_areas",
+            joinColumns = @JoinColumn(name = "employee_id"),
+            inverseJoinColumns = @JoinColumn(name = "area_id")
+    )
+    private Set<Area> allowedAreas = new LinkedHashSet<>();
 
     protected Employee() {
     }
@@ -238,5 +253,23 @@ public class Employee extends TimestampedEntity {
         syncStatus = SyncStatus.SYNC_FAILED;
         lastSyncAt = Instant.now();
         lastSyncError = error;
+    }
+
+    public Set<Area> getAllowedAreas() {
+        if (allowedAreas == null) {
+            allowedAreas = new LinkedHashSet<>();
+        }
+        return allowedAreas;
+    }
+
+    public void replaceAllowedAreas(Set<Area> areas) {
+        if (allowedAreas == null) {
+            allowedAreas = new LinkedHashSet<>();
+        } else {
+            allowedAreas.clear();
+        }
+        if (areas != null) {
+            allowedAreas.addAll(areas);
+        }
     }
 }

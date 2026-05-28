@@ -20,7 +20,9 @@ public record AccessEventResponse(
         String externalUserId,
         String rawCardName,
         UUID deviceId,
+        String deviceName,
         UUID areaId,
+        String areaName,
         AccessEventType eventType,
         AccessResult accessResult,
         EventCategory eventCategory,
@@ -38,9 +40,13 @@ public record AccessEventResponse(
         Instant occurredAt,
         String origin,
         Map<String, Object> rawPayload,
-        Instant createdAt
+        Instant createdAt,
+        boolean cooldownBlocked,
+        String cooldownReason
 ) {
     public static AccessEventResponse from(AccessEvent accessEvent) {
+        var device = accessEvent.getDevice();
+        var area = accessEvent.getArea();
         return new AccessEventResponse(
                 accessEvent.getId(),
                 accessEvent.getPersonType(),
@@ -53,8 +59,10 @@ public record AccessEventResponse(
                 accessEvent.getInvitedLounge(),
                 accessEvent.getExternalUserId(),
                 accessEvent.getRawCardName(),
-                accessEvent.getDevice().getId(),
-                accessEvent.getArea().getId(),
+                device != null ? device.getId() : null,
+                device != null ? device.getName() : null,
+                area != null ? area.getId() : null,
+                area != null ? area.getName() : null,
                 accessEvent.getEventType(),
                 accessEvent.getAccessResult(),
                 accessEvent.getEventCategory(),
@@ -72,7 +80,9 @@ public record AccessEventResponse(
                 accessEvent.getOccurredAt(),
                 accessEvent.getOrigin(),
                 accessEvent.getRawPayload(),
-                accessEvent.getCreatedAt()
+                accessEvent.getCreatedAt(),
+                accessEvent.isCooldownBlocked(),
+                accessEvent.getCooldownReason()
         );
     }
 }

@@ -32,6 +32,9 @@ export type Guest = {
   accessApprovedEmailSentAt?: string;
   accessApprovedEmailStatus?: "SENT" | "SKIPPED" | "FAILED" | string;
   accessApprovedEmailMessage?: string;
+  allowedAreaIds?: string[];
+  allowedAreaNames?: string[];
+  displayAllowedAreas?: string | null;
 };
 
 export type GuestPayload = {

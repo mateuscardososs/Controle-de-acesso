@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.UUID;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -43,6 +44,7 @@ public class AccessEventService {
     private final IntelbrasProperties intelbrasProperties;
     private final GuestRepository guestRepository;
     private final EmployeeRepository employeeRepository;
+    private final AccessCooldownService cooldownService;
 
     public AccessEventService(AccessEventRepository accessEventRepository, DeviceService deviceService,
                               ApplicationEventPublisher eventPublisher, AuditService auditService,
@@ -50,7 +52,18 @@ public class AccessEventService {
                               AccessMetricsService accessMetricsService,
                               IntelbrasProperties intelbrasProperties) {
         this(accessEventRepository, deviceService, eventPublisher, auditService, realtimePublisherService,
-                accessMetricsService, intelbrasProperties, null, null);
+                accessMetricsService, intelbrasProperties, null, null, null);
+    }
+
+    public AccessEventService(AccessEventRepository accessEventRepository, DeviceService deviceService,
+                              ApplicationEventPublisher eventPublisher, AuditService auditService,
+                              RealtimePublisherService realtimePublisherService,
+                              AccessMetricsService accessMetricsService,
+                              IntelbrasProperties intelbrasProperties,
+                              GuestRepository guestRepository,
+                              EmployeeRepository employeeRepository) {
+        this(accessEventRepository, deviceService, eventPublisher, auditService, realtimePublisherService,
+                accessMetricsService, intelbrasProperties, guestRepository, employeeRepository, null);
     }
 
     @Autowired
@@ -60,7 +73,8 @@ public class AccessEventService {
                               AccessMetricsService accessMetricsService,
                               IntelbrasProperties intelbrasProperties,
                               GuestRepository guestRepository,
-                              EmployeeRepository employeeRepository) {
+                              EmployeeRepository employeeRepository,
+                              AccessCooldownService cooldownService) {
         this.accessEventRepository = accessEventRepository;
         this.deviceService = deviceService;
         this.eventPublisher = eventPublisher;
@@ -70,6 +84,7 @@ public class AccessEventService {
         this.intelbrasProperties = intelbrasProperties;
         this.guestRepository = guestRepository;
         this.employeeRepository = employeeRepository;
+        this.cooldownService = cooldownService;
     }
 
     @Transactional
@@ -136,6 +151,14 @@ public class AccessEventService {
         )) {
             return Optional.empty();
         }
+        var personKey = cooldownService != null
+                ? AccessCooldownService.personKey(normalized.personCpf(), normalized.personId(),
+                        normalized.externalUserId(), normalized.rawCardName())
+                : null;
+        var isCooldownBlocked = normalized.accessResult() == AccessResult.ALLOWED
+                && cooldownService != null
+                && cooldownService.isInCooldown(personKey, device.getId());
+
         var accessEvent = new AccessEvent(
                 normalized.personType(),
                 normalized.personId(),
@@ -165,15 +188,23 @@ public class AccessEventService {
                 rawText(normalized.rawPayload(), "ErrorCode"),
                 normalized.eventTime()
         );
+        if (isCooldownBlocked) {
+            accessEvent.applyCooldownBlock(
+                    "Bloqueado por intervalo mínimo de " + cooldownService.cooldownSeconds() + "s");
+        }
         enrichPersonSnapshot(accessEvent);
+        applyAreaAuthorizationCheck(accessEvent, device);
         var saved = accessEventRepository.save(accessEvent);
+        if (!isCooldownBlocked && normalized.accessResult() == AccessResult.ALLOWED && cooldownService != null) {
+            cooldownService.recordAllowed(personKey, device.getId());
+        }
         accessMetricsService.recordAccessEvent(saved);
         auditService.record("ACCESS_EVENT_IMPORTED", "AccessEvent", saved.getId(),
                 Map.of("origin", saved.getOrigin(), "result", saved.getAccessResult()), Map.of(), Map.of("id", saved.getId()));
         realtimePublisherService.publishAccessEvent(saved);
         org.slf4j.LoggerFactory.getLogger(AccessEventService.class).info(
-                "event_publish_realtime access_event_id={} device_id={} origin={}",
-                saved.getId(), device.getId(), saved.getOrigin());
+                "event_publish_realtime access_event_id={} device_id={} origin={} cooldown_blocked={}",
+                saved.getId(), device.getId(), saved.getOrigin(), saved.isCooldownBlocked());
         eventPublisher.publishEvent(new AccessEventReceivedEvent(saved.getId()));
         return Optional.of(AccessEventResponse.from(saved));
     }
@@ -241,8 +272,17 @@ public class AccessEventService {
         var device = deviceService.getById(request.deviceId());
         var now = Instant.now();
         var operator = operator(authentication);
+        var personCpfDigits = hasText(request.personCpf()) ? onlyDigits(request.personCpf()) : null;
+        if (cooldownService != null) {
+            var personKey = AccessCooldownService.personKey(personCpfDigits, null, null, null);
+            if (cooldownService.isInCooldown(personKey, device.getId())) {
+                throw new IllegalStateException(
+                        "Liberação bloqueada: intervalo mínimo de " + cooldownService.cooldownSeconds()
+                                + "s ainda não decorrido para esta pessoa neste dispositivo.");
+            }
+        }
         var rawPayload = new LinkedHashMap<String, Object>();
-        var personCpf = hasText(request.personCpf()) ? onlyDigits(request.personCpf()) : null;
+        var personCpf = personCpfDigits;
         rawPayload.put("source", "manual-release");
         rawPayload.put("personName", request.personName());
         rawPayload.put("personCpf", personCpf);
@@ -287,6 +327,10 @@ public class AccessEventService {
         );
         enrichPersonSnapshot(accessEvent);
         var saved = accessEventRepository.save(accessEvent);
+        if (cooldownService != null) {
+            var personKey = AccessCooldownService.personKey(personCpf, null, null, null);
+            cooldownService.recordAllowed(personKey, device.getId());
+        }
         accessMetricsService.recordAccessEvent(saved);
         auditService.record("MANUAL_ADMIN_RELEASE", "AccessEvent", saved.getId(),
                 Map.of("deviceId", device.getId(), "operatorUserId", operator.id(), "reason", request.reason()),
@@ -556,6 +600,57 @@ public class AccessEventService {
 
     private String onlyDigits(String value) {
         return value == null ? "" : value.replaceAll("\\D", "");
+    }
+
+    /**
+     * Checa se a área do dispositivo está nas áreas permitidas da pessoa identificada.
+     * Se não estiver, marca o evento como DENIED com decisionReason ("Sem permissão para a área X").
+     * Convidados sem áreas atribuídas continuam permitidos (eventos legados/sem mapeamento).
+     */
+    private void applyAreaAuthorizationCheck(AccessEvent event, br.com.sport.accesscontrol.devices.Device device) {
+        if (event == null || device == null || device.getArea() == null) return;
+        if (event.getPersonId() == null) return;
+        if (event.getAccessResult() != AccessResult.ALLOWED) return;
+        var deviceAreaId = device.getArea().getId();
+
+        java.util.Set<UUID> allowed = java.util.Collections.emptySet();
+        if (event.getPersonType() == br.com.sport.accesscontrol.common.PersonType.GUEST && guestRepository != null) {
+            var guest = guestRepository.findById(event.getPersonId()).orElse(null);
+            if (guest != null && guest.getAllowedAreas() != null) {
+                allowed = guest.getAllowedAreas().stream()
+                        .map(br.com.sport.accesscontrol.areas.Area::getId)
+                        .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+            }
+        } else if (event.getPersonType() == br.com.sport.accesscontrol.common.PersonType.EMPLOYEE && employeeRepository != null) {
+            var employee = employeeRepository.findById(event.getPersonId()).orElse(null);
+            if (employee != null && employee.getAllowedAreas() != null) {
+                allowed = employee.getAllowedAreas().stream()
+                        .map(br.com.sport.accesscontrol.areas.Area::getId)
+                        .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+            }
+        }
+        if (allowed.isEmpty()) {
+            // Sem áreas atribuídas — não temos como bloquear (compatibilidade com dados antigos).
+            return;
+        }
+        if (!allowed.contains(deviceAreaId)) {
+            var reason = "Sem permissão para a área " + device.getArea().getName();
+            event.applyOperationalFields(
+                    EventCategory.ACCESS_DECISION,
+                    event.getRecognitionStatus(),
+                    PassageStatus.NOT_PASSED,
+                    event.getReleaseMethod(),
+                    event.getOperatorUserId(),
+                    event.getManualReason(),
+                    event.getControllerMethod(),
+                    event.getControllerDoor(),
+                    event.getControllerReaderId(),
+                    event.getControllerRecNo(),
+                    reason,
+                    event.getOccurredAt()
+            );
+            event.overrideAccessResult(AccessResult.DENIED);
+        }
     }
 
     private record PersonSnapshot(

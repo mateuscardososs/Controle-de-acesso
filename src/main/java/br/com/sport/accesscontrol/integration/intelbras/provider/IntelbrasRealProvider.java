@@ -61,11 +61,25 @@ public class IntelbrasRealProvider implements AccessControlProvider {
         if (!person.active()) {
             return removePerson(person);
         }
-        var selectedConnection = connectionService.selectOnlineConfiguredDevice(person.areaId());
-        if (selectedConnection.isEmpty()) {
-            return result(start, ProviderSyncStatus.FAILED, "No configured Intelbras real devices found.");
+        java.util.List<br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasDeviceConnection> connections;
+        if (person.allowedAreaIds() != null && !person.allowedAreaIds().isEmpty()) {
+            connections = connectionService.selectOnlineConfiguredDevicesForAreas(person.allowedAreaIds());
+            if (connections.isEmpty()) {
+                // Sem dispositivo nas áreas permitidas — fallback: tenta a área principal
+                var fallback = connectionService.selectOnlineConfiguredDevice(person.areaId());
+                if (fallback.isEmpty()) {
+                    return result(start, ProviderSyncStatus.FAILED,
+                            "No configured Intelbras real devices found for allowed areas of person.");
+                }
+                connections = java.util.List.of(fallback.get());
+            }
+        } else {
+            var selectedConnection = connectionService.selectOnlineConfiguredDevice(person.areaId());
+            if (selectedConnection.isEmpty()) {
+                return result(start, ProviderSyncStatus.FAILED, "No configured Intelbras real devices found.");
+            }
+            connections = java.util.List.of(selectedConnection.get());
         }
-        var connections = java.util.List.of(selectedConnection.get());
 
         String photoData = null;
         try {

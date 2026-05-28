@@ -1,9 +1,12 @@
 package br.com.sport.accesscontrol.employees;
 
+import br.com.sport.accesscontrol.areas.Area;
 import br.com.sport.accesscontrol.integration.sync.SyncStatus;
 import br.com.sport.accesscontrol.users.UserRole;
 
 import java.time.Instant;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
 
 public record EmployeeResponse(
@@ -25,18 +28,30 @@ public record EmployeeResponse(
         String lastSyncError,
         int syncAttempts,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        List<UUID> allowedAreaIds,
+        List<String> allowedAreaNames,
+        String displayAllowedAreas,
+        boolean fullAccess
 ) {
     static EmployeeResponse from(Employee employee) {
+        List<Area> allowed = employee.getAllowedAreas() == null
+                ? Collections.emptyList()
+                : employee.getAllowedAreas().stream().toList();
+        List<UUID> allowedIds = allowed.stream().map(Area::getId).toList();
+        List<String> allowedNames = allowed.stream().map(Area::getName).toList();
+        // Colaboradores sempre recebem TODAS as áreas — sinalizamos "Acesso Total".
+        boolean fullAccess = !allowed.isEmpty();
+        String display = fullAccess ? "Acesso Total" : null;
         return new EmployeeResponse(
                 employee.getId(),
                 employee.getFullName(),
                 employee.getCpf(),
-                    employee.getEmail(),
-                    employee.getPhone(),
-                    employee.getRegistrationNumber(),
-                    employee.getCardNo(),
-                    employee.getFacePhotoUrl(),
+                employee.getEmail(),
+                employee.getPhone(),
+                employee.getRegistrationNumber(),
+                employee.getCardNo(),
+                employee.getFacePhotoUrl(),
                 employee.getUserId(),
                 employee.getRole(),
                 employee.getStatus(),
@@ -47,7 +62,11 @@ public record EmployeeResponse(
                 employee.getLastSyncError(),
                 employee.getSyncAttempts(),
                 employee.getCreatedAt(),
-                employee.getUpdatedAt()
+                employee.getUpdatedAt(),
+                allowedIds,
+                allowedNames,
+                display,
+                fullAccess
         );
     }
 }

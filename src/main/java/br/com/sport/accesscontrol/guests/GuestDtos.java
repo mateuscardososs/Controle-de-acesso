@@ -1,5 +1,6 @@
 package br.com.sport.accesscontrol.guests;
 
+import br.com.sport.accesscontrol.areas.Area;
 import br.com.sport.accesscontrol.integration.sync.SyncStatus;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Email;
@@ -8,6 +9,7 @@ import jakarta.validation.constraints.NotNull;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -97,7 +99,10 @@ public final class GuestDtos {
             int syncAttempts,
             Instant accessApprovedEmailSentAt,
             String accessApprovedEmailStatus,
-            String accessApprovedEmailMessage
+            String accessApprovedEmailMessage,
+            List<UUID> allowedAreaIds,
+            List<String> allowedAreaNames,
+            String displayAllowedAreas
     ) {
         static GuestResponse from(Guest guest, GuestInvite invite) {
             return from(guest, invite, null, null, null);
@@ -105,6 +110,12 @@ public final class GuestDtos {
 
         static GuestResponse from(Guest guest, GuestInvite invite, String inviteUrl, String emailDeliveryStatus,
                                   String emailDeliveryMessage) {
+            List<Area> allowed = guest.getAllowedAreas() == null
+                    ? Collections.emptyList()
+                    : guest.getAllowedAreas().stream().toList();
+            List<UUID> allowedIds = allowed.stream().map(Area::getId).toList();
+            List<String> allowedNames = allowed.stream().map(Area::getName).toList();
+            String display = allowedNames.isEmpty() ? null : String.join(" / ", allowedNames);
             return new GuestResponse(
                     guest.getId(),
                     guest.getFullName(),
@@ -133,7 +144,10 @@ public final class GuestDtos {
                     guest.getSyncAttempts(),
                     guest.getAccessApprovedEmailSentAt(),
                     guest.getAccessApprovedEmailStatus(),
-                    guest.getAccessApprovedEmailMessage()
+                    guest.getAccessApprovedEmailMessage(),
+                    allowedIds,
+                    allowedNames,
+                    display
             );
         }
     }
