@@ -86,6 +86,8 @@ export type PublicVisitorRegistrationPayload = {
   facePhoto: File;
 };
 
+export type AdminVisitorRegistrationPayload = PublicVisitorRegistrationPayload;
+
 export type PublicVisitorRegistrationResponse = {
   id: string;
   fullName: string;
@@ -105,6 +107,18 @@ export const guestService = {
   },
   async create(payload: GuestPayload) {
     const { data } = await api.post<Guest>("/api/guests", payload);
+    return data;
+  },
+  async createVisitorRegistration(payload: AdminVisitorRegistrationPayload) {
+    const formData = new FormData();
+    formData.append("fullName", payload.fullName);
+    formData.append("cpf", payload.cpf);
+    formData.append("phone", payload.phone);
+    if (payload.email) formData.append("email", payload.email);
+    formData.append("invitedDay", payload.invitedDay);
+    formData.append("invitedLounge", payload.invitedLounge);
+    formData.append("facePhoto", payload.facePhoto);
+    const { data } = await api.post<Guest>("/api/guests/visitor-registration", formData);
     return data;
   },
   async update(id: string, payload: GuestPayload) {

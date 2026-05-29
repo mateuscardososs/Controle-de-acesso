@@ -730,7 +730,7 @@ class EnterpriseArchitectureTests {
     }
 
     @Test
-    void importedIntelbrasEventEnrichesGuestInviteSnapshotAndPublishesRealtime() {
+    void importedIntelbrasEventEnrichesLegacyFront3GuestSnapshotAndPublishesRealtime() {
         var repository = mock(AccessEventRepository.class);
         var deviceService = mock(DeviceService.class);
         var realtimePublisher = mock(RealtimePublisherService.class);
@@ -1175,7 +1175,7 @@ class EnterpriseArchitectureTests {
         var provider = mock(AccessControlProvider.class);
         var auditService = mock(AuditService.class);
         var realtime = mock(IntegrationSyncRealtimePublisher.class);
-        when(employeeRepository.findById(employee.getId())).thenReturn(Optional.of(employee));
+        when(employeeRepository.findByIdWithAllowedAreas(employee.getId())).thenReturn(Optional.of(employee));
         when(provider.syncPerson(any())).thenReturn(new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "ok", java.time.Duration.ofMillis(10)));
 
         worker(employeeRepository, mock(GuestRepository.class), provider, auditService, mock(IntegrationEventPublisher.class), realtime, 3)
@@ -1200,7 +1200,7 @@ class EnterpriseArchitectureTests {
         var guestRepository = mock(GuestRepository.class);
         var provider = mock(AccessControlProvider.class);
         var publisher = mock(IntegrationEventPublisher.class);
-        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
         when(provider.syncPerson(any())).thenReturn(new ProviderSyncResult(ProviderSyncStatus.FAILED, "down", java.time.Duration.ofMillis(5)));
 
         var worker = worker(mock(EmployeeRepository.class), guestRepository, provider, mock(AuditService.class),
@@ -1223,7 +1223,7 @@ class EnterpriseArchitectureTests {
         var realtime = mock(IntegrationSyncRealtimePublisher.class);
         var auditService = mock(AuditService.class);
         var mailService = mock(MailService.class);
-        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
         when(provider.syncPerson(any())).thenReturn(new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "ok", java.time.Duration.ofMillis(5)));
         when(mailService.sendGuestAccessApproved(guest)).thenReturn(MailDeliveryResult.delivered());
 
@@ -1253,7 +1253,7 @@ class EnterpriseArchitectureTests {
         var guestRepository = mock(GuestRepository.class);
         var provider = mock(AccessControlProvider.class);
         var mailService = mock(MailService.class);
-        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
         when(provider.syncPerson(any())).thenReturn(new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "ok", java.time.Duration.ofMillis(5)));
 
         worker(mock(EmployeeRepository.class), guestRepository, provider, mock(AuditService.class),
@@ -1271,7 +1271,7 @@ class EnterpriseArchitectureTests {
         var guestRepository = mock(GuestRepository.class);
         var provider = mock(AccessControlProvider.class);
         var publisher = mock(IntegrationEventPublisher.class);
-        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
 
         worker(mock(EmployeeRepository.class), guestRepository, provider, mock(AuditService.class),
                 publisher, mock(IntegrationSyncRealtimePublisher.class), 3)
@@ -1313,11 +1313,12 @@ class EnterpriseArchitectureTests {
     }
 
     @Test
-    void intelbrasDeviceConnectionServiceRejectsOnlineDeviceWithoutSs55xxOrIntelbrasModel() {
+    void intelbrasDeviceConnectionServiceRejectsOnlineDeviceWithGenericModelAndNoPassword() {
         var device = device(area());
         ReflectionTestUtils.setField(device, "model", "Generic Controller");
+        ReflectionTestUtils.setField(device, "name", "Catraca Social");
         device.setIntelbrasUsername("admin");
-        device.setIntelbrasPassword("secret");
+        // no password — must be rejected when model/name also doesn't match Intelbras patterns
         device.setStatus(DeviceStatus.ONLINE);
         var repository = mock(DeviceRepository.class);
         when(repository.findAll()).thenReturn(List.of(device));
@@ -1482,7 +1483,7 @@ class EnterpriseArchitectureTests {
     }
 
     private static LoungeConfig defaultLoungeConfig() {
-        return new LoungeConfig(List.of("Front 1", "Front 2", "Front 3", "Institucional 1", "Institucional Vereador"));
+        return new LoungeConfig(List.of("Front 1", "Front 2", "Institucional 1", "Institucional Vereadores"));
     }
 
     private MockMultipartFile png() {

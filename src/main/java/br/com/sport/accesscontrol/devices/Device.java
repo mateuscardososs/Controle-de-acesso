@@ -49,6 +49,9 @@ public class Device extends TimestampedEntity {
     @JoinColumn(name = "area_id", nullable = false)
     private Area area;
 
+    @Column(nullable = false)
+    private boolean active = true;
+
     @Column(name = "last_seen_at")
     private Instant lastSeenAt;
 
@@ -145,6 +148,10 @@ public class Device extends TimestampedEntity {
         return status;
     }
 
+    public boolean isActive() {
+        return active;
+    }
+
     public void setStatus(DeviceStatus status) {
         this.status = status;
         this.onlineStatus = status;
@@ -221,6 +228,13 @@ public class Device extends TimestampedEntity {
         if (area != null) {
             this.area = area;
         }
+    }
+
+    public void deactivate() {
+        this.active = false;
+        this.status = DeviceStatus.OFFLINE;
+        this.onlineStatus = DeviceStatus.OFFLINE;
+        this.lastSeenAt = Instant.now();
     }
 
     private String blankToNull(String value) {

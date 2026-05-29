@@ -42,9 +42,8 @@ public class DeviceController {
     }
 
     @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    void delete(@PathVariable UUID id) {
-        deviceService.delete(id);
+    DeviceDeleteResponse delete(@PathVariable UUID id) {
+        return deviceService.delete(id);
     }
 
     @PostMapping("/{id}/ping")

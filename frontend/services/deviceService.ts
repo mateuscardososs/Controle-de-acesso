@@ -21,6 +21,7 @@ export type Device = {
   lastError?: string;
   communicationFailures?: number;
   onlineStatus?: string;
+  active?: boolean;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -39,6 +40,13 @@ export type DevicePayload = {
   areaId: string;
 };
 
+export type DeviceDeleteResponse = {
+  removed: boolean;
+  deactivated: boolean;
+  message: string;
+  device?: Device;
+};
+
 export const deviceService = {
   async list() {
     const { data } = await api.get<Device[]>("/api/devices");
@@ -53,7 +61,8 @@ export const deviceService = {
     return data;
   },
   async delete(id: string) {
-    await api.delete(`/api/devices/${id}`);
+    const { data } = await api.delete<DeviceDeleteResponse>(`/api/devices/${id}`);
+    return data;
   },
   async ping(id: string) {
     const { data } = await api.post<Device>(`/api/devices/${id}/ping`);

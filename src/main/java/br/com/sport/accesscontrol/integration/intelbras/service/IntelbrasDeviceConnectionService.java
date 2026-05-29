@@ -42,14 +42,32 @@ public class IntelbrasDeviceConnectionService {
     public List<IntelbrasDeviceConnection> selectOnlineConfiguredDevicesForAreas(java.util.Set<UUID> allowedAreaIds) {
         var candidates = onlineConfiguredDevices();
         if (allowedAreaIds == null || allowedAreaIds.isEmpty()) {
+            log.info("SYNC_DEVICE_CANDIDATES_BEFORE_FILTER allowed_area_ids=[] total_online_candidates={}",
+                    candidates.size());
             log.info("intelbras_multi_area_selection allowed_areas=empty selected=0");
+            log.info("SYNC_DEVICE_CANDIDATES_AFTER_FILTER selected_count=0 selected_ids=[] reason=no_allowed_areas_provided");
             return List.of();
         }
+        log.info("SYNC_DEVICE_CANDIDATES_BEFORE_FILTER allowed_area_ids=[{}] total_online_candidates={}",
+                allowedAreaIds.stream().map(UUID::toString).collect(java.util.stream.Collectors.joining(",")),
+                candidates.size());
         var selected = candidates.stream()
                 .filter(connection -> allowedAreaIds.contains(areaId(connection.device())))
                 .toList();
+        log.info("SYNC_DEVICE_CANDIDATES_AFTER_FILTER selected_count={} selected_ids=[{}]",
+                selected.size(),
+                selected.stream()
+                        .map(c -> c.device().getId() == null ? "null" : c.device().getId().toString())
+                        .collect(java.util.stream.Collectors.joining(",")));
         log.info("intelbras_multi_area_selection allowed_areas_count={} selected={} candidates={}",
                 allowedAreaIds.size(), selected.size(), candidates.size());
+        if (selected.isEmpty() && !candidates.isEmpty()) {
+            log.warn("SYNC_DEVICE_CANDIDATES_AFTER_FILTER_EMPTY allowed_area_ids=[{}] candidate_area_ids=[{}]",
+                    allowedAreaIds.stream().map(UUID::toString).collect(java.util.stream.Collectors.joining(",")),
+                    candidates.stream()
+                            .map(c -> areaId(c.device()) == null ? "null" : areaId(c.device()).toString())
+                            .collect(java.util.stream.Collectors.joining(",")));
+        }
         return selected;
     }
 
@@ -77,6 +95,7 @@ public class IntelbrasDeviceConnectionService {
 
     public IntelbrasDeviceConnection connectionFor(UUID deviceId) {
         return deviceRepository.findById(deviceId)
+                .filter(Device::isActive)
                 .map(this::connectionFor)
                 .orElseThrow(() -> new IllegalArgumentException("Device not found: " + deviceId));
     }
@@ -100,6 +119,10 @@ public class IntelbrasDeviceConnectionService {
     }
 
     private boolean eligible(Device device, boolean requireOnline) {
+        if (device == null || !device.isActive()) {
+            reject(device, "inactive_device");
+            return false;
+        }
         if (!hasText(device.getIpAddress())) {
             reject(device, "missing_ip_address");
             return false;
@@ -133,6 +156,11 @@ public class IntelbrasDeviceConnectionService {
     }
 
     private boolean looksLikeIntelbras(Device device) {
+        // A device with Intelbras password explicitly configured is treated as Intelbras-compatible,
+        // regardless of the name/model label (e.g. "Catraca Social" / "Generic Controller").
+        if (hasText(device.getIntelbrasPassword())) {
+            return true;
+        }
         var value = normalize(device.getModel() + " " + device.getName());
         return value.contains("intelbras")
                 || value.contains("ss 5531")

@@ -27,20 +27,26 @@ export function Input({ label, error, className, id, ...props }: InputProps) {
 
 type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & {
   label: string;
+  error?: string;
 };
 
-export function Select({ label, className, id, children, ...props }: SelectProps) {
+export function Select({ label, error, className, id, children, ...props }: SelectProps) {
   const inputId = id ?? props.name ?? label.toLowerCase().replace(/\s+/g, "-");
   return (
     <label htmlFor={inputId} className="block text-sm font-medium text-slate-300">
       <span>{label}</span>
       <select
         id={inputId}
-        className={clsx("mt-1 h-10 w-full rounded-xl border border-white/10 bg-white/[0.055] px-3 text-sm text-slate-100 shadow-sm outline-none transition focus:border-brand-wine focus:bg-white/[0.08]", className)}
+        className={clsx(
+          "mt-1 h-10 w-full rounded-xl border border-white/10 bg-white/[0.055] px-3 text-sm text-slate-100 shadow-sm outline-none transition focus:border-brand-wine focus:bg-white/[0.08]",
+          error && "border-red-300/40 bg-red-500/10",
+          className
+        )}
         {...props}
       >
         {children}
       </select>
+      {error ? <span className="mt-1 block text-xs font-medium text-red-200">{error}</span> : null}
     </label>
   );
 }

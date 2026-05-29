@@ -18,6 +18,8 @@ public interface AccessEventRepository extends JpaRepository<AccessEvent, UUID>,
 
     long countByAccessResult(AccessResult accessResult);
 
+    boolean existsByDevice_Id(UUID deviceId);
+
     @Query(value = """
             SELECT CAST(EXTRACT(HOUR FROM event_time AT TIME ZONE :zoneId) AS INTEGER) AS hour,
                    COUNT(*) FILTER (WHERE event_type = 'ENTRY') AS entries,

@@ -9,6 +9,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.event.TransactionalEventListener;
+import org.springframework.transaction.event.TransactionPhase;
 
 @Component
 public class DomainEventListeners {
@@ -55,15 +57,15 @@ public class DomainEventListeners {
         publisher.publishAccessEvent(event);
     }
 
-    @EventListener
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     void on(EmployeeReadyForSyncEvent event) {
-        log.info("employee_ready_for_sync_event employee_id={}", event.employeeId());
+        log.info("SYNC_EVENT_PUBLISHED person_type=EMPLOYEE person_id={} phase=AFTER_COMMIT", event.employeeId());
         publisher.publishIntelbrasSync(new IntelbrasSyncMessage(PersonType.EMPLOYEE, event.employeeId(), 1));
     }
 
-    @EventListener
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     void on(GuestReadyForSyncEvent event) {
-        log.info("guest_ready_for_sync_event guest_id={}", event.guestId());
+        log.info("SYNC_EVENT_PUBLISHED person_type=GUEST person_id={} phase=AFTER_COMMIT", event.guestId());
         publisher.publishIntelbrasSync(new IntelbrasSyncMessage(PersonType.GUEST, event.guestId(), 1));
     }
 }

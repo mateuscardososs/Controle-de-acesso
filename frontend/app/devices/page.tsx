@@ -10,6 +10,7 @@ import { Input, Select } from "@/src/components/ui/Input";
 import { Modal } from "@/src/components/ui/Modal";
 import { StatusBadge } from "@/src/components/shared/StatusBadge";
 import { areaService } from "@/services/areaService";
+import { authService } from "@/services/authService";
 import { deviceService, type Device } from "@/services/deviceService";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Cpu, Hash, KeyRound, MapPin, Pencil, Plus, Router, Sparkles, Trash2, Wifi, Zap } from "lucide-react";
@@ -64,8 +65,10 @@ function deviceToForm(device: Device): DeviceForm {
 
 export default function DevicesPage() {
   const queryClient = useQueryClient();
+  const user = useQuery({ queryKey: ["me"], queryFn: authService.me, retry: false });
   const devices = useQuery({ queryKey: ["devices"], queryFn: deviceService.list });
   const areas = useQuery({ queryKey: ["areas"], queryFn: areaService.list });
+  const canRemoveDevices = user.data?.role === "ADMIN";
 
   const [form, setForm] = useState<DeviceForm>(initialForm);
   const [formError, setFormError] = useState("");
@@ -125,13 +128,14 @@ export default function DevicesPage() {
 
   const remove = useMutation({
     mutationFn: () => deviceService.delete(deleteDevice!.id),
-    onSuccess: () => {
-      setMessage("Dispositivo removido.");
+    onSuccess: (result) => {
+      setMessage(result.message || "Dispositivo removido.");
       setDeleteDevice(null);
       queryClient.invalidateQueries({ queryKey: ["devices"] });
+      queryClient.invalidateQueries({ queryKey: ["device-status"] });
     },
     onError: (error) => {
-      setMessage(apiErrorMessage(error, "Não foi possível remover o dispositivo."));
+      setMessage(deleteErrorMessage(error));
       setDeleteDevice(null);
     }
   });
@@ -262,14 +266,16 @@ export default function DevicesPage() {
                   <Button variant="secondary" icon={Pencil} className="h-8 px-3 text-xs" onClick={() => openEdit(device)}>
                     Editar
                   </Button>
-                  <Button
-                    variant="secondary"
-                    icon={Trash2}
-                    className="h-8 px-3 text-xs text-rose-400 hover:text-rose-300"
-                    onClick={() => setDeleteDevice(device)}
-                  >
-                    Remover
-                  </Button>
+                  {canRemoveDevices ? (
+                    <Button
+                      variant="secondary"
+                      icon={Trash2}
+                      className="h-8 px-3 text-xs text-rose-400 hover:text-rose-300"
+                      onClick={() => setDeleteDevice(device)}
+                    >
+                      Remover
+                    </Button>
+                  ) : null}
                 </div>
               </CardContent>
             </Card>
@@ -310,7 +316,7 @@ export default function DevicesPage() {
       </Modal>
 
       {/* Modal: confirmar exclusão */}
-      <Modal title="Remover dispositivo" description={`Tem certeza que deseja remover "${deleteDevice?.name}"? Esta ação não pode ser desfeita.`} open={deleteDevice !== null} onClose={() => setDeleteDevice(null)}>
+      <Modal title="Remover dispositivo" description={`Tem certeza que deseja remover "${deleteDevice?.name}"? O histórico de eventos será preservado.`} open={deleteDevice !== null} onClose={() => setDeleteDevice(null)}>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setDeleteDevice(null)}>Cancelar</Button>
           <Button loading={remove.isPending} onClick={() => remove.mutate()} className="bg-rose-600 hover:bg-rose-500">Remover</Button>
@@ -428,4 +434,9 @@ function formatDate(value?: string) {
 
 function hasIntelbrasCredentials(device: { intelbrasUsername?: string; intelbrasPasswordConfigured?: boolean }) {
   return Boolean(device.intelbrasUsername || device.intelbrasPasswordConfigured);
+}
+
+function deleteErrorMessage(error: unknown) {
+  const message = apiErrorMessage(error, "Não foi possível remover o dispositivo.");
+  return message === "Forbidden" ? "Apenas ADMIN pode remover dispositivo" : message;
 }

@@ -1,6 +1,7 @@
 package br.com.sport.accesscontrol.integration.sync;
 
 import br.com.sport.accesscontrol.audit.AuditService;
+import br.com.sport.accesscontrol.areas.Area;
 import br.com.sport.accesscontrol.common.PersonType;
 import br.com.sport.accesscontrol.common.messaging.IntegrationEventPublisher;
 import br.com.sport.accesscontrol.devices.DeviceRepository;
@@ -16,14 +17,17 @@ import br.com.sport.accesscontrol.realtime.RealtimePublisherService;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -61,7 +65,7 @@ class IntelbrasSyncWorkerGuestTests {
     @Test
     void syncSuccessMarksGuestSynced() {
         var guest = completedGuest(null);
-        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
         when(provider.syncPerson(any())).thenReturn(success());
 
         worker.process(new IntelbrasSyncMessage(PersonType.GUEST, guest.getId(), 1));
@@ -74,7 +78,7 @@ class IntelbrasSyncWorkerGuestTests {
     @Test
     void syncFailureMarksGuestSyncFailed() {
         var guest = completedGuest(null);
-        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
         when(provider.syncPerson(any())).thenReturn(failed("No configured Intelbras real devices found."));
 
         // attempt=1 < maxAttempts=3 → handleFailure schedules retry (no throw); finishGuest already set SYNC_FAILED
@@ -88,7 +92,7 @@ class IntelbrasSyncWorkerGuestTests {
     void guestWithInvitedDayUsesInvitedDayBasedValidity() {
         var invitedDay = LocalDate.of(2025, 6, 21);
         var guest = completedGuest(invitedDay);
-        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
 
         var zone = ZoneId.of("America/Recife");
         var expectedFrom = invitedDay.atTime(LocalTime.of(15, 0)).atZone(zone).toInstant();
@@ -110,7 +114,7 @@ class IntelbrasSyncWorkerGuestTests {
         var visitStart = Instant.parse("2025-06-21T18:00:00Z");
         var visitEnd = Instant.parse("2025-06-22T07:00:00Z");
         var guest = completedGuestWithDates(null, visitStart, visitEnd);
-        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
 
         when(provider.syncPerson(any())).thenAnswer(inv -> {
             var person = inv.getArgument(0, br.com.sport.accesscontrol.integration.provider.ProviderPerson.class);
@@ -120,6 +124,80 @@ class IntelbrasSyncWorkerGuestTests {
         });
 
         worker.process(new IntelbrasSyncMessage(PersonType.GUEST, guest.getId(), 1));
+    }
+
+    @Test
+    void guestSyncUsesOnlyActiveAllowedAreas() {
+        var portaria = area("Portaria", true);
+        var legacyFront3 = area("Front 3", false);
+        var guest = completedGuest(LocalDate.of(2025, 6, 21));
+        guest.replaceAllowedAreas(new LinkedHashSet<>(List.of(portaria, legacyFront3)));
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
+
+        when(provider.syncPerson(any())).thenAnswer(inv -> {
+            var person = inv.getArgument(0, br.com.sport.accesscontrol.integration.provider.ProviderPerson.class);
+            assertThat(person.allowedAreaIds()).containsExactly(portaria.getId());
+            assertThat(person.allowedAreaIds()).doesNotContain(legacyFront3.getId());
+            return success();
+        });
+
+        worker.process(new IntelbrasSyncMessage(PersonType.GUEST, guest.getId(), 1));
+    }
+
+    @Test
+    void partialSuccessMarksGuestSynced() {
+        var guest = completedGuest(null);
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
+        when(provider.syncPerson(any())).thenReturn(partialSuccess());
+
+        worker.process(new IntelbrasSyncMessage(PersonType.GUEST, guest.getId(), 1));
+
+        assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNCED);
+        assertThat(guest.getLastSyncError()).isNull();
+    }
+
+    @Test
+    void allowedAreaIdsArePassedToProviderIncludingOnlyActiveAreas() {
+        var portaria = area("Portaria", true);
+        var front1 = area("Front 1", true);
+        var inactive = area("Antigo", false);
+        var guest = completedGuest(LocalDate.of(2025, 6, 21));
+        guest.replaceAllowedAreas(new LinkedHashSet<>(List.of(portaria, front1, inactive)));
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
+
+        when(provider.syncPerson(any())).thenAnswer(inv -> {
+            var person = inv.getArgument(0, br.com.sport.accesscontrol.integration.provider.ProviderPerson.class);
+            assertThat(person.allowedAreaIds()).containsExactlyInAnyOrder(portaria.getId(), front1.getId());
+            assertThat(person.allowedAreaIds()).doesNotContain(inactive.getId());
+            return success();
+        });
+
+        worker.process(new IntelbrasSyncMessage(PersonType.GUEST, guest.getId(), 1));
+        assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNCED);
+    }
+
+    @Test
+    void workerDoesNotRetryWhenGuestAlreadySyncedOnSecondAttempt() {
+        var guest = completedGuest(null);
+        guest.markSynced();
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
+
+        worker.process(new IntelbrasSyncMessage(PersonType.GUEST, guest.getId(), 2));
+
+        assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNCED);
+    }
+
+    @Test
+    void syncFailedStatusIsSetWhenGuestHasNoAllowedAreas() {
+        var guest = completedGuest(null);
+        guest.replaceAllowedAreas(new LinkedHashSet<>());
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
+        when(provider.syncPerson(any())).thenReturn(failed("Visitante sem áreas permitidas"));
+
+        worker.process(new IntelbrasSyncMessage(PersonType.GUEST, guest.getId(), 1));
+
+        assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNC_FAILED);
+        assertThat(guest.getLastSyncError()).contains("Visitante sem áreas permitidas");
     }
 
     private Guest completedGuest(LocalDate invitedDay) {
@@ -142,11 +220,22 @@ class IntelbrasSyncWorkerGuestTests {
         return guest;
     }
 
+    private Area area(String name, boolean active) {
+        var area = new Area(name, name, active);
+        ReflectionTestUtils.setField(area, "id", UUID.randomUUID());
+        return area;
+    }
+
     private ProviderSyncResult success() {
         return new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "ok", Duration.ofMillis(10));
     }
 
     private ProviderSyncResult failed(String message) {
         return new ProviderSyncResult(ProviderSyncStatus.FAILED, message, Duration.ofMillis(10));
+    }
+
+    private ProviderSyncResult partialSuccess() {
+        return new ProviderSyncResult(ProviderSyncStatus.PARTIAL_SUCCESS,
+                "Sincronizado parcialmente: 1 de 2 controladoras.", Duration.ofMillis(10));
     }
 }

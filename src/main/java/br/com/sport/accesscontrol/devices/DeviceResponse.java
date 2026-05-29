@@ -24,6 +24,7 @@ public record DeviceResponse(
         String lastError,
         int communicationFailures,
         DeviceStatus onlineStatus,
+        boolean active,
         Instant createdAt,
         Instant updatedAt
 ) {
@@ -49,6 +50,7 @@ public record DeviceResponse(
                 device.getLastError(),
                 device.getCommunicationFailures(),
                 device.getOnlineStatus(),
+                device.isActive(),
                 device.getCreatedAt(),
                 device.getUpdatedAt()
         );

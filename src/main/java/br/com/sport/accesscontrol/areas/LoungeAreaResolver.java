@@ -28,19 +28,19 @@ public class LoungeAreaResolver {
 
     /**
      * Áreas permitidas para um convidado a partir do nome do camarote.
-     * Sempre inclui Portaria (se existir) + a área cujo nome bate com o camarote.
+     * Sempre inclui Portaria ativa (se existir) + a área ativa cujo nome bate com o camarote.
      */
     public Set<Area> resolveForLounge(String invitedLounge) {
         var result = new LinkedHashSet<Area>();
-        portariaArea().ifPresent(result::add);
+        portariaArea().filter(Area::isActive).ifPresent(result::add);
         if (invitedLounge == null || invitedLounge.isBlank()) {
             return result;
         }
-        var loungeArea = areaRepository.findByNameIgnoreCase(invitedLounge.trim());
+        var loungeArea = activeAreaForLounge(invitedLounge);
         if (loungeArea.isPresent()) {
             result.add(loungeArea.get());
         } else {
-            log.warn("lounge_area_not_found lounge={} fallback=portaria_only", invitedLounge);
+            log.warn("lounge_area_not_active_or_not_found lounge={} fallback=portaria_only", invitedLounge);
         }
         return result;
     }
@@ -49,16 +49,19 @@ public class LoungeAreaResolver {
      * Todas as áreas ativas para acesso total de colaborador.
      */
     public Set<Area> resolveAllForEmployee() {
-        var areas = areaRepository.findAllByActiveTrue();
-        if (areas.isEmpty()) {
-            // fallback: pega todas, mesmo inativas, para não criar colaborador sem áreas
-            areas = areaRepository.findAll();
-        }
-        return new LinkedHashSet<>(areas);
+        return new LinkedHashSet<>(areaRepository.findAllByActiveTrue());
     }
 
     public Optional<Area> portariaArea() {
         return areaRepository.findByNameIgnoreCase(GENERAL_AREA_NAME);
+    }
+
+    public Optional<Area> activeAreaForLounge(String invitedLounge) {
+        if (invitedLounge == null || invitedLounge.isBlank()) {
+            return Optional.empty();
+        }
+        return areaRepository.findByNameIgnoreCase(invitedLounge.trim())
+                .filter(Area::isActive);
     }
 
     public boolean isEmployeeFullAccess(Set<Area> allowedAreas) {

@@ -1,6 +1,7 @@
 package br.com.sport.accesscontrol.guests;
 
 import br.com.sport.accesscontrol.areas.LoungeAreaResolver;
+import br.com.sport.accesscontrol.areas.Area;
 import br.com.sport.accesscontrol.audit.AuditService;
 import br.com.sport.accesscontrol.appconfig.LoungeConfig;
 import br.com.sport.accesscontrol.common.CpfValidator;
@@ -40,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Service
 public class GuestService {
@@ -97,6 +99,7 @@ public class GuestService {
     @Transactional
     public GuestResponse create(GuestRequest request) {
         validateVisitWindow(request.visitStart(), request.visitEnd());
+        validateInvitedLounge(request.invitedLounge());
         var normalizedCpf = CpfValidator.normalizeOrThrow(request.cpf());
         var guest = guestRepository.save(new Guest(
                 request.fullName(), normalizedCpf, request.email(), request.phone(), request.company(),
@@ -104,6 +107,7 @@ public class GuestService {
                 resolveInvitedDay(request.invitedDay(), request.visitStart()), normalize(request.invitedLounge())
         ));
         applyAllowedAreas(guest);
+        validateResolvedAllowedAreas(guest);
         var invite = createInvite(guest);
         var inviteUrl = inviteUrl(invite);
         var delivery = sendInviteEmail(guest, inviteUrl, false);
@@ -131,34 +135,24 @@ public class GuestService {
             Instant visitEnd,
             MultipartFile facePhoto
     ) {
-        validatePublicRegistration(fullName, cpf, email, phone, invitedDay, invitedLounge, visitStart, visitEnd, facePhoto);
-        var resolvedInvitedDay = resolveInvitedDay(invitedDay, visitStart);
-        var resolvedVisitStart = invitedAccessStart(resolvedInvitedDay);
-        var resolvedVisitEnd = invitedAccessEnd(resolvedInvitedDay);
-        var resolvedVisitReason = normalize(visitReason) == null ? "Convidado São João/Superfeito" : visitReason.trim();
-        var resolvedHostName = normalize(hostName) == null ? "Credenciamento São João/Superfeito" : hostName.trim();
-        var resolvedInvitedLounge = invitedLounge.trim();
-        var normalizedCpf = CpfValidator.normalizeOrThrow(cpf);
-        var guest = guestRepository.save(new Guest(
-                fullName.trim(),
-                normalizedCpf,
-                normalize(email),
-                normalize(phone),
-                normalize(company),
-                resolvedVisitReason,
-                resolvedHostName,
-                resolvedVisitStart,
-                resolvedVisitEnd,
-                resolvedInvitedDay,
-                resolvedInvitedLounge
-        ));
-        applyAllowedAreas(guest);
-        createInvite(guest);
-
-        var oldData = snapshot(guest);
-        var facePhotoUrl = faceStorageService.store(facePhoto, guest.getId());
-        guest.completeRegistration(phone, company, facePhotoUrl);
-        auditService.record("PUBLIC_GUEST_FACE_UPLOADED", "Guest", guest.getId(), Map.of("facePhotoUrl", facePhotoUrl), oldData, snapshot(guest));
+        var registration = completedVisitorRegistration(
+                fullName,
+                cpf,
+                email,
+                phone,
+                company,
+                normalize(visitReason) == null ? "Convidado São João/Superfeito" : visitReason.trim(),
+                normalize(hostName) == null ? "Credenciamento São João/Superfeito" : hostName.trim(),
+                invitedDay,
+                invitedLounge,
+                visitStart,
+                visitEnd,
+                facePhoto,
+                true
+        );
+        var guest = registration.guest();
+        auditService.record("PUBLIC_GUEST_FACE_UPLOADED", "Guest", guest.getId(),
+                Map.of("facePhotoUrl", registration.facePhotoUrl()), registration.oldData(), snapshot(guest));
 
         auditService.record("PUBLIC_GUEST_CREATED", "Guest", guest.getId(), Map.of("source", "public-home"), Map.of(), snapshot(guest));
         realtimePublisherService.publishSystemAlert(new SystemAlertMessage(
@@ -171,6 +165,46 @@ public class GuestService {
         ));
         var message = "Cadastro recebido com foto facial. A equipe responsável foi notificada.";
         return PublicVisitorRegistrationResponse.from(guest, message);
+    }
+
+    @Transactional
+    public GuestResponse adminVisitorRegistration(
+            String fullName,
+            String cpf,
+            String email,
+            String phone,
+            LocalDate invitedDay,
+            String invitedLounge,
+            MultipartFile facePhoto
+    ) {
+        var registration = completedVisitorRegistration(
+                fullName,
+                cpf,
+                email,
+                phone,
+                null,
+                "Convidado São João/Superfeito",
+                "Credenciamento interno",
+                invitedDay,
+                invitedLounge,
+                null,
+                null,
+                facePhoto,
+                false
+        );
+        var guest = registration.guest();
+        auditService.record("ADMIN_GUEST_FACE_UPLOADED", "Guest", guest.getId(),
+                Map.of("facePhotoUrl", registration.facePhotoUrl()), registration.oldData(), snapshot(guest));
+        auditService.record("ADMIN_GUEST_CREATED", "Guest", guest.getId(), Map.of("source", "admin-guests"), Map.of(), snapshot(guest));
+        realtimePublisherService.publishSystemAlert(new SystemAlertMessage(
+                UUID.randomUUID(),
+                SystemAlertMessage.Severity.INFO,
+                "Visitante criado pela administração",
+                "Visitante " + guest.getFullName() + " foi cadastrado com foto facial.",
+                "admin-visitor-registration",
+                Instant.now()
+        ));
+        return GuestResponse.from(guest, null);
     }
 
     @Transactional(readOnly = true)
@@ -193,6 +227,7 @@ public class GuestService {
     @Transactional
     public GuestResponse update(UUID id, GuestRequest request) {
         validateVisitWindow(request.visitStart(), request.visitEnd());
+        validateInvitedLounge(request.invitedLounge());
         var guest = getById(id);
         var oldData = snapshot(guest);
         var normalizedCpf = CpfValidator.normalizeOrThrow(request.cpf());
@@ -201,6 +236,7 @@ public class GuestService {
                 resolveInvitedDay(request.invitedDay(), request.visitStart()), normalize(request.invitedLounge()),
                 request.status());
         applyAllowedAreas(guest);
+        validateResolvedAllowedAreas(guest);
         auditService.record("GUEST_UPDATED", "Guest", guest.getId(), Map.of(), oldData, snapshot(guest));
         return GuestResponse.from(guest, null);
     }
@@ -211,6 +247,58 @@ public class GuestService {
         }
         var areas = loungeAreaResolver.resolveForLounge(guest.getInvitedLounge());
         guest.replaceAllowedAreas(areas);
+    }
+
+    private void validateResolvedAllowedAreas(Guest guest) {
+        if (loungeAreaResolver == null) {
+            return;
+        }
+        var activeAllowedAreas = activeAllowedAreas(guest);
+        if (!isBlank(guest.getInvitedLounge())) {
+            if (!loungeConfig.isValid(guest.getInvitedLounge())) {
+                throw new IllegalArgumentException("Camarote inválido");
+            }
+            if (!containsAreaName(activeAllowedAreas, LoungeAreaResolver.GENERAL_AREA_NAME)) {
+                throw new IllegalArgumentException("Área base Portaria não configurada.");
+            }
+            if (!containsAreaName(activeAllowedAreas, guest.getInvitedLounge())) {
+                throw new IllegalArgumentException("Área ativa do camarote não configurada: " + guest.getInvitedLounge());
+            }
+        }
+        if (guest.getStatus() == GuestStatus.COMPLETED && activeAllowedAreas.isEmpty()) {
+            throw new IllegalArgumentException("Visitante sem áreas permitidas.");
+        }
+    }
+
+    private List<Area> activeAllowedAreas(Guest guest) {
+        if (guest.getAllowedAreas() == null) {
+            return List.of();
+        }
+        return guest.getAllowedAreas().stream()
+                .filter(Area::isActive)
+                .toList();
+    }
+
+    private String activeAllowedAreaIds(Guest guest) {
+        if (guest.getAllowedAreas() == null) return "";
+        return guest.getAllowedAreas().stream()
+                .filter(Area::isActive)
+                .map(a -> a.getId() == null ? "null" : a.getId().toString())
+                .collect(Collectors.joining(","));
+    }
+
+    private String activeAllowedAreaNames(Guest guest) {
+        if (guest.getAllowedAreas() == null) return "";
+        return guest.getAllowedAreas().stream()
+                .filter(Area::isActive)
+                .map(Area::getName)
+                .collect(Collectors.joining(","));
+    }
+
+    private boolean containsAreaName(List<Area> areas, String name) {
+        return areas.stream()
+                .map(Area::getName)
+                .anyMatch(areaName -> areaName != null && areaName.trim().equalsIgnoreCase(name.trim()));
     }
 
     @Transactional
@@ -338,6 +426,12 @@ public class GuestService {
             throw new IllegalArgumentException("Visitante precisa enviar foto facial antes da sincronização.");
         }
         var oldData = snapshot(guest);
+        applyAllowedAreas(guest);
+        validateResolvedAllowedAreas(guest);
+        log.info("manual_sync_requested person_type=GUEST person_id={} cpf={} invited_lounge={} allowed_area_ids=[{}] allowed_area_names=[{}] operator={}",
+                guest.getId(), guest.getCpf(), guest.getInvitedLounge(),
+                activeAllowedAreaIds(guest), activeAllowedAreaNames(guest),
+                authenticatedUser());
         guest.markPendingSync();
         guestRepository.save(guest);
         auditService.record("GUEST_SYNC_REQUESTED", "Guest", guest.getId(),
@@ -416,9 +510,51 @@ public class GuestService {
         }
     }
 
-    private void validatePublicRegistration(String fullName, String cpf, String email, String phone,
-                                            LocalDate invitedDay, String invitedLounge, Instant visitStart,
-                                            Instant visitEnd, MultipartFile facePhoto) {
+    private CompletedVisitorRegistration completedVisitorRegistration(
+            String fullName,
+            String cpf,
+            String email,
+            String phone,
+            String company,
+            String visitReason,
+            String hostName,
+            LocalDate invitedDay,
+            String invitedLounge,
+            Instant visitStart,
+            Instant visitEnd,
+            MultipartFile facePhoto,
+            boolean createInvite
+    ) {
+        validateVisitorRegistration(fullName, cpf, email, phone, invitedDay, invitedLounge, visitStart, visitEnd, facePhoto);
+        var resolvedInvitedDay = resolveInvitedDay(invitedDay, visitStart);
+        var guest = guestRepository.save(new Guest(
+                fullName.trim(),
+                CpfValidator.normalizeOrThrow(cpf),
+                normalize(email),
+                normalize(phone),
+                normalize(company),
+                normalize(visitReason),
+                normalize(hostName),
+                invitedAccessStart(resolvedInvitedDay),
+                invitedAccessEnd(resolvedInvitedDay),
+                resolvedInvitedDay,
+                invitedLounge.trim()
+        ));
+        applyAllowedAreas(guest);
+        validateResolvedAllowedAreas(guest);
+        if (createInvite) {
+            createInvite(guest);
+        }
+
+        var oldData = snapshot(guest);
+        var facePhotoUrl = faceStorageService.store(facePhoto, guest.getId());
+        guest.completeRegistration(phone, company, facePhotoUrl);
+        return new CompletedVisitorRegistration(guest, oldData, facePhotoUrl);
+    }
+
+    private void validateVisitorRegistration(String fullName, String cpf, String email, String phone,
+                                             LocalDate invitedDay, String invitedLounge, Instant visitStart,
+                                             Instant visitEnd, MultipartFile facePhoto) {
         if (isBlank(fullName) || isBlank(cpf) || isBlank(phone) || isBlank(invitedLounge)) {
             throw new IllegalArgumentException("Required visitor registration fields are missing.");
         }
@@ -433,11 +569,20 @@ public class GuestService {
             throw new IllegalArgumentException("Email must be valid.");
         }
         if (!loungeConfig.isValid(invitedLounge)) {
-            throw new IllegalArgumentException("Invited lounge is invalid.");
+            throw new IllegalArgumentException("Camarote inválido");
         }
         if (visitStart != null && visitEnd != null) {
             validateVisitWindow(visitStart, visitEnd);
         }
+    }
+
+    private void validateInvitedLounge(String invitedLounge) {
+        if (!isBlank(invitedLounge) && !loungeConfig.isValid(invitedLounge)) {
+            throw new IllegalArgumentException("Camarote inválido");
+        }
+    }
+
+    private record CompletedVisitorRegistration(Guest guest, Map<String, Object> oldData, String facePhotoUrl) {
     }
 
     private LocalDate resolveInvitedDay(LocalDate invitedDay, Instant visitStart) {

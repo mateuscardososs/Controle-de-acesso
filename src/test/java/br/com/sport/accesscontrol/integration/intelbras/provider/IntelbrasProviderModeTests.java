@@ -15,11 +15,14 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class IntelbrasProviderModeTests {
@@ -39,10 +42,10 @@ class IntelbrasProviderModeTests {
     }
 
     @Test
-    void realProviderDoesNotRunWithoutConfiguredDevices() {
+    void realProviderDoesNotRunWithoutOnlineDevicesForAllowedAreas() {
         var connectionService = mock(IntelbrasDeviceConnectionService.class);
-        when(connectionService.allConfiguredDevices()).thenReturn(List.of());
-        when(connectionService.selectOnlineConfiguredDevice(org.mockito.ArgumentMatchers.any())).thenReturn(Optional.empty());
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(List.of());
         var provider = new IntelbrasRealProvider(
                 connectionService,
                 mock(IntelbrasCgiClient.class),
@@ -52,10 +55,23 @@ class IntelbrasProviderModeTests {
                 new AccessMetricsService(new SimpleMeterRegistry())
         );
 
-        var result = provider.syncPerson(person(true, null));
+        var result = provider.syncPerson(new ProviderPerson(
+                PersonType.GUEST,
+                UUID.randomUUID(),
+                "12345678901",
+                null,
+                "Visitante",
+                null,
+                true,
+                Instant.now().minusSeconds(3600),
+                Instant.now().plusSeconds(3600),
+                null,
+                Set.of(allowedAreaId)
+        ));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
-        assertThat(result.message()).contains("No configured Intelbras real devices");
+        assertThat(result.message()).contains("Nenhuma controladora online para as áreas permitidas");
+        verify(connectionService, never()).selectOnlineConfiguredDevice(any());
     }
 
     @Test

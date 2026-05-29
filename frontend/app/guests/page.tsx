@@ -6,8 +6,9 @@ import { AlertCircle, CalendarDays, CheckCircle2, Copy, Eye, Loader2, Mail, Plus
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
-import { formatCpfDisplay, formatCpfInput } from "@/lib/cpf";
+import { formatCpfDisplay, formatCpfInput, isValidCpf } from "@/lib/cpf";
 import { apiErrorMessage } from "@/lib/errors";
+import { configService } from "@/services/configService";
 import { Device, deviceService } from "@/services/deviceService";
 import { guestService, Guest, GuestStatus, SyncStatus } from "@/services/guestService";
 import { integrationService } from "@/services/integrationService";
@@ -17,6 +18,7 @@ import { Button } from "@/src/components/ui/Button";
 import { Card, CardContent } from "@/src/components/ui/Card";
 import { Input, Select } from "@/src/components/ui/Input";
 import { Modal } from "@/src/components/ui/Modal";
+import { CameraCapture } from "@/src/components/shared/CameraCapture";
 import { DataTable } from "@/src/components/shared/DataTable";
 import { StatusBadge } from "@/src/components/shared/StatusBadge";
 
@@ -32,11 +34,22 @@ type Toast = {
   message: string;
 };
 
-function localDateTime(daysFromNow = 0) {
+function localDate(daysFromNow = 0) {
   const date = new Date();
   date.setDate(date.getDate() + daysFromNow);
   date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
-  return date.toISOString().slice(0, 16);
+  return date.toISOString().slice(0, 10);
+}
+
+function visitorRegistrationErrorMessage(error: unknown) {
+  return apiErrorMessage(error, "Não foi possível cadastrar o visitante.");
+}
+
+function formatGuestDay(value?: string | null) {
+  if (!value) return "Não informado";
+  const [year, month, day] = value.split("-");
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
 }
 
 export default function GuestsPage() {
@@ -44,6 +57,7 @@ export default function GuestsPage() {
   const realtime = useRealtime();
   const guests = useQuery({ queryKey: ["guests"], queryFn: guestService.list });
   const devices = useQuery({ queryKey: ["devices"], queryFn: deviceService.list });
+  const lounges = useQuery({ queryKey: ["config", "lounges"], queryFn: configService.lounges });
   const intelbrasStatus = useQuery({ queryKey: ["intelbras-status"], queryFn: integrationService.intelbrasStatus });
   const [open, setOpen] = useState(false);
   const [cleanupOpen, setCleanupOpen] = useState(false);
@@ -52,6 +66,10 @@ export default function GuestsPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<GuestStatus | "ALL">("ALL");
   const [message, setMessage] = useState("");
+  const [formError, setFormError] = useState("");
+  const [cpfError, setCpfError] = useState("");
+  const [loungeError, setLoungeError] = useState("");
+  const [facePhoto, setFacePhoto] = useState<File | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [activeSyncId, setActiveSyncId] = useState<string | null>(null);
   const [cleanupForm, setCleanupForm] = useState<CleanupForm>({
@@ -63,11 +81,8 @@ export default function GuestsPage() {
     cpf: "",
     email: "",
     phone: "",
-    company: "",
-    visitReason: "",
-    hostName: "",
-    visitStart: localDateTime(),
-    visitEnd: localDateTime(1)
+    invitedDay: localDate(),
+    invitedLounge: ""
   });
 
   const intelbrasDevices = useMemo(() => (devices.data ?? []).filter(isIntelbrasDevice), [devices.data]);
@@ -97,14 +112,27 @@ export default function GuestsPage() {
   const selectedDetails = details ? guestsWithRealtime.find((guest) => guest.id === details.id) ?? details : null;
 
   const create = useMutation({
-    mutationFn: () => guestService.create({ ...form, visitStart: new Date(form.visitStart).toISOString(), visitEnd: new Date(form.visitEnd).toISOString() }),
+    mutationFn: () => {
+      if (!facePhoto) throw new Error("Tire a foto pela câmera para continuar.");
+      return guestService.createVisitorRegistration({ ...form, facePhoto });
+    },
     onSuccess: (guest) => {
-      setMessage(guest.emailDeliveryStatus === "SENT" ? "Visitante criado e e-mail enviado." : "Visitante criado. Link de convite gerado e e-mail não enviado neste ambiente.");
-      setDetails(guest);
+      setToast({ tone: "success", message: `Visitante ${guest.fullName} criado com foto facial.` });
+      setMessage("");
+      resetCreateForm();
       setOpen(false);
       queryClient.invalidateQueries({ queryKey: ["guests"] });
     },
-    onError: (error) => setMessage(apiErrorMessage(error, "Não foi possível criar o visitante."))
+    onError: (error) => {
+      const errorMessage = visitorRegistrationErrorMessage(error);
+      setFormError(errorMessage);
+      if (errorMessage.toLowerCase().includes("cpf")) {
+        setCpfError("CPF inválido. Verifique os números informados.");
+      }
+      if (errorMessage.toLowerCase().includes("camarote")) {
+        setLoungeError("Camarote inválido. Selecione uma opção da lista.");
+      }
+    }
   });
 
   const cancel = useMutation({
@@ -133,14 +161,13 @@ export default function GuestsPage() {
     mutationFn: (id: string) => guestService.syncGuest(id),
     onMutate: async (id) => {
       setActiveSyncId(id);
-      setToast({ tone: "info", message: "Sincronização Intelbras enfileirada." });
+      setToast({ tone: "info", message: "Sincronização enfileirada. O status atualiza automaticamente." });
       await queryClient.cancelQueries({ queryKey: ["guests"] });
       queryClient.setQueryData<Guest[]>(["guests"], (current) =>
         current?.map((guest) => guest.id === id ? { ...guest, syncStatus: "SYNCING", lastSyncError: undefined } : guest)
       );
     },
     onSuccess: () => {
-      setToast({ tone: "success", message: "Pedido de sincronização enviado para o backend." });
       queryClient.invalidateQueries({ queryKey: ["guests"] });
     },
     onError: (error) => setToast({ tone: "error", message: apiErrorMessage(error, "Não foi possível iniciar a sincronização Intelbras.") }),
@@ -162,13 +189,56 @@ export default function GuestsPage() {
     const term = search.trim().toLowerCase();
     return guestsWithRealtime.filter((guest) => {
       const matchesStatus = status === "ALL" || guest.status === status;
-      const matchesSearch = !term || [guest.fullName, guest.cpf, guest.email, guest.company, guest.hostName].some((value) => value?.toLowerCase().includes(term));
+      const matchesSearch = !term || [
+        guest.fullName,
+        guest.cpf,
+        guest.phone,
+        guest.email,
+        guest.invitedDay,
+        guest.invitedLounge,
+        guest.displayAllowedAreas
+      ].some((value) => value?.toLowerCase().includes(term));
       return matchesStatus && matchesSearch;
     });
   }, [guestsWithRealtime, search, status]);
 
+  function resetCreateForm() {
+    setForm({
+      fullName: "",
+      cpf: "",
+      email: "",
+      phone: "",
+      invitedDay: localDate(),
+      invitedLounge: ""
+    });
+    setFacePhoto(null);
+    setFormError("");
+    setCpfError("");
+    setLoungeError("");
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setFormError("");
+    setCpfError("");
+    setLoungeError("");
+
+    if (!isValidCpf(form.cpf)) {
+      const error = "CPF inválido. Verifique os números informados.";
+      setCpfError(error);
+      setFormError(error);
+      return;
+    }
+    if (!form.invitedLounge || !lounges.data?.includes(form.invitedLounge)) {
+      const error = "Camarote inválido. Selecione uma opção da lista.";
+      setLoungeError(error);
+      setFormError(error);
+      return;
+    }
+    if (!facePhoto) {
+      setFormError("Tire a foto pela câmera para continuar.");
+      return;
+    }
     create.mutate();
   }
 
@@ -215,7 +285,7 @@ export default function GuestsPage() {
         actions={(
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" icon={Trash2} onClick={() => setCleanupOpen(true)}>Limpar lista</Button>
-            <Button icon={Plus} onClick={() => setOpen(true)}>Novo visitante</Button>
+            <Button icon={Plus} onClick={() => { resetCreateForm(); setOpen(true); }}>Novo visitante</Button>
           </div>
         )}
       />
@@ -230,7 +300,7 @@ export default function GuestsPage() {
         <CardContent className="grid gap-3 lg:grid-cols-[1fr_220px]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nome, CPF, empresa ou host" className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.055] pl-10 pr-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-brand-wine focus:bg-white/[0.08]" />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nome, CPF, telefone, e-mail ou camarote" className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.055] pl-10 pr-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-brand-wine focus:bg-white/[0.08]" />
           </div>
           <Select label="Status" value={status} onChange={(event) => setStatus(event.target.value as typeof status)}>
             {statuses.map((item) => <option key={item} value={item}>{item === "ALL" ? "Todos" : guestStatusLabel(item)}</option>)}
@@ -256,9 +326,10 @@ export default function GuestsPage() {
           columns={[
             { key: "name", header: "Visitante", className: "min-w-[180px] font-semibold text-slate-100", render: (guest) => guest.fullName },
             { key: "cpf", header: "CPF", className: "whitespace-nowrap font-mono text-xs", render: (guest) => formatCpfDisplay(guest.cpf) },
-            { key: "company", header: "Empresa", render: (guest) => guest.company ?? "Não informada" },
-            { key: "host", header: "Responsável", render: (guest) => guest.hostName },
-            { key: "visit", header: "Visita", className: "min-w-[190px]", render: (guest) => <span className="inline-flex items-center gap-2"><CalendarDays className="h-4 w-4 text-slate-400" />{new Date(guest.visitStart).toLocaleString("pt-BR")}</span> },
+            { key: "phone", header: "Telefone", className: "whitespace-nowrap", render: (guest) => guest.phone ?? "Não informado" },
+            { key: "email", header: "E-mail", className: "min-w-[180px]", render: (guest) => guest.email ?? "Opcional" },
+            { key: "day", header: "Dia", className: "whitespace-nowrap", render: (guest) => <span className="inline-flex items-center gap-2"><CalendarDays className="h-4 w-4 text-slate-400" />{formatGuestDay(guest.invitedDay)}</span> },
+            { key: "lounge", header: "Camarote", className: "min-w-[170px]", render: (guest) => guest.invitedLounge ?? "Não informado" },
             { key: "areas", header: "Áreas permitidas", className: "min-w-[200px]", render: (guest) => (
               <span className="text-xs text-slate-300">
                 {guest.displayAllowedAreas
@@ -294,29 +365,40 @@ export default function GuestsPage() {
         />
       ) : null}
 
-      <Modal title="Novo visitante" description="Gere um convite para cadastro facial público por token." open={open} onClose={() => setOpen(false)}>
+      <Modal title="Novo visitante" description="Cadastro com foto facial e camarote para liberação automática." open={open} onClose={() => setOpen(false)}>
         <form onSubmit={submit} className="grid gap-4">
           <Input label="Nome" value={form.fullName} onChange={(event) => setForm({ ...form, fullName: event.target.value })} required />
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="CPF" value={form.cpf} onChange={(event) => setForm({ ...form, cpf: formatCpfInput(event.target.value) })} required inputMode="numeric" placeholder="000.000.000-00" />
+            <Input
+              label="CPF"
+              value={form.cpf}
+              onChange={(event) => { setCpfError(""); setForm({ ...form, cpf: formatCpfInput(event.target.value) }); }}
+              required
+              inputMode="numeric"
+              placeholder="000.000.000-00"
+            />
             <Input label="E-mail" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="Telefone" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} />
-            <Input label="Empresa" value={form.company} onChange={(event) => setForm({ ...form, company: event.target.value })} />
+            <Input label="Telefone" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} required />
+            <Input label="Dia da visita" type="date" value={form.invitedDay} onChange={(event) => setForm({ ...form, invitedDay: event.target.value })} required />
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="Responsável" value={form.hostName} onChange={(event) => setForm({ ...form, hostName: event.target.value })} required />
-            <Input label="Motivo da visita" value={form.visitReason} onChange={(event) => setForm({ ...form, visitReason: event.target.value })} required />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Input label="Início" type="datetime-local" value={form.visitStart} onChange={(event) => setForm({ ...form, visitStart: event.target.value })} required />
-            <Input label="Fim" type="datetime-local" value={form.visitEnd} onChange={(event) => setForm({ ...form, visitEnd: event.target.value })} required />
-          </div>
-          {create.isError ? <ErrorState label={message || "Não foi possível criar visitante."} /> : null}
+          <Select
+            label="Camarote"
+            value={form.invitedLounge}
+            onChange={(event) => { setLoungeError(""); setForm({ ...form, invitedLounge: event.target.value }); }}
+            required
+          >
+            <option value="">Selecione</option>
+            {(lounges.data ?? []).map((lounge) => <option key={lounge} value={lounge}>{lounge}</option>)}
+          </Select>
+          {loungeError ? <p className="text-xs text-rose-400">{loungeError}</p> : null}
+          {cpfError ? <p className="text-xs text-rose-400">{cpfError}</p> : null}
+          <CameraCapture value={facePhoto} onChange={setFacePhoto} />
+          {formError ? <ErrorState label={formError} /> : null}
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setOpen(false)}>Cancelar</Button>
-            <Button type="submit" loading={create.isPending}>Criar convite</Button>
+            <Button type="submit" loading={create.isPending}>Cadastrar visitante</Button>
           </div>
         </form>
       </Modal>

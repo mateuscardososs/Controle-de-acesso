@@ -23,6 +23,7 @@ public record DeviceStatusResponse(
 ) {
     public static DeviceStatusResponse from(Device device) {
         var online = device.getOnlineStatus() == DeviceStatus.ONLINE || device.getStatus() == DeviceStatus.ONLINE;
+        var enabled = device.isActive() && device.getStatus() != DeviceStatus.MAINTENANCE;
         return new DeviceStatusResponse(
                 device.getId(),
                 device.getName(),
@@ -37,8 +38,8 @@ public record DeviceStatusResponse(
                 device.getArea().getId(),
                 device.getArea().getName(),
                 device.getLocation(),
-                device.getStatus() != DeviceStatus.MAINTENANCE,
-                device.getStatus() != DeviceStatus.MAINTENANCE,
+                enabled,
+                device.isActive(),
                 device.getCommunicationFailures()
         );
     }

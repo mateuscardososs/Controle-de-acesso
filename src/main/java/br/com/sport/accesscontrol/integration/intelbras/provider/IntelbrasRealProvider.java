@@ -1,6 +1,7 @@
 package br.com.sport.accesscontrol.integration.intelbras.provider;
 
 import br.com.sport.accesscontrol.devices.DeviceStatus;
+import br.com.sport.accesscontrol.common.PersonType;
 import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasCgiClient;
 import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasHttpSupport;
 import br.com.sport.accesscontrol.integration.intelbras.config.IntelbrasProperties;
@@ -28,6 +29,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Component
 @ConditionalOnProperty(prefix = "app.intelbras", name = "mode", havingValue = "real")
@@ -65,21 +67,27 @@ public class IntelbrasRealProvider implements AccessControlProvider {
         if (person.allowedAreaIds() != null && !person.allowedAreaIds().isEmpty()) {
             connections = connectionService.selectOnlineConfiguredDevicesForAreas(person.allowedAreaIds());
             if (connections.isEmpty()) {
-                // Sem dispositivo nas áreas permitidas — fallback: tenta a área principal
-                var fallback = connectionService.selectOnlineConfiguredDevice(person.areaId());
-                if (fallback.isEmpty()) {
-                    return result(start, ProviderSyncStatus.FAILED,
-                            "No configured Intelbras real devices found for allowed areas of person.");
-                }
-                connections = java.util.List.of(fallback.get());
+                return result(start, ProviderSyncStatus.FAILED,
+                        "Nenhuma controladora online para as áreas permitidas");
             }
-        } else {
+        } else if (person.areaId() != null) {
             var selectedConnection = connectionService.selectOnlineConfiguredDevice(person.areaId());
             if (selectedConnection.isEmpty()) {
-                return result(start, ProviderSyncStatus.FAILED, "No configured Intelbras real devices found.");
+                return result(start, ProviderSyncStatus.FAILED, "Nenhuma controladora online para as áreas permitidas");
             }
             connections = java.util.List.of(selectedConnection.get());
+        } else {
+            return result(start, ProviderSyncStatus.FAILED, noAllowedAreasMessage(person));
         }
+
+        log.info("manual_sync_target_devices person_type={} person_id={} selected_devices_count={} device_ids=[{}] device_hosts=[{}]",
+                person.personType(), person.personId(), connections.size(),
+                connections.stream().map(c -> c.device().getId() == null ? "null" : c.device().getId().toString()).collect(Collectors.joining(",")),
+                connections.stream().map(c -> IntelbrasHttpSupport.maskHost(c.host())).collect(Collectors.joining(",")));
+        log.info("SYNC_DEVICES_SELECTED person_type={} person_id={} count={}",
+                person.personType(), person.personId(), connections.size());
+        log.info("intelbras_sync_start person_type={} person_id={} devices_count={}",
+                person.personType(), person.personId(), connections.size());
 
         String photoData = null;
         try {
@@ -106,6 +114,12 @@ public class IntelbrasRealProvider implements AccessControlProvider {
                 log.info("intelbras_real_sync_person_validity device_id={} person_type={} person_id={} user_id={} valid_from={} valid_until={} timezone={}",
                         connection.device().getId(), person.personType(), person.personId(), identity.userId(),
                         validFrom, validUntil, properties.getTimezone());
+                log.info("SYNC_DEVICE_ATTEMPT device_id={} host={} person_type={} person_id={} user_id={}",
+                        connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
+                        person.personType(), person.personId(), identity.userId());
+                log.info("intelbras_sync_device_attempt device_id={} host={} person_type={} person_id={} user_id={}",
+                        connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
+                        person.personType(), person.personId(), identity.userId());
                 cgiClient.upsertAccessUser(
                         connection.host(),
                         connection.username(),
@@ -131,25 +145,40 @@ public class IntelbrasRealProvider implements AccessControlProvider {
                         Duration.between(requestStart, Instant.now()));
                 log.info("intelbras_real_sync_person_success protocol=CGI device_id={} person_type={} person_id={} user_id={}",
                         connection.device().getId(), person.personType(), person.personId(), identity.userId());
+                log.info("SYNC_DEVICE_SUCCESS device_id={} host={} person_type={} person_id={} user_id={}",
+                        connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
+                        person.personType(), person.personId(), identity.userId());
+                log.info("intelbras_sync_device_success device_id={} host={} person_type={} person_id={} user_id={}",
+                        connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
+                        person.personType(), person.personId(), identity.userId());
             } catch (Exception exception) {
                 accessMetricsService.recordControllerRequest(connection.device(), "sync_person", false,
                         Duration.between(requestStart, Instant.now()));
                 accessMetricsService.recordControllerCommunicationFailure(connection.device());
-                errors.add("device=" + connection.device().getId() + " error=" + safe(exception.getMessage()));
+                errors.add("Falha ao sincronizar na controladora " + deviceLabel(connection) + ": " + safe(exception.getMessage()));
                 log.warn("intelbras_real_sync_person_failed device_id={} host={} person_type={} person_id={} error={}",
+                        connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
+                        person.personType(), person.personId(), safe(exception.getMessage()));
+                log.warn("SYNC_DEVICE_FAILED device_id={} host={} person_type={} person_id={} error={}",
+                        connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
+                        person.personType(), person.personId(), safe(exception.getMessage()));
+                log.warn("intelbras_sync_device_failed device_id={} host={} person_type={} person_id={} error={}",
                         connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
                         person.personType(), person.personId(), safe(exception.getMessage()));
             }
         }
         if (synced == connections.size()) {
-            return result(start, ProviderSyncStatus.SUCCESS, "Intelbras real sync success for " + synced + " device(s).");
+            return result(start, ProviderSyncStatus.SUCCESS, "Sincronizado em " + synced + " controladora(s).");
         }
         if (synced > 0) {
             return result(start, ProviderSyncStatus.PARTIAL_SUCCESS,
-                    "Intelbras real sync partial: " + synced + "/" + connections.size() + " device(s).");
+                    "Sincronizado parcialmente: " + synced + " de " + connections.size() + " controladoras. "
+                            + String.join("; ", errors));
         }
         return result(start, ProviderSyncStatus.FAILED,
-                "Intelbras real sync failed for all devices. " + String.join("; ", errors));
+                errors.isEmpty()
+                        ? "Falha ao sincronizar nas controladoras permitidas."
+                        : String.join("; ", errors));
     }
 
     @Override
@@ -248,6 +277,20 @@ public class IntelbrasRealProvider implements AccessControlProvider {
 
     private ProviderSyncResult result(Instant start, ProviderSyncStatus status, String message) {
         return new ProviderSyncResult(status, safe(message), Duration.between(start, Instant.now()));
+    }
+
+    private String noAllowedAreasMessage(ProviderPerson person) {
+        return person.personType() == PersonType.GUEST
+                ? "Visitante sem áreas permitidas"
+                : "Pessoa sem áreas permitidas";
+    }
+
+    private String deviceLabel(IntelbrasDeviceConnection connection) {
+        var device = connection.device();
+        if (device.getName() != null && !device.getName().isBlank()) {
+            return device.getName();
+        }
+        return device.getId() == null ? "desconhecida" : device.getId().toString();
     }
 
     private String safe(String value) {
