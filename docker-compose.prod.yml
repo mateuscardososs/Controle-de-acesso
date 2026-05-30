@@ -120,14 +120,12 @@ services:
     image: nginx:1.27-alpine
     restart: unless-stopped
     ports:
-      - "${HTTP_PORT:-80}:80"
-      # HTTPS futuro: montar certificados e habilitar server 443 no nginx.conf.
-      # - "${HTTPS_PORT:-443}:443"
+      # Acesso administrativo (LAN/localhost) — Caddy gerencia o tráfego público externo.
+      # Acesse o admin via http://IP-DO-SERVIDOR:${ADMIN_HTTP_PORT:-8080}
+      - "${ADMIN_HTTP_PORT:-8080}:80"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - nginx_logs:/var/log/nginx
-      # HTTPS futuro:
-      # - ./infra/nginx/certs:/etc/nginx/certs:ro
     depends_on:
       frontend:
         condition: service_healthy
@@ -141,6 +139,28 @@ services:
       start_period: 10s
     networks:
       - internal
+      - public
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      nginx:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:2019/config/ >/dev/null 2>&1 || exit 0"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
       - public
 
   prometheus:
@@ -231,6 +251,8 @@ volumes:
   uploads_faces:
   backend_logs:
   nginx_logs:
+  caddy_data:
+  caddy_config:
   backups_data:
   prometheus_data:
   grafana_data:

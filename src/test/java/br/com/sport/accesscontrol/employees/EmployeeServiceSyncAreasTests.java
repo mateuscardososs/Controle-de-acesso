@@ -6,6 +6,7 @@ import br.com.sport.accesscontrol.audit.AuditService;
 import br.com.sport.accesscontrol.guests.FaceStorageService;
 import br.com.sport.accesscontrol.integration.sync.EmployeeReadyForSyncEvent;
 import br.com.sport.accesscontrol.integration.sync.SyncStatus;
+import br.com.sport.accesscontrol.users.User;
 import br.com.sport.accesscontrol.users.UserRepository;
 import br.com.sport.accesscontrol.users.UserRole;
 import org.junit.jupiter.api.Test;
@@ -13,17 +14,61 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashSet;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class EmployeeServiceSyncAreasTests {
+
+    @Test
+    void createAppliesDefaultFortyFiveDayValidityWhenDatesAreOmitted() {
+        var employeeRepository = mock(EmployeeRepository.class);
+        var userRepository = mock(UserRepository.class);
+        when(userRepository.existsByEmailIgnoreCase("colaborador@empresa.local")).thenReturn(false);
+        when(userRepository.save(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
+            return user;
+        });
+        when(employeeRepository.save(any(Employee.class))).thenAnswer(invocation -> {
+            Employee employee = invocation.getArgument(0);
+            if (employee.getId() == null) {
+                ReflectionTestUtils.setField(employee, "id", UUID.randomUUID());
+            }
+            return employee;
+        });
+        var service = new EmployeeService(employeeRepository, userRepository, new BCryptPasswordEncoder(),
+                mock(FaceStorageService.class), mock(ApplicationEventPublisher.class), mock(AuditService.class));
+
+        var before = Instant.now();
+        var response = service.create(new EmployeeRequest(
+                "Colaborador",
+                "529.982.247-25",
+                "Colaborador@Empresa.Local",
+                null,
+                null,
+                "445566",
+                null,
+                "Senha@123",
+                UserRole.HR,
+                EmployeeStatus.ACTIVE,
+                null,
+                null
+        ));
+        var after = Instant.now();
+
+        assertThat(response.accessValidFrom()).isBetween(before.minusSeconds(1), after.plusSeconds(1));
+        assertThat(Duration.between(response.accessValidFrom(), response.accessValidUntil()))
+                .isEqualTo(Duration.ofDays(45));
+    }
 
     @Test
     void manualSyncRebuildsFullAccessAreasBeforePublishingEvent() {

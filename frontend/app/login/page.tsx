@@ -22,6 +22,10 @@ export default function LoginPage() {
     login.mutate();
   }
 
+  const errorMessage = login.error instanceof Error
+    ? login.error.message
+    : "Credenciais invalidas ou sessao indisponivel.";
+
   return (
     <main className="grid min-h-screen lg:grid-cols-[1.05fr_0.95fr]">
       <section className="relative hidden overflow-hidden border-r border-white/10 bg-[#070B15] px-12 py-10 text-white lg:flex lg:flex-col lg:justify-between">
@@ -98,7 +102,7 @@ export default function LoginPage() {
             {login.isError ? (
               <div className="mb-4 flex items-center gap-2 rounded-xl border border-red-300/20 bg-red-500/12 px-3 py-2 text-sm font-medium text-red-100">
                 <AlertCircle className="h-4 w-4" />
-                Credenciais invalidas ou sessao indisponivel.
+                {errorMessage}
               </div>
             ) : null}
 

@@ -20,7 +20,10 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,6 +45,7 @@ class IntelbrasRealProviderValidityTests {
         var connectionService = mock(IntelbrasDeviceConnectionService.class);
         var cgiClient = mock(IntelbrasCgiClient.class);
         when(connectionService.selectOnlineConfiguredDevice(any())).thenReturn(Optional.of(connection));
+        acceptVerification(cgiClient);
         var provider = new IntelbrasRealProvider(
                 connectionService,
                 cgiClient,
@@ -71,6 +75,52 @@ class IntelbrasRealProviderValidityTests {
         );
         assertThat(fromCaptor.getValue()).isEqualTo(LocalDateTime.of(2026, 6, 10, 15, 0));
         assertThat(untilCaptor.getValue()).isEqualTo(LocalDateTime.of(2026, 6, 11, 4, 0));
+    }
+
+    @Test
+    void sendsEmployeeValidityToAccessUserPayload() {
+        var properties = new IntelbrasProperties();
+        properties.setTimezone("America/Recife");
+        var device = device();
+        var connection = new IntelbrasDeviceConnection(device, "192.168.15.5", "admin", "secret");
+        var connectionService = mock(IntelbrasDeviceConnectionService.class);
+        var cgiClient = mock(IntelbrasCgiClient.class);
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(any())).thenReturn(List.of(connection));
+        acceptVerification(cgiClient);
+        var provider = new IntelbrasRealProvider(
+                connectionService,
+                cgiClient,
+                mock(IntelbrasFaceEncoder.class),
+                new IntelbrasEventMapper(properties),
+                properties,
+                new AccessMetricsService(new SimpleMeterRegistry())
+        );
+        var validFrom = Instant.parse("2026-06-01T12:30:00Z");
+        var validUntil = Instant.parse("2026-07-16T12:30:00Z");
+        var person = new ProviderPerson(PersonType.EMPLOYEE, UUID.randomUUID(), "12345678901", "445566",
+                "Colaborador", null, true, validFrom, validUntil, null, Set.of(device.getArea().getId()));
+        var fromCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        var untilCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+
+        provider.syncPerson(person);
+
+        verify(cgiClient).upsertAccessUser(
+                eq("192.168.15.5"),
+                eq("admin"),
+                eq("secret"),
+                anyString(),
+                anyString(),
+                eq("Colaborador"),
+                fromCaptor.capture(),
+                untilCaptor.capture()
+        );
+        assertThat(fromCaptor.getValue()).isEqualTo(LocalDateTime.of(2026, 6, 1, 9, 30));
+        assertThat(untilCaptor.getValue()).isEqualTo(LocalDateTime.of(2026, 7, 16, 9, 30));
+    }
+
+    private void acceptVerification(IntelbrasCgiClient cgiClient) {
+        when(cgiClient.findAccessControlCards(anyString(), anyString(), anyString(), anyString()))
+                .thenAnswer(invocation -> List.of(Map.of("UserID", invocation.getArgument(3, String.class))));
     }
 
     private Device device() {

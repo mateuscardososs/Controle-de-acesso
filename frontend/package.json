@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.16",

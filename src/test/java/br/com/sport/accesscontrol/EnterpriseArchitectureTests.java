@@ -59,6 +59,7 @@ import org.springframework.mock.env.MockEnvironment;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -1096,7 +1097,7 @@ class EnterpriseArchitectureTests {
     }
 
     @Test
-    void employeeCreateCreatesAdminUserWithBcryptRoleCardAndMonthlyValidityWithoutAutoIntelbrasSync() {
+    void employeeCreateCreatesAdminUserWithBcryptRoleCardAndFortyFiveDayValidityWithoutAutoIntelbrasSync() {
         var employeeRepository = mock(EmployeeRepository.class);
         var userRepository = mock(UserRepository.class);
         var eventPublisher = mock(ApplicationEventPublisher.class);
@@ -1139,6 +1140,8 @@ class EnterpriseArchitectureTests {
         assertThat(response.syncStatus()).isEqualTo(SyncStatus.PENDING_SYNC);
         assertThat(response.accessValidFrom()).isNotNull();
         assertThat(response.accessValidUntil()).isNotNull();
+        assertThat(Duration.between(response.accessValidFrom(), response.accessValidUntil()))
+                .isEqualTo(Duration.ofDays(45));
         verify(userRepository).save(argThat(user ->
                 user.getRole() == UserRole.HR
                         && passwordEncoder.matches("Senha@123", user.getPasswordHash())

@@ -3,7 +3,7 @@
 import { authService } from "@/services/authService";
 import { useQuery } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { TOKEN_KEY } from "@/lib/api";
 import { LoadingState } from "@/src/components/shared/AsyncState";
 import { Sidebar } from "./Sidebar";
@@ -21,10 +21,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
     retry: false
   });
 
-  const visibleItems = useMemo(
-    () => navigationItems.filter((item) => user?.role && item.roles.includes(user.role)),
-    [user?.role]
-  );
+  const userRole = user?.role;
+  const visibleItems = navigationItems.filter((item) => userRole ? item.roles.includes(userRole) : false);
 
   useEffect(() => {
     if (typeof window !== "undefined" && !window.localStorage.getItem(TOKEN_KEY)) {

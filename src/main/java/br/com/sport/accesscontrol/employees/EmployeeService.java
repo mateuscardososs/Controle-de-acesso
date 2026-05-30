@@ -17,10 +17,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalTime;
-import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -37,7 +35,7 @@ public class EmployeeService {
     private final ApplicationEventPublisher eventPublisher;
     private final AuditService auditService;
     private final LoungeAreaResolver loungeAreaResolver;
-    private static final ZoneId ACCESS_ZONE = ZoneId.of("America/Recife");
+    private static final Duration DEFAULT_EMPLOYEE_VALIDITY = Duration.ofDays(45);
 
     /** Backward-compatible constructor (testes legados sem LoungeAreaResolver). */
     public EmployeeService(EmployeeRepository employeeRepository, UserRepository userRepository,
@@ -82,8 +80,7 @@ public class EmployeeService {
         if (userRepository.existsByEmailIgnoreCase(email)) {
             throw new IllegalArgumentException("Email already registered");
         }
-        var validFrom = monthlyValidFrom(request.accessValidFrom());
-        var validUntil = monthlyValidUntil(request.accessValidUntil());
+        var validity = resolveEmployeeValidity(request.accessValidFrom(), request.accessValidUntil());
         var user = userRepository.save(new User(
                 request.fullName().trim(),
                 email,
@@ -101,8 +98,8 @@ public class EmployeeService {
                 normalize(request.facePhotoUrl()),
                 request.role(),
                 request.status(),
-                validFrom,
-                validUntil
+                validity.validFrom(),
+                validity.validUntil()
         );
         employee.setUserId(user.getId());
         var saved = employeeRepository.save(employee);
@@ -144,8 +141,9 @@ public class EmployeeService {
             employee.setRole(request.role());
         }
         employee.setStatus(request.status() == null ? employee.getStatus() : request.status());
-        employee.setAccessValidFrom(monthlyValidFrom(request.accessValidFrom()));
-        employee.setAccessValidUntil(monthlyValidUntil(request.accessValidUntil()));
+        var validity = resolveEmployeeValidity(request.accessValidFrom(), request.accessValidUntil());
+        employee.setAccessValidFrom(validity.validFrom());
+        employee.setAccessValidUntil(validity.validUntil());
         employee.markPendingSync();
         applyFullAccessAreas(employee);
         auditService.record("EMPLOYEE_UPDATED", "Employee", employee.getId(), Map.of("cpf", employee.getCpf(), "role", employee.getRole()),
@@ -273,20 +271,13 @@ public class EmployeeService {
         return snapshot;
     }
 
-    private Instant monthlyValidFrom(Instant requested) {
-        if (requested != null) {
-            return requested;
-        }
-        var today = LocalDate.now(ACCESS_ZONE);
-        return today.withDayOfMonth(1).atStartOfDay(ACCESS_ZONE).toInstant();
+    private EmployeeValidity resolveEmployeeValidity(Instant requestedFrom, Instant requestedUntil) {
+        var validFrom = requestedFrom == null ? Instant.now() : requestedFrom;
+        var validUntil = requestedUntil == null ? validFrom.plus(DEFAULT_EMPLOYEE_VALIDITY) : requestedUntil;
+        return new EmployeeValidity(validFrom, validUntil);
     }
 
-    private Instant monthlyValidUntil(Instant requested) {
-        if (requested != null) {
-            return requested;
-        }
-        var today = LocalDate.now(ACCESS_ZONE);
-        return today.withDayOfMonth(today.lengthOfMonth()).atTime(LocalTime.of(23, 59, 59)).atZone(ACCESS_ZONE).toInstant();
+    private record EmployeeValidity(Instant validFrom, Instant validUntil) {
     }
 
     private String normalizeEmail(String email) {

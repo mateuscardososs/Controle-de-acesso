@@ -185,7 +185,7 @@ export default function GuestsPage() {
   useEffect(() => {
     if (!realtime.integrationSync.some((event) => event.personType === "GUEST")) return;
     queryClient.invalidateQueries({ queryKey: ["guests"] });
-  }, [queryClient, realtime.integrationSync.length]);
+  }, [queryClient, realtime.integrationSync]);
 
   const filteredGuests = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -558,13 +558,22 @@ function ActionButton({
 function SyncBadge({ guest }: { guest: Guest }) {
   const status = guest.syncStatus ?? "NOT_REQUIRED";
   const title = (status === "SYNC_FAILED" || status === "SYNCED_WITH_WARNINGS") && guest.lastSyncError ? guest.lastSyncError : syncSummary(guest);
-  const Icon = syncIcon(status);
   return (
     <Badge tone={syncTone(status)} title={title} className="gap-1.5">
-      <Icon className={`h-3.5 w-3.5 ${status === "SYNCING" ? "animate-spin" : ""}`} />
+      <SyncStatusIcon status={status} />
       {syncSummary(guest)}
     </Badge>
   );
+}
+
+function SyncStatusIcon({ status }: { status: string }) {
+  const className = `h-3.5 w-3.5 ${status === "SYNCING" ? "animate-spin" : ""}`;
+  if (status === "SYNCED") return <CheckCircle2 className={className} />;
+  if (status === "SYNCING") return <Loader2 className={className} />;
+  if (status === "SYNCED_WITH_WARNINGS") return <AlertCircle className={className} />;
+  if (status === "SYNC_FAILED") return <AlertCircle className={className} />;
+  if (status === "PENDING_SYNC") return <RefreshCw className={className} />;
+  return <CheckCircle2 className={className} />;
 }
 
 function DetailItem({ label, value, danger = false }: { label: string; value: string; danger?: boolean }) {
@@ -697,13 +706,4 @@ function syncTone(status?: string): "slate" | "red" | "green" | "amber" | "blue"
   if (status === "SYNC_FAILED") return "red";
   if (status === "PENDING_SYNC") return "amber";
   return "slate";
-}
-
-function syncIcon(status?: string): LucideIcon {
-  if (status === "SYNCED") return CheckCircle2;
-  if (status === "SYNCING") return Loader2;
-  if (status === "SYNCED_WITH_WARNINGS") return AlertCircle;
-  if (status === "SYNC_FAILED") return AlertCircle;
-  if (status === "PENDING_SYNC") return RefreshCw;
-  return CheckCircle2;
 }

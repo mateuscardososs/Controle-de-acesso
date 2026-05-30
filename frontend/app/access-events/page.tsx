@@ -2,7 +2,7 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ChevronLeft, ChevronRight, Eraser, FileClock, FileDown, Plus, RefreshCcw, Search, ShieldCheck, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eraser, FileClock, FileDown, Plus, RefreshCcw, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";

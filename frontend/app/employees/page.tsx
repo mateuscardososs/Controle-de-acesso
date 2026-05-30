@@ -257,7 +257,7 @@ export default function EmployeesPage() {
             <CameraCapture value={facePhoto} onChange={setFacePhoto} disabled={create.isPending} />
           </div>
           <div className="rounded-xl border border-white/10 bg-white/[0.045] px-4 py-3 text-sm text-slate-300">
-            A validade física é calculada automaticamente para o mês atual.
+            A validade física é calculada automaticamente para 45 dias.
           </div>
           {create.isError ? <ErrorState label={message || "Não foi possível criar o colaborador."} /> : null}
           <div className="flex flex-wrap justify-end gap-3 pt-1">

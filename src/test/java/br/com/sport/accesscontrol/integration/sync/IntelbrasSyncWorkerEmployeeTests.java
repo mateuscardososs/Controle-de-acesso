@@ -77,6 +77,8 @@ class IntelbrasSyncWorkerEmployeeTests {
                     areas.stream().filter(Area::isActive).map(Area::getId).toList()
             );
             assertThat(person.allowedAreaIds()).doesNotContain(areas.getLast().getId());
+            assertThat(person.validFrom()).isEqualTo(employee.getAccessValidFrom());
+            assertThat(person.validUntil()).isEqualTo(employee.getAccessValidUntil());
             return new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "Sincronizado em 10 de 10 controladoras.",
                     Duration.ofMillis(10), 10, 10, 0, 0);
         });
