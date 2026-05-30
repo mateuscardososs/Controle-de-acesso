@@ -76,6 +76,34 @@ public class IntelbrasPersonResolver {
             ));
         }
 
+        var guestByName = findGuestByName(cardName);
+        if (guestByName.isPresent()) {
+            var found = guestByName.get();
+            return logResolved(device, userId, new IntelbrasPersonIdentity(
+                    PersonType.GUEST,
+                    found.getId(),
+                    found.getFullName(),
+                    found.getCpf(),
+                    userId,
+                    cardName,
+                    true
+            ));
+        }
+
+        var employeeByName = findEmployeeByName(cardName);
+        if (employeeByName.isPresent()) {
+            var found = employeeByName.get();
+            return logResolved(device, userId, new IntelbrasPersonIdentity(
+                    PersonType.EMPLOYEE,
+                    found.getId(),
+                    found.getFullName(),
+                    found.getCpf(),
+                    userId,
+                    cardName,
+                    true
+            ));
+        }
+
         if (userId != null) {
             for (var candidateGuest : safeGuests()) {
                 if (matchesGeneratedIdentity(userId, PersonType.GUEST, candidateGuest.getId())) {
@@ -136,6 +164,38 @@ public class IntelbrasPersonResolver {
         for (var guest : safeGuests()) {
             if (matchesAnyDocumentCandidate(guest.getCpf(), candidates)) {
                 return Optional.of(guest);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<br.com.sport.accesscontrol.guests.Guest> findGuestByName(String name) {
+        if (name == null || name.isBlank()) {
+            return Optional.empty();
+        }
+        var guest = guestRepository.findFirstByFullNameIgnoreCaseOrderByVisitStartDesc(name.trim());
+        if (guest != null && guest.isPresent()) {
+            return guest;
+        }
+        for (var candidateGuest : safeGuests()) {
+            if (candidateGuest.getFullName() != null && candidateGuest.getFullName().trim().equalsIgnoreCase(name.trim())) {
+                return Optional.of(candidateGuest);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<br.com.sport.accesscontrol.employees.Employee> findEmployeeByName(String name) {
+        if (name == null || name.isBlank()) {
+            return Optional.empty();
+        }
+        var employee = employeeRepository.findFirstByFullNameIgnoreCase(name.trim());
+        if (employee != null && employee.isPresent()) {
+            return employee;
+        }
+        for (var candidateEmployee : safeEmployees()) {
+            if (candidateEmployee.getFullName() != null && candidateEmployee.getFullName().trim().equalsIgnoreCase(name.trim())) {
+                return Optional.of(candidateEmployee);
             }
         }
         return Optional.empty();

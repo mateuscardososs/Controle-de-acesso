@@ -145,15 +145,18 @@ class IntelbrasSyncWorkerGuestTests {
     }
 
     @Test
-    void partialSuccessMarksGuestSynced() {
+    void partialSuccessMarksGuestSyncedWithWarnings() {
         var guest = completedGuest(null);
         when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
         when(provider.syncPerson(any())).thenReturn(partialSuccess());
 
         worker.process(new IntelbrasSyncMessage(PersonType.GUEST, guest.getId(), 1));
 
-        assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNCED);
-        assertThat(guest.getLastSyncError()).isNull();
+        assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNCED_WITH_WARNINGS);
+        assertThat(guest.getLastSyncError()).contains("1 de 2");
+        assertThat(guest.getSyncTargetCount()).isEqualTo(2);
+        assertThat(guest.getSyncSuccessCount()).isEqualTo(1);
+        assertThat(guest.getSyncFailedCount()).isEqualTo(1);
     }
 
     @Test
@@ -200,6 +203,28 @@ class IntelbrasSyncWorkerGuestTests {
         assertThat(guest.getLastSyncError()).contains("Visitante sem áreas permitidas");
     }
 
+    @Test
+    void guestCannotBeMarkedSyncedWhenProviderReportsZeroSuccesses() {
+        var guest = completedGuest(null);
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
+        when(provider.syncPerson(any())).thenReturn(new ProviderSyncResult(
+                ProviderSyncStatus.FAILED,
+                "Falha: 0 de 5 controladoras.",
+                Duration.ofMillis(10),
+                5,
+                0,
+                5,
+                0
+        ));
+
+        worker.process(new IntelbrasSyncMessage(PersonType.GUEST, guest.getId(), 1));
+
+        assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNC_FAILED);
+        assertThat(guest.getSyncTargetCount()).isEqualTo(5);
+        assertThat(guest.getSyncSuccessCount()).isZero();
+        assertThat(guest.getLastSyncError()).contains("0 de 5");
+    }
+
     private Guest completedGuest(LocalDate invitedDay) {
         var start = Instant.now().minusSeconds(3600);
         var end = Instant.now().plusSeconds(3600);
@@ -236,6 +261,6 @@ class IntelbrasSyncWorkerGuestTests {
 
     private ProviderSyncResult partialSuccess() {
         return new ProviderSyncResult(ProviderSyncStatus.PARTIAL_SUCCESS,
-                "Sincronizado parcialmente: 1 de 2 controladoras.", Duration.ofMillis(10));
+                "Parcial: 1 de 2 controladoras.", Duration.ofMillis(10), 2, 1, 1, 0);
     }
 }

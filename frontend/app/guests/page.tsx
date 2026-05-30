@@ -103,8 +103,10 @@ export default function GuestsPage() {
       return {
         ...guest,
         syncStatus: sync.syncStatus as SyncStatus,
-        lastSyncAt: sync.syncStatus === "SYNCED" || sync.syncStatus === "SYNC_FAILED" ? sync.occurredAt ?? guest.lastSyncAt : guest.lastSyncAt,
-        lastSyncError: sync.syncStatus === "SYNC_FAILED" ? sync.message ?? guest.lastSyncError : sync.syncStatus === "SYNCED" ? undefined : guest.lastSyncError
+        lastSyncAt: ["SYNCED", "SYNCED_WITH_WARNINGS", "SYNC_FAILED"].includes(sync.syncStatus) ? sync.occurredAt ?? guest.lastSyncAt : guest.lastSyncAt,
+        lastSyncError: sync.syncStatus === "SYNC_FAILED" || sync.syncStatus === "SYNCED_WITH_WARNINGS"
+          ? sync.message ?? guest.lastSyncError
+          : sync.syncStatus === "SYNCED" ? undefined : guest.lastSyncError
       };
     });
   }, [guests.data, realtime.integrationSync]);
@@ -452,7 +454,7 @@ export default function GuestsPage() {
                   <p className="font-semibold text-slate-300">Status do dispositivo</p>
                   <div className="mt-1">{primaryIntelbrasDevice ? <StatusBadge value={primaryIntelbrasDevice.status} /> : <span className="text-slate-500">Não configurado</span>}</div>
                 </div>
-                <DetailItem label="Status Intelbras" value={syncLabel(selectedDetails.syncStatus)} />
+                <DetailItem label="Status Intelbras" value={syncSummary(selectedDetails)} />
                 <DetailItem label="Última sincronização" value={formatDate(selectedDetails.lastSyncAt)} />
                 <DetailItem label="Erro da última sincronização" value={selectedDetails.lastSyncError ?? "Sem erro registrado"} danger={Boolean(selectedDetails.lastSyncError)} />
                 <DetailItem label="Face enviada" value={selectedDetails.facePhotoUrl ? "sim" : "não"} />
@@ -555,12 +557,12 @@ function ActionButton({
 
 function SyncBadge({ guest }: { guest: Guest }) {
   const status = guest.syncStatus ?? "NOT_REQUIRED";
-  const title = status === "SYNC_FAILED" && guest.lastSyncError ? guest.lastSyncError : syncLabel(status);
+  const title = (status === "SYNC_FAILED" || status === "SYNCED_WITH_WARNINGS") && guest.lastSyncError ? guest.lastSyncError : syncSummary(guest);
   const Icon = syncIcon(status);
   return (
     <Badge tone={syncTone(status)} title={title} className="gap-1.5">
       <Icon className={`h-3.5 w-3.5 ${status === "SYNCING" ? "animate-spin" : ""}`} />
-      {syncLabel(status)}
+      {syncSummary(guest)}
     </Badge>
   );
 }
@@ -618,7 +620,7 @@ function syncDisabledReason(guest: Guest, syncEnabled: boolean, modeLoading: boo
   if (guest.status !== "COMPLETED") return "Visitante precisa estar completo para sincronizar.";
   if (!guest.facePhotoUrl) return "Visitante precisa enviar foto facial antes da sincronização.";
   if (guest.syncStatus === "SYNCING") return "Sincronização em andamento.";
-  if (retry && guest.syncStatus !== "SYNC_FAILED") return "Tentar novamente fica disponível apenas quando a sincronização falhar.";
+  if (retry && guest.syncStatus !== "SYNC_FAILED" && guest.syncStatus !== "SYNCED_WITH_WARNINGS") return "Tentar novamente fica disponível apenas quando a sincronização falhar ou ficar parcial.";
   return "";
 }
 
@@ -635,6 +637,7 @@ function linkedDeviceLabel(devices: Device[]) {
 
 function intelbrasUserCreated(guest: Guest) {
   if (guest.syncStatus === "SYNCED") return "sim";
+  if (guest.syncStatus === "SYNCED_WITH_WARNINGS") return syncSummary(guest).toLowerCase();
   if (guest.syncStatus === "SYNCING") return "em andamento";
   if (guest.syncStatus === "SYNC_FAILED") return "não";
   return "pendente";
@@ -668,6 +671,7 @@ function syncLabel(status?: string) {
   const labels: Record<string, string> = {
     PENDING_SYNC: "Pendente",
     SYNCING: "Sincronizando",
+    SYNCED_WITH_WARNINGS: "Parcial",
     SYNCED: "Sincronizado",
     SYNC_FAILED: "Falhou",
     NOT_REQUIRED: "Não requer"
@@ -675,9 +679,21 @@ function syncLabel(status?: string) {
   return labels[status ?? "NOT_REQUIRED"] ?? status ?? "Não requer";
 }
 
+function syncSummary(guest: Guest) {
+  const status = guest.syncStatus ?? "NOT_REQUIRED";
+  const total = guest.syncTargetCount ?? 0;
+  const success = guest.syncSuccessCount ?? 0;
+  if (status === "SYNCED" && total > 0) return `Sincronizado em ${success} de ${total}`;
+  if (status === "SYNCED_WITH_WARNINGS" && total > 0) return `Parcial: ${success} de ${total}`;
+  if (status === "SYNC_FAILED" && total > 0) return `Falha: ${success} de ${total}`;
+  if (status === "SYNC_FAILED") return "Falha: 0 controladoras";
+  return syncLabel(status);
+}
+
 function syncTone(status?: string): "slate" | "red" | "green" | "amber" | "blue" {
   if (status === "SYNCED") return "green";
   if (status === "SYNCING") return "blue";
+  if (status === "SYNCED_WITH_WARNINGS") return "amber";
   if (status === "SYNC_FAILED") return "red";
   if (status === "PENDING_SYNC") return "amber";
   return "slate";
@@ -686,6 +702,7 @@ function syncTone(status?: string): "slate" | "red" | "green" | "amber" | "blue"
 function syncIcon(status?: string): LucideIcon {
   if (status === "SYNCED") return CheckCircle2;
   if (status === "SYNCING") return Loader2;
+  if (status === "SYNCED_WITH_WARNINGS") return AlertCircle;
   if (status === "SYNC_FAILED") return AlertCircle;
   if (status === "PENDING_SYNC") return RefreshCw;
   return CheckCircle2;

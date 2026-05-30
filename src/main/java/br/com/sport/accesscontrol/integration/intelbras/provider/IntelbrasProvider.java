@@ -76,11 +76,11 @@ public class IntelbrasProvider implements AccessControlProvider {
         int value = ThreadLocalRandom.current().nextInt(100);
         var latency = Duration.between(start, Instant.now());
         if (value < 8) {
-            return new ProviderSyncResult(ProviderSyncStatus.FAILED, "Simulated Intelbras communication failure", latency);
+            return new ProviderSyncResult(ProviderSyncStatus.FAILED, "Simulated Intelbras communication failure", latency, 1, 0, 1, 0);
         }
         if (value < 18) {
-            return new ProviderSyncResult(ProviderSyncStatus.PARTIAL_SUCCESS, "Simulated partial sync: permissions pending", latency);
+            return new ProviderSyncResult(ProviderSyncStatus.PARTIAL_SUCCESS, "Simulated partial sync: permissions pending", latency, 2, 1, 1, 0);
         }
-        return new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "Simulated sync success", latency);
+        return new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "Simulated sync success", latency, 1, 1, 0, 0);
     }
 }

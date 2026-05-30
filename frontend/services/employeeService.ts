@@ -14,10 +14,14 @@ export type Employee = {
   status: "ACTIVE" | "INACTIVE" | "BLOCKED";
   accessValidFrom?: string;
   accessValidUntil?: string;
-  syncStatus?: "NOT_REQUIRED" | "PENDING_SYNC" | "SYNCING" | "SYNCED" | "SYNC_FAILED";
+  syncStatus?: "NOT_REQUIRED" | "PENDING_SYNC" | "SYNCING" | "SYNCED_WITH_WARNINGS" | "SYNCED" | "SYNC_FAILED";
   lastSyncAt?: string;
   lastSyncError?: string;
   syncAttempts?: number;
+  syncTargetCount?: number;
+  syncSuccessCount?: number;
+  syncFailedCount?: number;
+  syncSkippedCount?: number;
   allowedAreaIds?: string[];
   allowedAreaNames?: string[];
   displayAllowedAreas?: string | null;

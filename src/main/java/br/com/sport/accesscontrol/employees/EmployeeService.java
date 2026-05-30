@@ -164,13 +164,15 @@ public class EmployeeService {
             throw new IllegalArgumentException("Informe foto facial ou tag/cartão antes da sincronização.");
         }
         var oldData = employeeSnapshot(employee);
+        applyFullAccessAreas(employee);
         employee.markPendingSync();
         employeeRepository.save(employee);
         auditService.record("EMPLOYEE_SYNC_REQUESTED", "Employee", employee.getId(),
                 Map.of(
                         "validFrom", employee.getAccessValidFrom() == null ? "" : employee.getAccessValidFrom(),
                         "validUntil", employee.getAccessValidUntil() == null ? "" : employee.getAccessValidUntil(),
-                        "cardNo", employee.getCardNo() == null ? "" : employee.getCardNo()
+                        "cardNo", employee.getCardNo() == null ? "" : employee.getCardNo(),
+                        "allowedAreaIds", activeAllowedAreaIds(employee)
                 ),
                 oldData,
                 employeeSnapshot(employee));
@@ -302,6 +304,18 @@ public class EmployeeService {
 
     private String normalize(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private List<String> activeAllowedAreaIds(Employee employee) {
+        if (employee.getAllowedAreas() == null) {
+            return List.of();
+        }
+        return employee.getAllowedAreas().stream()
+                .filter(br.com.sport.accesscontrol.areas.Area::isActive)
+                .map(br.com.sport.accesscontrol.areas.Area::getId)
+                .filter(java.util.Objects::nonNull)
+                .map(UUID::toString)
+                .toList();
     }
 
     private boolean hasText(String value) {

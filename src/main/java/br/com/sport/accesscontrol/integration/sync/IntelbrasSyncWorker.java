@@ -217,33 +217,38 @@ public class IntelbrasSyncWorker {
     }
 
     private void finishEmployee(Employee employee, ProviderSyncResult result) {
-        if (result.status() == ProviderSyncStatus.SUCCESS || result.status() == ProviderSyncStatus.PARTIAL_SUCCESS) {
-            employee.markSynced();
+        if (result.successful()) {
+            employee.markSynced(result.totalTargets(), result.successCount(), result.failedCount(), result.skippedCount());
             employeeRepository.save(employee);
-            if (result.status() == ProviderSyncStatus.PARTIAL_SUCCESS) {
-                log.warn("SYNC_PARTIAL_SUCCESS_TREATED_AS_SYNCED person_type=EMPLOYEE person_id={} partial_error={}",
-                        employee.getId(), safe(result.message()));
-            }
+            log.info("SYNC_STATUS_UPDATED person_type=EMPLOYEE person_id={} sync_status=SYNCED success_count={} total_targets={} failed_count={} skipped_count={}",
+                    employee.getId(), result.successCount(), result.totalTargets(), result.failedCount(), result.skippedCount());
             auditSuccess(PersonType.EMPLOYEE, employee.getId(), result);
             realtimePublisher.publish(PersonType.EMPLOYEE, employee.getId(), SyncStatus.SYNCED, result.message());
-        } else {
-            employee.markSyncFailed(result.message());
+        } else if (result.status() == ProviderSyncStatus.PARTIAL_SUCCESS) {
+            employee.markSyncedWithWarnings(result.message(), result.totalTargets(), result.successCount(),
+                    result.failedCount(), result.skippedCount());
             employeeRepository.save(employee);
-            auditFailure(PersonType.EMPLOYEE, employee.getId(), result.message());
+            log.warn("SYNC_STATUS_UPDATED person_type=EMPLOYEE person_id={} sync_status=SYNCED_WITH_WARNINGS success_count={} total_targets={} failed_count={} skipped_count={} warning={}",
+                    employee.getId(), result.successCount(), result.totalTargets(), result.failedCount(),
+                    result.skippedCount(), safe(result.message()));
+            auditPartial(PersonType.EMPLOYEE, employee.getId(), result);
+            realtimePublisher.publish(PersonType.EMPLOYEE, employee.getId(), SyncStatus.SYNCED_WITH_WARNINGS, result.message());
+        } else {
+            employee.markSyncFailed(result.message(), result.totalTargets(), result.successCount(),
+                    result.failedCount(), result.skippedCount());
+            employeeRepository.save(employee);
+            auditFailure(PersonType.EMPLOYEE, employee.getId(), result);
             realtimePublisher.publish(PersonType.EMPLOYEE, employee.getId(), SyncStatus.SYNC_FAILED, result.message());
         }
     }
 
     private void finishGuest(Guest guest, ProviderSyncResult result, String target) {
-        if (result.status() == ProviderSyncStatus.SUCCESS || result.status() == ProviderSyncStatus.PARTIAL_SUCCESS) {
-            guest.markSynced();
+        if (result.successful()) {
+            guest.markSynced(result.totalTargets(), result.successCount(), result.failedCount(), result.skippedCount());
             guestRepository.save(guest);
-            log.info("SYNC_STATUS_UPDATED person_type=GUEST person_id={} cpf={} sync_status=SYNCED sync_attempts={} last_sync_at={}",
-                    guest.getId(), guest.getCpf(), guest.getSyncAttempts(), guest.getLastSyncAt());
-            if (result.status() == ProviderSyncStatus.PARTIAL_SUCCESS) {
-                log.warn("SYNC_PARTIAL_SUCCESS_TREATED_AS_SYNCED person_type=GUEST person_id={} cpf={} partial_error={}",
-                        guest.getId(), guest.getCpf(), safe(result.message()));
-            }
+            log.info("SYNC_STATUS_UPDATED person_type=GUEST person_id={} cpf={} sync_status=SYNCED sync_attempts={} last_sync_at={} success_count={} total_targets={} failed_count={} skipped_count={}",
+                    guest.getId(), guest.getCpf(), guest.getSyncAttempts(), guest.getLastSyncAt(),
+                    result.successCount(), result.totalTargets(), result.failedCount(), result.skippedCount());
             auditSuccess(PersonType.GUEST, guest.getId(), result);
             auditGuestSyncResult(guest, target, "SYNCED", null);
             sendGuestAccessApprovalEmail(guest);
@@ -251,13 +256,29 @@ public class IntelbrasSyncWorker {
             log.info("manual_sync_finished person_type=GUEST person_id={} cpf={} result={} target={} latency_ms={}",
                     guest.getId(), guest.getCpf(), result.status().name(), target, result.latency().toMillis());
             realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNCED,
-                    "Visitante " + guest.getFullName() + " sincronizado com " + target);
-        } else {
-            guest.markSyncFailed(result.message());
+                    "Visitante " + guest.getFullName() + ": " + result.message());
+        } else if (result.status() == ProviderSyncStatus.PARTIAL_SUCCESS) {
+            guest.markSyncedWithWarnings(result.message(), result.totalTargets(), result.successCount(),
+                    result.failedCount(), result.skippedCount());
             guestRepository.save(guest);
-            log.info("SYNC_STATUS_UPDATED person_type=GUEST person_id={} cpf={} sync_status=SYNC_FAILED sync_attempts={} last_sync_error={}",
-                    guest.getId(), guest.getCpf(), guest.getSyncAttempts(), safe(result.message()));
-            auditFailure(PersonType.GUEST, guest.getId(), result.message());
+            log.warn("SYNC_STATUS_UPDATED person_type=GUEST person_id={} cpf={} sync_status=SYNCED_WITH_WARNINGS sync_attempts={} last_sync_at={} success_count={} total_targets={} failed_count={} skipped_count={} warning={}",
+                    guest.getId(), guest.getCpf(), guest.getSyncAttempts(), guest.getLastSyncAt(),
+                    result.successCount(), result.totalTargets(), result.failedCount(), result.skippedCount(),
+                    safe(result.message()));
+            auditPartial(PersonType.GUEST, guest.getId(), result);
+            auditGuestSyncResult(guest, target, "SYNCED_WITH_WARNINGS", result.message());
+            log.warn("manual_sync_partial person_type=GUEST person_id={} cpf={} result=SYNCED_WITH_WARNINGS target={} warning={} latency_ms={}",
+                    guest.getId(), guest.getCpf(), target, safe(result.message()), result.latency().toMillis());
+            realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNCED_WITH_WARNINGS,
+                    result.message());
+        } else {
+            guest.markSyncFailed(result.message(), result.totalTargets(), result.successCount(),
+                    result.failedCount(), result.skippedCount());
+            guestRepository.save(guest);
+            log.info("SYNC_STATUS_UPDATED person_type=GUEST person_id={} cpf={} sync_status=SYNC_FAILED sync_attempts={} last_sync_error={} success_count={} total_targets={} failed_count={} skipped_count={}",
+                    guest.getId(), guest.getCpf(), guest.getSyncAttempts(), safe(result.message()),
+                    result.successCount(), result.totalTargets(), result.failedCount(), result.skippedCount());
+            auditFailure(PersonType.GUEST, guest.getId(), result);
             auditGuestSyncResult(guest, target, "SYNC_FAILED", result.message());
             log.warn("manual_sync_failed person_type=GUEST person_id={} cpf={} result=SYNC_FAILED target={} error={} latency_ms={}",
                     guest.getId(), guest.getCpf(), target, safe(result.message()), result.latency().toMillis());
@@ -310,11 +331,38 @@ public class IntelbrasSyncWorker {
 
     private void auditSuccess(PersonType type, UUID id, ProviderSyncResult result) {
         auditService.record("INTELBRAS_SYNC_SUCCEEDED", type.name(), id,
-                Map.of("message", safe(result.message()), "latencyMs", result.latency().toMillis()), Map.of(), Map.of());
+                Map.of(
+                        "message", safe(result.message()),
+                        "latencyMs", result.latency().toMillis(),
+                        "totalTargets", result.totalTargets(),
+                        "successCount", result.successCount(),
+                        "failedCount", result.failedCount(),
+                        "skippedCount", result.skippedCount()
+                ), Map.of(), Map.of());
     }
 
-    private void auditFailure(PersonType type, UUID id, String error) {
-        auditService.record("INTELBRAS_SYNC_FAILED", type.name(), id, Map.of("error", safe(error)), Map.of(), Map.of());
+    private void auditPartial(PersonType type, UUID id, ProviderSyncResult result) {
+        auditService.record("INTELBRAS_SYNC_PARTIAL", type.name(), id,
+                Map.of(
+                        "message", safe(result.message()),
+                        "latencyMs", result.latency().toMillis(),
+                        "totalTargets", result.totalTargets(),
+                        "successCount", result.successCount(),
+                        "failedCount", result.failedCount(),
+                        "skippedCount", result.skippedCount()
+                ), Map.of(), Map.of());
+    }
+
+    private void auditFailure(PersonType type, UUID id, ProviderSyncResult result) {
+        auditService.record("INTELBRAS_SYNC_FAILED", type.name(), id,
+                Map.of(
+                        "error", safe(result.message()),
+                        "latencyMs", result.latency().toMillis(),
+                        "totalTargets", result.totalTargets(),
+                        "successCount", result.successCount(),
+                        "failedCount", result.failedCount(),
+                        "skippedCount", result.skippedCount()
+                ), Map.of(), Map.of());
     }
 
     private void sendGuestAccessApprovalEmail(Guest guest) {

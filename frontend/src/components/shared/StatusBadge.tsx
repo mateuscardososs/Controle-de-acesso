@@ -40,6 +40,7 @@ const labels: Record<string, string> = {
   NOT_REQUIRED: "Não requer",
   PENDING_SYNC: "Pendente",
   SYNCING: "Sincronizando",
+  SYNCED_WITH_WARNINGS: "Parcial",
   SYNCED: "Sincronizado",
   SYNC_FAILED: "Falhou",
   ENTRY_EXIT: "Entrada/Saída",
@@ -60,7 +61,7 @@ export function StatusBadge({ value }: { value?: string | boolean | null }) {
       ? "green"
       : normalized === "DENIED" || normalized === "BLOCKED" || normalized === "OFFLINE" || normalized === "ERROR" || normalized === "FAILED" || normalized === "SYNC_FAILED" || normalized === "NOT_RECOGNIZED" || normalized === "NOT_PASSED"
         ? "red"
-        : normalized === "UNKNOWN" || normalized === "MAINTENANCE" || normalized === "MANUAL_ADMIN_RELEASE"
+        : normalized === "UNKNOWN" || normalized === "MAINTENANCE" || normalized === "MANUAL_ADMIN_RELEASE" || normalized === "SYNCED_WITH_WARNINGS"
           ? "amber"
           : normalized === "PENDING_SYNC" || normalized === "SYNCING"
             ? "amber"

@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -40,20 +41,48 @@ public class IntelbrasDeviceConnectionService {
      * Usado para sincronizar uma pessoa nas controladoras das áreas que ela pode acessar.
      */
     public List<IntelbrasDeviceConnection> selectOnlineConfiguredDevicesForAreas(java.util.Set<UUID> allowedAreaIds) {
-        var candidates = onlineConfiguredDevices();
+        var devices = deviceRepository.findAll();
+        var candidates = new java.util.ArrayList<IntelbrasDeviceConnection>();
+        var selected = new java.util.ArrayList<IntelbrasDeviceConnection>();
+        var diagnostics = new java.util.ArrayList<Map<String, Object>>();
         if (allowedAreaIds == null || allowedAreaIds.isEmpty()) {
             log.info("SYNC_DEVICE_CANDIDATES_BEFORE_FILTER allowed_area_ids=[] total_online_candidates={}",
-                    candidates.size());
+                    0);
             log.info("intelbras_multi_area_selection allowed_areas=empty selected=0");
             log.info("SYNC_DEVICE_CANDIDATES_AFTER_FILTER selected_count=0 selected_ids=[] reason=no_allowed_areas_provided");
+            for (Device device : devices) {
+                var reason = eligibilityFailureReason(device, true);
+                if (reason == null) {
+                    reason = "no_allowed_areas_provided";
+                } else {
+                    reject(device, reason);
+                }
+                diagnostics.add(selectionLog(device, false, reason));
+            }
+            log.info("SYNC_SELECTED_DEVICES_COUNT selected=0 skipped={} total_devices={} reason=no_allowed_areas_provided",
+                    diagnostics.size(), devices.size());
+            log.info("SYNC_SELECTED_DEVICE_LIST allowed_area_ids=[] devices={}", diagnostics);
             return List.of();
+        }
+        for (Device device : devices) {
+            var reason = eligibilityFailureReason(device, true);
+            if (reason == null) {
+                var connection = connectionFor(device);
+                candidates.add(connection);
+                if (allowedAreaIds.contains(areaId(device))) {
+                    selected.add(connection);
+                    diagnostics.add(selectionLog(device, true, "selected"));
+                } else {
+                    diagnostics.add(selectionLog(device, false, "area_not_allowed"));
+                }
+            } else {
+                reject(device, reason);
+                diagnostics.add(selectionLog(device, false, reason));
+            }
         }
         log.info("SYNC_DEVICE_CANDIDATES_BEFORE_FILTER allowed_area_ids=[{}] total_online_candidates={}",
                 allowedAreaIds.stream().map(UUID::toString).collect(java.util.stream.Collectors.joining(",")),
                 candidates.size());
-        var selected = candidates.stream()
-                .filter(connection -> allowedAreaIds.contains(areaId(connection.device())))
-                .toList();
         log.info("SYNC_DEVICE_CANDIDATES_AFTER_FILTER selected_count={} selected_ids=[{}]",
                 selected.size(),
                 selected.stream()
@@ -61,6 +90,11 @@ public class IntelbrasDeviceConnectionService {
                         .collect(java.util.stream.Collectors.joining(",")));
         log.info("intelbras_multi_area_selection allowed_areas_count={} selected={} candidates={}",
                 allowedAreaIds.size(), selected.size(), candidates.size());
+        log.info("SYNC_SELECTED_DEVICES_COUNT selected={} skipped={} total_devices={}",
+                selected.size(), Math.max(0, diagnostics.size() - selected.size()), devices.size());
+        log.info("SYNC_SELECTED_DEVICE_LIST allowed_area_ids=[{}] devices={}",
+                allowedAreaIds.stream().map(UUID::toString).collect(java.util.stream.Collectors.joining(",")),
+                diagnostics);
         if (selected.isEmpty() && !candidates.isEmpty()) {
             log.warn("SYNC_DEVICE_CANDIDATES_AFTER_FILTER_EMPTY allowed_area_ids=[{}] candidate_area_ids=[{}]",
                     allowedAreaIds.stream().map(UUID::toString).collect(java.util.stream.Collectors.joining(",")),
@@ -68,7 +102,7 @@ public class IntelbrasDeviceConnectionService {
                             .map(c -> areaId(c.device()) == null ? "null" : areaId(c.device()).toString())
                             .collect(java.util.stream.Collectors.joining(",")));
         }
-        return selected;
+        return List.copyOf(selected);
     }
 
     public Optional<IntelbrasDeviceConnection> selectOnlineConfiguredDevice(UUID preferredAreaId) {
@@ -79,8 +113,8 @@ public class IntelbrasDeviceConnectionService {
                     .filter(connection -> sameArea(connection.device(), preferredAreaId))
                     .findFirst();
         }
-        if (selected.isEmpty()) {
-            selected = candidates.stream().findFirst();
+        if (selected.isEmpty() && preferredAreaId == null) {
+            log.warn("intelbras_selected_device device_id=none preferred_area_id=null reason=no_preferred_area_no_fallback");
         }
         selected.ifPresentOrElse(
                 connection -> log.info("intelbras_selected_device device_id={} area_id={} preferred_area_id={} host={} model={} status={} online_status={}",
@@ -119,40 +153,41 @@ public class IntelbrasDeviceConnectionService {
     }
 
     private boolean eligible(Device device, boolean requireOnline) {
+        var reason = eligibilityFailureReason(device, requireOnline);
+        if (reason == null) {
+            return true;
+        }
+        reject(device, reason);
+        return false;
+    }
+
+    private String eligibilityFailureReason(Device device, boolean requireOnline) {
         if (device == null || !device.isActive()) {
-            reject(device, "inactive_device");
-            return false;
+            return "inactive_device";
         }
         if (!hasText(device.getIpAddress())) {
-            reject(device, "missing_ip_address");
-            return false;
+            return "missing_ip_address";
         }
         if (!looksLikeIntelbras(device)) {
-            reject(device, "model_not_intelbras_ss55xx");
-            return false;
+            return "model_not_intelbras_ss55xx";
         }
         if (requireOnline && !online(device)) {
-            reject(device, "not_online");
-            return false;
+            return "not_online";
         }
         if (device.getArea() == null || device.getArea().getId() == null) {
-            reject(device, "missing_area");
-            return false;
+            return "missing_area";
         }
         if (!hasText(firstNonBlank(device.getIntelbrasUsername(), properties.getDefaultUsername()))) {
-            reject(device, "missing_username");
-            return false;
+            return "missing_username";
         }
         if (!hasText(device.getIntelbrasPassword())) {
-            reject(device, "missing_device_password");
-            return false;
+            return "missing_device_password";
         }
         var connection = connectionFor(device);
         if (!connection.configured()) {
-            reject(device, "missing_credentials");
-            return false;
+            return "missing_credentials";
         }
-        return true;
+        return null;
     }
 
     private boolean looksLikeIntelbras(Device device) {
@@ -192,6 +227,17 @@ public class IntelbrasDeviceConnectionService {
                 device != null && hasText(device.getIpAddress()),
                 device != null && connectionFor(device).configured(),
                 device == null ? null : areaId(device));
+    }
+
+    private Map<String, Object> selectionLog(Device device, boolean selected, String reason) {
+        return Map.of(
+                "deviceId", device == null || device.getId() == null ? "" : device.getId().toString(),
+                "name", device == null || device.getName() == null ? "" : device.getName(),
+                "ip", device == null || device.getIpAddress() == null ? "" : device.getIpAddress(),
+                "area", device == null || device.getArea() == null || device.getArea().getName() == null ? "" : device.getArea().getName(),
+                "eligibleForSync", selected,
+                "reason", reason == null ? "" : reason
+        );
     }
 
     private String normalize(String value) {

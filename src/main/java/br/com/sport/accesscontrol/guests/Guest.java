@@ -73,6 +73,18 @@ public class Guest extends TimestampedEntity {
     @Column(name = "sync_attempts", nullable = false)
     private int syncAttempts;
 
+    @Column(name = "sync_target_count", nullable = false)
+    private int syncTargetCount;
+
+    @Column(name = "sync_success_count", nullable = false)
+    private int syncSuccessCount;
+
+    @Column(name = "sync_failed_count", nullable = false)
+    private int syncFailedCount;
+
+    @Column(name = "sync_skipped_count", nullable = false)
+    private int syncSkippedCount;
+
     @Column(name = "access_approved_email_sent_at")
     private Instant accessApprovedEmailSentAt;
 
@@ -240,6 +252,22 @@ public class Guest extends TimestampedEntity {
         return syncAttempts;
     }
 
+    public int getSyncTargetCount() {
+        return syncTargetCount;
+    }
+
+    public int getSyncSuccessCount() {
+        return syncSuccessCount;
+    }
+
+    public int getSyncFailedCount() {
+        return syncFailedCount;
+    }
+
+    public int getSyncSkippedCount() {
+        return syncSkippedCount;
+    }
+
     public Instant getAccessApprovedEmailSentAt() {
         return accessApprovedEmailSentAt;
     }
@@ -267,6 +295,7 @@ public class Guest extends TimestampedEntity {
     public void markPendingSync() {
         syncStatus = SyncStatus.PENDING_SYNC;
         lastSyncError = null;
+        clearSyncCounts();
     }
 
     public void markSyncing() {
@@ -275,15 +304,32 @@ public class Guest extends TimestampedEntity {
     }
 
     public void markSynced() {
+        markSynced(0, 0, 0, 0);
+    }
+
+    public void markSynced(int totalTargets, int successCount, int failedCount, int skippedCount) {
         syncStatus = SyncStatus.SYNCED;
         lastSyncAt = Instant.now();
         lastSyncError = null;
+        setSyncCounts(totalTargets, successCount, failedCount, skippedCount);
+    }
+
+    public void markSyncedWithWarnings(String warning, int totalTargets, int successCount, int failedCount, int skippedCount) {
+        syncStatus = SyncStatus.SYNCED_WITH_WARNINGS;
+        lastSyncAt = Instant.now();
+        lastSyncError = warning;
+        setSyncCounts(totalTargets, successCount, failedCount, skippedCount);
     }
 
     public void markSyncFailed(String error) {
+        markSyncFailed(error, 0, 0, 0, 0);
+    }
+
+    public void markSyncFailed(String error, int totalTargets, int successCount, int failedCount, int skippedCount) {
         syncStatus = SyncStatus.SYNC_FAILED;
         lastSyncAt = Instant.now();
         lastSyncError = error;
+        setSyncCounts(totalTargets, successCount, failedCount, skippedCount);
     }
 
     public Set<Area> getAllowedAreas() {
@@ -302,5 +348,16 @@ public class Guest extends TimestampedEntity {
         if (areas != null) {
             allowedAreas.addAll(areas);
         }
+    }
+
+    private void clearSyncCounts() {
+        setSyncCounts(0, 0, 0, 0);
+    }
+
+    private void setSyncCounts(int totalTargets, int successCount, int failedCount, int skippedCount) {
+        this.syncTargetCount = Math.max(0, totalTargets);
+        this.syncSuccessCount = Math.max(0, successCount);
+        this.syncFailedCount = Math.max(0, failedCount);
+        this.syncSkippedCount = Math.max(0, skippedCount);
     }
 }

@@ -584,6 +584,8 @@ public class IntelbrasCgiClient {
                 sanitizeHeaders(response.headers().map()), safe(response.body()));
         log.info("intelbras_response method={} host={} endpoint={} digest={} status={} response_body={}",
                 method, IntelbrasHttpSupport.maskHost(host), endpoint, digest, response.statusCode(), safe(response.body()));
+        log.info("SYNC_DEVICE_RESPONSE ip={} endpoint={} http_status={} body={}",
+                host, endpoint, response.statusCode(), summarize(safe(response.body())));
     }
 
     private Map<String, List<String>> sanitizeHeaders(Map<String, List<String>> headers) {
@@ -658,6 +660,13 @@ public class IntelbrasCgiClient {
             return "";
         }
         return value.replaceAll("(?i)(password|senha)=([^\\s,;]+)", "$1=***");
+    }
+
+    private String summarize(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.length() <= 300 ? value : value.substring(0, 300) + "...";
     }
 
     private record AccessUserLookup(boolean found, String recNo) {

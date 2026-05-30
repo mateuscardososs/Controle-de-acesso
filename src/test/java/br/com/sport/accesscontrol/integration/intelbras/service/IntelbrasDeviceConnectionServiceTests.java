@@ -119,12 +119,93 @@ class IntelbrasDeviceConnectionServiceTests {
         assertThat(noMatch).isEmpty();
     }
 
+    @Test
+    void employeeFullAccessAreaSetSelectsAllTenEligibleControllers() {
+        var portaria = area("Portaria");
+        var front1 = area("Front 1");
+        var front2 = area("Front 2");
+        var institucional1 = area("Institucional 1");
+        var vereadores = area("Institucional Vereadores");
+        var devices = List.of(
+                device(portaria, "192.168.50.101"),
+                device(portaria, "192.168.50.102"),
+                device(portaria, "192.168.50.103"),
+                device(portaria, "192.168.50.104"),
+                device(front1, "192.168.50.109"),
+                device(front2, "192.168.50.111"),
+                device(institucional1, "192.168.50.105"),
+                device(institucional1, "192.168.50.106"),
+                device(vereadores, "192.168.50.107"),
+                device(vereadores, "192.168.50.108")
+        );
+        var repository = mock(DeviceRepository.class);
+        when(repository.findAll()).thenReturn(devices);
+        var service = new IntelbrasDeviceConnectionService(repository, new IntelbrasProperties());
+
+        var selected = service.selectOnlineConfiguredDevicesForAreas(Set.of(
+                portaria.getId(), front1.getId(), front2.getId(), institucional1.getId(), vereadores.getId()
+        ));
+
+        assertThat(selected).hasSize(10);
+        assertThat(selected).extracting(connection -> connection.device().getIpAddress())
+                .containsExactlyInAnyOrder(
+                        "192.168.50.101", "192.168.50.102", "192.168.50.103", "192.168.50.104",
+                        "192.168.50.109", "192.168.50.111", "192.168.50.105", "192.168.50.106",
+                        "192.168.50.107", "192.168.50.108"
+                );
+    }
+
+    @Test
+    void guestFront1SelectsFourPortariaControllersAndOneFront1Controller() {
+        var portaria = area("Portaria");
+        var front1 = area("Front 1");
+        var front2 = area("Front 2");
+        var devices = List.of(
+                device(portaria, "192.168.50.101"),
+                device(portaria, "192.168.50.102"),
+                device(portaria, "192.168.50.103"),
+                device(portaria, "192.168.50.104"),
+                device(front1, "192.168.50.109"),
+                device(front2, "192.168.50.111")
+        );
+        var repository = mock(DeviceRepository.class);
+        when(repository.findAll()).thenReturn(devices);
+        var service = new IntelbrasDeviceConnectionService(repository, new IntelbrasProperties());
+
+        var selected = service.selectOnlineConfiguredDevicesForAreas(Set.of(portaria.getId(), front1.getId()));
+
+        assertThat(selected).hasSize(5);
+        assertThat(selected).extracting(connection -> connection.device().getIpAddress())
+                .containsExactlyInAnyOrder(
+                        "192.168.50.101",
+                        "192.168.50.102",
+                        "192.168.50.103",
+                        "192.168.50.104",
+                        "192.168.50.109"
+                );
+    }
+
     private Device device() {
         var area = new Area("Portaria", "Portaria", true);
         ReflectionTestUtils.setField(area, "id", UUID.randomUUID());
         var device = new Device("Catraca 1", "Intelbras SS 5531 MF W", "DRWL3903457HU", "192.168.15.5",
                 "Entrada", DeviceOperationType.ENTRY_EXIT, DeviceStatus.ONLINE, area);
         ReflectionTestUtils.setField(device, "id", UUID.randomUUID());
+        return device;
+    }
+
+    private Area area(String name) {
+        var area = new Area(name, name, true);
+        ReflectionTestUtils.setField(area, "id", UUID.randomUUID());
+        return area;
+    }
+
+    private Device device(Area area, String ip) {
+        var device = new Device("Catraca " + ip, "Intelbras SS 5531 MF W", "SN-" + ip, ip,
+                area.getName(), DeviceOperationType.ENTRY_EXIT, DeviceStatus.ONLINE, area);
+        ReflectionTestUtils.setField(device, "id", UUID.randomUUID());
+        device.setIntelbrasUsername("admin");
+        device.setIntelbrasPassword("secret");
         return device;
     }
 }

@@ -183,7 +183,13 @@ export default function EmployeesPage() {
               </span>
             ) },
             { key: "status", header: "Status", render: (employee) => <StatusBadge value={employee.status} /> },
-            { key: "sync", header: "Integração", render: (employee) => <StatusBadge value={employee.syncStatus ?? "PENDING_SYNC"} /> },
+            { key: "sync", header: "Integração", className: "min-w-[180px]", render: (employee) => (
+              <div className="space-y-1">
+                <StatusBadge value={employee.syncStatus ?? "PENDING_SYNC"} />
+                <p className="text-xs text-slate-500">{employeeSyncSummary(employee)}</p>
+                {employee.lastSyncError ? <p className="max-w-[240px] truncate text-xs text-red-200" title={employee.lastSyncError}>{employee.lastSyncError}</p> : null}
+              </div>
+            ) },
             {
               key: "actions",
               header: "Ações",
@@ -332,4 +338,17 @@ export default function EmployeesPage() {
       </Modal>
     </AdminShell>
   );
+}
+
+function employeeSyncSummary(employee: Employee) {
+  const status = employee.syncStatus ?? "PENDING_SYNC";
+  const total = employee.syncTargetCount ?? 0;
+  const success = employee.syncSuccessCount ?? 0;
+  if (status === "SYNCED" && total > 0) return `Sincronizado em ${success} de ${total}`;
+  if (status === "SYNCED_WITH_WARNINGS" && total > 0) return `Parcial: ${success} de ${total}`;
+  if (status === "SYNC_FAILED" && total > 0) return `Falha: ${success} de ${total}`;
+  if (status === "SYNC_FAILED") return "Falha: 0 controladoras";
+  if (status === "SYNCING") return "Sincronizacao em andamento";
+  if (status === "PENDING_SYNC") return "Aguardando sincronizacao";
+  return "Sem sincronizacao requerida";
 }
