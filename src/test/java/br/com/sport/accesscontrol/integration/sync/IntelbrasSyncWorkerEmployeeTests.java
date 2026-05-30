@@ -30,6 +30,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class IntelbrasSyncWorkerEmployeeTests {
@@ -85,6 +86,8 @@ class IntelbrasSyncWorkerEmployeeTests {
         assertThat(employee.getSyncStatus()).isEqualTo(SyncStatus.SYNCED);
         assertThat(employee.getSyncTargetCount()).isEqualTo(10);
         assertThat(employee.getSyncSuccessCount()).isEqualTo(10);
+        verify(employeeRepository).findByIdWithAllowedAreas(employee.getId());
+        verify(provider).syncPerson(any(ProviderPerson.class));
     }
 
     @Test

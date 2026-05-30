@@ -15,6 +15,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class IntelbrasDeviceConnectionServiceTests {
@@ -117,6 +119,22 @@ class IntelbrasDeviceConnectionServiceTests {
 
         var noMatch = service.selectOnlineConfiguredDevicesForAreas(Set.of(UUID.randomUUID()));
         assertThat(noMatch).isEmpty();
+    }
+
+    @Test
+    void selectOnlineForAreasUsesDevicesFetchedWithArea() {
+        var portaria = area("Portaria");
+        var device = device(portaria, "192.168.50.101");
+        var repository = mock(DeviceRepository.class);
+        when(repository.findAllWithArea()).thenReturn(List.of(device));
+        var service = new IntelbrasDeviceConnectionService(repository, new IntelbrasProperties());
+
+        var selected = service.selectOnlineConfiguredDevicesForAreas(Set.of(portaria.getId()));
+
+        assertThat(selected).hasSize(1);
+        assertThat(selected.getFirst().device().getArea().getName()).isEqualTo("Portaria");
+        verify(repository).findAllWithArea();
+        verify(repository, never()).findAll();
     }
 
     @Test

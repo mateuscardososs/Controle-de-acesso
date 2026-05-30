@@ -15,6 +15,6 @@ public interface GuestRepository extends JpaRepository<Guest, UUID> {
     Optional<Guest> findFirstByCpfOrderByVisitStartDesc(String cpf);
     Optional<Guest> findFirstByFullNameIgnoreCaseOrderByVisitStartDesc(String fullName);
 
-    @Query("SELECT g FROM Guest g LEFT JOIN FETCH g.allowedAreas WHERE g.id = :id")
+    @Query("SELECT DISTINCT g FROM Guest g LEFT JOIN FETCH g.allowedAreas WHERE g.id = :id")
     Optional<Guest> findByIdWithAllowedAreas(@Param("id") UUID id);
 }

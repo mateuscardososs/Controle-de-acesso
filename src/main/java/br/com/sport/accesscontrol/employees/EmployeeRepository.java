@@ -12,6 +12,6 @@ public interface EmployeeRepository extends JpaRepository<Employee, UUID> {
     Optional<Employee> findByCardNo(String cardNo);
     Optional<Employee> findFirstByFullNameIgnoreCase(String fullName);
 
-    @Query("SELECT e FROM Employee e LEFT JOIN FETCH e.allowedAreas WHERE e.id = :id")
+    @Query("SELECT DISTINCT e FROM Employee e LEFT JOIN FETCH e.allowedAreas WHERE e.id = :id")
     Optional<Employee> findByIdWithAllowedAreas(@Param("id") UUID id);
 }

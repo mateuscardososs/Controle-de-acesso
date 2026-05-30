@@ -41,7 +41,7 @@ public class IntelbrasDeviceConnectionService {
      * Usado para sincronizar uma pessoa nas controladoras das áreas que ela pode acessar.
      */
     public List<IntelbrasDeviceConnection> selectOnlineConfiguredDevicesForAreas(java.util.Set<UUID> allowedAreaIds) {
-        var devices = deviceRepository.findAll();
+        var devices = devicesWithArea();
         var candidates = new java.util.ArrayList<IntelbrasDeviceConnection>();
         var selected = new java.util.ArrayList<IntelbrasDeviceConnection>();
         var diagnostics = new java.util.ArrayList<Map<String, Object>>();
@@ -128,7 +128,7 @@ public class IntelbrasDeviceConnectionService {
     }
 
     public IntelbrasDeviceConnection connectionFor(UUID deviceId) {
-        return deviceRepository.findById(deviceId)
+        return deviceByIdWithArea(deviceId)
                 .filter(Device::isActive)
                 .map(this::connectionFor)
                 .orElseThrow(() -> new IllegalArgumentException("Device not found: " + deviceId));
@@ -144,12 +144,25 @@ public class IntelbrasDeviceConnectionService {
     }
 
     private List<IntelbrasDeviceConnection> configuredCandidates(boolean requireOnline) {
-        var devices = deviceRepository.findAll();
+        var devices = devicesWithArea();
         log.info("intelbras_device_candidates_count total={} require_online={}", devices.size(), requireOnline);
         return devices.stream()
                 .filter(device -> eligible(device, requireOnline))
                 .map(this::connectionFor)
                 .toList();
+    }
+
+    private List<Device> devicesWithArea() {
+        var devices = deviceRepository.findAllWithArea();
+        if (devices == null || devices.isEmpty()) {
+            return deviceRepository.findAll();
+        }
+        return devices;
+    }
+
+    private Optional<Device> deviceByIdWithArea(UUID deviceId) {
+        var device = deviceRepository.findByIdWithArea(deviceId);
+        return device.isPresent() ? device : deviceRepository.findById(deviceId);
     }
 
     private boolean eligible(Device device, boolean requireOnline) {

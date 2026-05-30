@@ -393,7 +393,7 @@ public class IntelbrasSyncWorker {
     }
 
     private String intelbrasTarget() {
-        return deviceRepository.findAll().stream()
+        return devicesWithAreaForWorkerLog().stream()
                 .filter(this::eligibleIntelbrasDeviceForWorkerLog)
                 .findFirst()
                 .map(device -> device.getModel() == null || device.getModel().isBlank() ? device.getName() : device.getModel())
@@ -401,11 +401,19 @@ public class IntelbrasSyncWorker {
     }
 
     private String intelbrasTargetDeviceId() {
-        return deviceRepository.findAll().stream()
+        return devicesWithAreaForWorkerLog().stream()
                 .filter(this::eligibleIntelbrasDeviceForWorkerLog)
                 .findFirst()
                 .map(device -> device.getId() == null ? "unknown" : device.getId().toString())
                 .orElse("none");
+    }
+
+    private java.util.List<Device> devicesWithAreaForWorkerLog() {
+        var devices = deviceRepository.findAllWithArea();
+        if (devices == null || devices.isEmpty()) {
+            return deviceRepository.findAll();
+        }
+        return devices;
     }
 
     private boolean eligibleIntelbrasDeviceForWorkerLog(Device device) {
