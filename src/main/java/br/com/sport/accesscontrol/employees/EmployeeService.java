@@ -11,6 +11,8 @@ import br.com.sport.accesscontrol.integration.sync.EmployeeReadyForSyncEvent;
 import br.com.sport.accesscontrol.guests.FaceStorageService;
 import br.com.sport.accesscontrol.users.User;
 import br.com.sport.accesscontrol.users.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -27,6 +29,8 @@ import java.util.UUID;
 
 @Service
 public class EmployeeService {
+
+    private static final Logger log = LoggerFactory.getLogger(EmployeeService.class);
 
     private final EmployeeRepository employeeRepository;
     private final UserRepository userRepository;
@@ -290,7 +294,18 @@ public class EmployeeService {
 
     private String normalizeCardNo(String cardNo) {
         var normalized = normalize(cardNo);
-        return normalized == null ? null : normalized.replaceAll("\\D", "");
+        if (normalized == null) return null;
+        var upper = normalized.toUpperCase(Locale.ROOT);
+        if (upper.matches(".*[A-F].*") && upper.matches("[0-9A-F:. \\-]+")) {
+            log.warn("CARD_FORMAT_WARNING card_no_raw={} — contains hex letters (A-F). Intelbras expects decimal (numeric only). Convert to decimal first, or non-digit chars will be stripped.",
+                    normalized);
+        }
+        var digitsOnly = normalized.replaceAll("\\D", "");
+        if (digitsOnly.isBlank() && !normalized.isBlank()) {
+            log.warn("CARD_ALL_DIGITS_STRIPPED card_no_raw={} — all chars stripped (input was all non-digits). Card will not be sent to Intelbras.",
+                    normalized);
+        }
+        return digitsOnly.isBlank() ? null : digitsOnly;
     }
 
     private String normalize(String value) {

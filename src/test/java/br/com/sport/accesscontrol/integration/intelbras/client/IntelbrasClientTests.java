@@ -125,7 +125,9 @@ class IntelbrasClientTests {
                 .thenReturn(challenge)
                 .thenReturn(stringResponse(200, "OK", Map.of()))
                 .thenReturn(challenge)
-                .thenReturn(stringResponse(200, "OK", Map.of()));
+                .thenReturn(stringResponse(200, "OK", Map.of()))
+                .thenReturn(challenge)
+                .thenReturn(stringResponse(200, "Count=1\nUserID=16", Map.of()));
 
         var client = new IntelbrasCgiClient(httpClient, properties, new ObjectMapper());
 
@@ -138,17 +140,18 @@ class IntelbrasClientTests {
                 LocalDateTime.of(2026, 5, 20, 8, 0),
                 LocalDateTime.of(2037, 12, 31, 23, 59, 59)
         );
-        client.replaceFace("192.168.15.5", "admin", "admin123", "16", "Alexandre16", "/9j/test");
+        client.replaceFace("192.168.15.5", "admin", "admin123", "16", "/9j/test");
 
         var requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
-        verify(httpClient, times(8)).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        verify(httpClient, times(10)).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
         var requests = requestCaptor.getAllValues();
 
         assertThat(requests.get(1).uri().toString())
                 .contains("/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.UserID=16");
         assertThat(requests.get(3).uri().toString())
                 .contains("/cgi-bin/recordUpdater.cgi?action=insert&name=AccessControlCard")
-                .contains("CardNo=16")
+                // No physical card provided via 7-arg overload → CardNo must NOT appear
+                .doesNotContain("CardNo=")
                 .contains("CardStatus=0")
                 .contains("UserID=16")
                 .contains("CardName=Alexandre16")
@@ -162,7 +165,7 @@ class IntelbrasClientTests {
         assertThat(requests.get(7).headers().firstValue("Content-Type")).hasValue("application/json");
         assertThat(bodyOf(requests.get(7)))
                 .contains("\"UserID\":\"16\"")
-                .contains("\"UserName\":\"Alexandre16\"")
+                .doesNotContain("\"UserName\"")
                 .contains("\"PhotoData\":[\"/9j/test\"]");
     }
 
@@ -225,12 +228,13 @@ class IntelbrasClientTests {
 
         var client = new IntelbrasCgiClient(httpClient, properties, new ObjectMapper());
 
+        // Employee with a physical card — CardNo must be the tag number, NOT the CPF
         var response = client.upsertAccessUser(
                 "192.168.15.5",
                 "admin",
                 "admin123",
-                "05731650411",
-                "05731650411",
+                "05731650411",       // userId = CPF
+                "8765432109",        // cardNo = physical tag (different from CPF)
                 "mateus da silva cardoso",
                 LocalDateTime.of(2026, 5, 20, 8, 0),
                 LocalDateTime.of(2037, 12, 31, 23, 59, 59)
@@ -247,10 +251,46 @@ class IntelbrasClientTests {
         assertThat(bodyOf(requests.get(5)))
                 .contains("action=insert")
                 .contains("name=AccessControlCard")
-                .contains("CardNo=05731650411")
+                .contains("CardNo=8765432109")        // physical card, NOT CPF
+                .doesNotContain("CardNo=05731650411") // CPF must NEVER be the CardNo
                 .contains("CardStatus=0")
                 .contains("CardName=mateus%20da%20silva%20cardoso")
                 .contains("UserID=05731650411");
+    }
+
+    @Test
+    void cgiClientOmitsCardNoWhenNoPhysicalCard() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        var properties = properties();
+        var challenge = stringResponse(401, "", Map.of(
+                "WWW-Authenticate", List.of("Digest realm=\"Intelbras\", nonce=\"abc\", qop=\"auth\"")
+        ));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(challenge)
+                .thenReturn(stringResponse(200, "found=0", Map.of()))
+                .thenReturn(challenge)
+                .thenReturn(stringResponse(200, "OK", Map.of()));
+
+        var client = new IntelbrasCgiClient(httpClient, properties, new ObjectMapper());
+
+        // Guest with CPF as userId but no physical card — CardNo must NOT appear
+        client.upsertAccessUser(
+                "192.168.15.5", "admin", "admin123",
+                "06331315470",  // userId = CPF
+                "",              // cardNo = blank → no physical card
+                "Visitante Real",
+                LocalDateTime.of(2026, 5, 20, 8, 0),
+                LocalDateTime.of(2037, 12, 31, 23, 59, 59)
+        );
+
+        var requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(httpClient, times(4)).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        var requests = requestCaptor.getAllValues();
+        var insertUri = requests.get(3).uri().toString();
+        assertThat(insertUri)
+                .contains("UserID=06331315470")
+                .doesNotContain("CardNo=")          // no card registered → no CPF as fake card
+                .contains("CardName=Visitante%20Real");
     }
 
     @Test

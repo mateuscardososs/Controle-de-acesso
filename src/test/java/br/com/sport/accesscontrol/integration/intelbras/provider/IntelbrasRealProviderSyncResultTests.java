@@ -25,11 +25,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import org.mockito.ArgumentCaptor;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -62,7 +65,8 @@ class IntelbrasRealProviderSyncResultTests {
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(10));
         acceptAllCgiCommands();
 
-        var result = provider.syncPerson(person(PersonType.EMPLOYEE, Set.of(allowedAreaId), null));
+        // CARD_ONLY employee: AccessControlCard is called on all 10 devices
+        var result = provider.syncPerson(personWithCard(PersonType.EMPLOYEE, Set.of(allowedAreaId), "8765432109"));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
         assertThat(result.totalTargets()).isEqualTo(10);
@@ -86,7 +90,8 @@ class IntelbrasRealProviderSyncResultTests {
         when(cgiClient.findAccessControlCards(anyString(), anyString(), anyString(), anyString()))
                 .thenAnswer(invocation -> List.of(Map.of("UserID", invocation.getArgument(3, String.class))));
 
-        var result = provider.syncPerson(person(PersonType.EMPLOYEE, Set.of(allowedAreaId), null));
+        // CARD_ONLY employee: upsertAccessUser fails on 9 devices
+        var result = provider.syncPerson(personWithCard(PersonType.EMPLOYEE, Set.of(allowedAreaId), "8765432109"));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.PARTIAL_SUCCESS);
         assertThat(result.totalTargets()).isEqualTo(10);
@@ -101,7 +106,8 @@ class IntelbrasRealProviderSyncResultTests {
         when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenThrow(new RuntimeException("CGI error"));
 
-        var result = provider.syncPerson(person(PersonType.GUEST, Set.of(allowedAreaId), null));
+        // CARD_ONLY employee: all 3 AccessControlCard calls fail
+        var result = provider.syncPerson(personWithCard(PersonType.GUEST, Set.of(allowedAreaId), "8765432109"));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
         assertThat(result.totalTargets()).isEqualTo(3);
@@ -115,7 +121,7 @@ class IntelbrasRealProviderSyncResultTests {
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(List.of());
 
-        var result = provider.syncPerson(person(PersonType.GUEST, Set.of(allowedAreaId), null));
+        var result = provider.syncPerson(personWithCard(PersonType.GUEST, Set.of(allowedAreaId), "8765432109"));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
         assertThat(result.totalTargets()).isZero();
@@ -129,10 +135,42 @@ class IntelbrasRealProviderSyncResultTests {
         when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenThrow(new RuntimeException("Error: rejected"));
 
-        var result = provider.syncPerson(person(PersonType.GUEST, Set.of(allowedAreaId), null));
+        // CARD path: AccessControlCard error must not become success
+        var result = provider.syncPerson(personWithCard(PersonType.GUEST, Set.of(allowedAreaId), "8765432109"));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
         assertThat(result.successCount()).isZero();
+    }
+
+    @Test
+    void faceEncodingFailureWithPhotoUrlBlocksAllTargets() {
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(2));
+        acceptAllCgiCommands();
+        when(faceEncoder.toJpegBase64("/uploads/faces/missing.jpg"))
+                .thenThrow(new IllegalArgumentException("Face photo file was not found."));
+
+        var result = provider.syncPerson(person(PersonType.GUEST, Set.of(allowedAreaId), "/uploads/faces/missing.jpg"));
+
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
+        assertThat(result.totalTargets()).isEqualTo(2);
+        assertThat(result.successCount()).isZero();
+        assertThat(result.failedCount()).isEqualTo(2);
+        assertThat(result.message()).contains("Foto facial não pôde ser processada");
+    }
+
+    @Test
+    void syncPersonWithNoPhotoUrlSkipsFaceAndSucceeds() {
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
+        acceptAllCgiCommands();
+
+        // CARD_ONLY employee: has physical card but no face photo — card sync must succeed
+        var result = provider.syncPerson(personWithCard(PersonType.EMPLOYEE, Set.of(allowedAreaId), "8765432109"));
+
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
+        assertThat(result.successCount()).isEqualTo(1);
+        assertThat(result.totalTargets()).isEqualTo(1);
     }
 
     @Test
@@ -141,9 +179,10 @@ class IntelbrasRealProviderSyncResultTests {
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
         acceptAllCgiCommands();
         when(faceEncoder.toJpegBase64("/faces/guest.jpg")).thenReturn("base64");
-        when(cgiClient.replaceFace(anyString(), anyString(), anyString(), anyString(), anyString(), eq("base64")))
+        when(cgiClient.replaceFace(anyString(), anyString(), anyString(), anyString(), eq("base64")))
                 .thenThrow(new RuntimeException("Face add rejected"));
 
+        // FACE_ONLY guest: step1 (base user) succeeds, step2 (replaceFace) throws → FAILED
         var result = provider.syncPerson(person(PersonType.GUEST, Set.of(allowedAreaId), "/faces/guest.jpg"));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
@@ -152,26 +191,141 @@ class IntelbrasRealProviderSyncResultTests {
         assertThat(result.failedCount()).isEqualTo(1);
     }
 
+    @Test
+    void syncFaceOnlyGuestCreatesBaseUserThenClearsCardNo() {
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
+        when(faceEncoder.toJpegBase64("/uploads/faces/guest.jpg")).thenReturn("photobase64");
+        acceptAllCgiCommands();
+
+        var result = provider.syncPerson(new ProviderPerson(
+                PersonType.GUEST, UUID.randomUUID(),
+                "06331315470",              // document = CPF
+                null,                        // no physical card
+                "Visitante Real",
+                "/uploads/faces/guest.jpg",
+                true,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600),
+                null, Set.of(allowedAreaId)
+        ));
+
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
+        // Step 1: base user created with CardNo=CPF as temporary placeholder
+        var cardNoCaptor = ArgumentCaptor.forClass(String.class);
+        verify(cgiClient).upsertAccessUser(anyString(), anyString(), anyString(),
+                eq("06331315470"), cardNoCaptor.capture(), anyString(), any(), any());
+        assertThat(cardNoCaptor.getValue()).isEqualTo("06331315470");  // temporary = userId
+        // Step 2: face added
+        verify(cgiClient).replaceFace(anyString(), anyString(), anyString(), eq("06331315470"), eq("photobase64"));
+        // Step 3: CardNo cleared (must be called so user ends up without card)
+        verify(cgiClient).clearCardNoForUser(anyString(), anyString(), anyString(),
+                eq("06331315470"), anyString(), any(), any());
+    }
+
+    @Test
+    void syncFaceOnlyEmployeeCreatesBaseUserThenClearsCardNo() {
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
+        when(faceEncoder.toJpegBase64("/uploads/faces/employee.jpg")).thenReturn("empbase64");
+        acceptAllCgiCommands();
+
+        var result = provider.syncPerson(new ProviderPerson(
+                PersonType.EMPLOYEE, UUID.randomUUID(),
+                "12345678901",               // document = CPF
+                null,                         // no physical card
+                "Colaborador Face",
+                "/uploads/faces/employee.jpg",
+                true,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600),
+                null, Set.of(allowedAreaId)
+        ));
+
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
+        verify(cgiClient).replaceFace(anyString(), anyString(), anyString(), eq("12345678901"), eq("empbase64"));
+        verify(cgiClient).clearCardNoForUser(anyString(), anyString(), anyString(),
+                eq("12345678901"), anyString(), any(), any());
+    }
+
+    @Test
+    void faceOnlyFailsWhenCardNoIsNotClearedAfterSync() {
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
+        when(faceEncoder.toJpegBase64("/uploads/faces/guest.jpg")).thenReturn("photobase64");
+        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn("OK");
+        // Simulate device accepting face but clearCardNo failing
+        when(cgiClient.clearCardNoForUser(anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenThrow(new RuntimeException("Device rejected empty CardNo update"));
+        // findAccessControlCards returns a record with UserID (used for verification)
+        when(cgiClient.findAccessControlCards(anyString(), anyString(), anyString(), anyString()))
+                .thenAnswer(invocation -> List.of(Map.of("UserID", invocation.getArgument(3, String.class))));
+
+        var result = provider.syncPerson(new ProviderPerson(
+                PersonType.GUEST, UUID.randomUUID(),
+                "06331315470", null, "Visitante Real",
+                "/uploads/faces/guest.jpg", true,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600),
+                null, Set.of(allowedAreaId)
+        ));
+
+        // CardNo not cleared → device must not be counted as success
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
+        assertThat(result.successCount()).isZero();
+    }
+
+    @Test
+    void employeeWithCardSendsPhysicalCardOnly() {
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
+        acceptAllCgiCommands();
+
+        // CARD path: physical card must be CardNo; CPF must stay as UserID only
+        provider.syncPerson(new ProviderPerson(
+                PersonType.EMPLOYEE, UUID.randomUUID(),
+                "12345678901",    // document = CPF (UserID)
+                "8765432109",     // physical card tag
+                "Colaborador com Tag", null, true,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600),
+                null, Set.of(allowedAreaId)
+        ));
+
+        var userIdCaptor = ArgumentCaptor.forClass(String.class);
+        var cardNoCaptor = ArgumentCaptor.forClass(String.class);
+        verify(cgiClient).upsertAccessUser(
+                anyString(), anyString(), anyString(),
+                userIdCaptor.capture(), cardNoCaptor.capture(), anyString(), any(), any());
+        assertThat(userIdCaptor.getValue()).isEqualTo("12345678901");
+        assertThat(cardNoCaptor.getValue()).isEqualTo("8765432109");
+        assertThat(cardNoCaptor.getValue()).isNotEqualTo(userIdCaptor.getValue());
+    }
+
     private void acceptAllCgiCommands() {
         when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn("OK");
+        when(cgiClient.clearCardNoForUser(anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn("OK");
+        // findAccessControlCards returns a record with only UserID (no CardNo) — simulates cleared state
         when(cgiClient.findAccessControlCards(anyString(), anyString(), anyString(), anyString()))
                 .thenAnswer(invocation -> List.of(Map.of("UserID", invocation.getArgument(3, String.class))));
     }
 
     private ProviderPerson person(PersonType type, Set<UUID> allowedAreaIds, String facePhotoUrl) {
         return new ProviderPerson(
-                type,
-                UUID.randomUUID(),
-                "12345678901",
-                null,
+                type, UUID.randomUUID(), "12345678901", null,
                 type == PersonType.GUEST ? "Visitante Teste" : "Colaborador Teste",
-                facePhotoUrl,
-                true,
-                Instant.now().minusSeconds(3600),
-                Instant.now().plusSeconds(3600),
-                null,
-                allowedAreaIds
+                facePhotoUrl, true,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600),
+                null, allowedAreaIds
+        );
+    }
+
+    private ProviderPerson personWithCard(PersonType type, Set<UUID> allowedAreaIds, String physicalCardNo) {
+        return new ProviderPerson(
+                type, UUID.randomUUID(), "12345678901", physicalCardNo,
+                type == PersonType.GUEST ? "Visitante Teste" : "Colaborador Teste",
+                null, true,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600),
+                null, allowedAreaIds
         );
     }
 

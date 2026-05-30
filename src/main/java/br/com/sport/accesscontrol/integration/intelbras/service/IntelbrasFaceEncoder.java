@@ -1,5 +1,7 @@
 package br.com.sport.accesscontrol.integration.intelbras.service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -17,16 +19,21 @@ import java.util.Base64;
 @Component
 public class IntelbrasFaceEncoder {
 
+    private static final Logger log = LoggerFactory.getLogger(IntelbrasFaceEncoder.class);
+
     private static final int MIN_WIDTH = 150;
     private static final int MIN_HEIGHT = 300;
     private static final int MAX_WIDTH = 600;
     private static final int MAX_HEIGHT = 1200;
-    private static final int MAX_BYTES = 100 * 1024;
 
     private final Path uploadRoot;
+    private final int maxBytes;
 
-    public IntelbrasFaceEncoder(@Value("${app.uploads.faces-dir:uploads/faces}") String facesDir) {
+    public IntelbrasFaceEncoder(
+            @Value("${app.uploads.faces-dir:uploads/faces}") String facesDir,
+            @Value("${app.intelbras.face.max-bytes:97280}") int maxBytes) {
         this.uploadRoot = Path.of(facesDir).toAbsolutePath().normalize();
+        this.maxBytes = maxBytes;
     }
 
     public String toJpegBase64(String facePhotoUrl) {
@@ -38,12 +45,23 @@ public class IntelbrasFaceEncoder {
             if (!Files.exists(path)) {
                 throw new IllegalArgumentException("Face photo file was not found.");
             }
+            long inputSizeBytes;
+            try {
+                inputSizeBytes = Files.size(path);
+            } catch (IOException e) {
+                inputSizeBytes = -1;
+            }
             var source = ImageIO.read(path.toFile());
             if (source == null) {
                 throw new IllegalArgumentException("Face photo must be a readable image.");
             }
-            var jpeg = normalize(source);
-            return Base64.getEncoder().encodeToString(encodeJpeg(jpeg));
+            log.info("FACE_ENCODE_START photo_url={} input_size_bytes={} input_width={} input_height={} max_output_bytes={}",
+                    facePhotoUrl, inputSizeBytes, source.getWidth(), source.getHeight(), maxBytes);
+            var normalized = normalize(source);
+            var bytes = encodeJpeg(normalized);
+            log.info("FACE_ENCODE_DONE photo_url={} input_size_bytes={} output_size_bytes={} normalized_width={} normalized_height={} within_limit={}",
+                    facePhotoUrl, inputSizeBytes, bytes.length, normalized.getWidth(), normalized.getHeight(), bytes.length <= maxBytes);
+            return Base64.getEncoder().encodeToString(bytes);
         } catch (IOException exception) {
             throw new IllegalArgumentException("Could not convert face photo to JPEG.");
         }
@@ -101,8 +119,8 @@ public class IntelbrasFaceEncoder {
         for (int resizeAttempt = 0; resizeAttempt < 6; resizeAttempt++) {
             for (float quality = 0.85f; quality >= 0.45f; quality -= 0.10f) {
                 var bytes = encodeJpeg(current, quality);
-                if (bytes.length <= MAX_BYTES || quality <= 0.45f) {
-                    if (bytes.length <= MAX_BYTES || current.getWidth() <= MIN_WIDTH || current.getHeight() <= MIN_HEIGHT) {
+                if (bytes.length <= maxBytes || quality <= 0.45f) {
+                    if (bytes.length <= maxBytes || current.getWidth() <= MIN_WIDTH || current.getHeight() <= MIN_HEIGHT) {
                         return bytes;
                     }
                 }

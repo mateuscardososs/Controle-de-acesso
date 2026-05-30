@@ -18,7 +18,8 @@ public final class IntelbrasIdentityCodec {
         if (strategy == Strategy.DOCUMENT) {
             var documentDigits = digits(document);
             if (!documentDigits.isBlank()) {
-                return new IntelbrasIdentity(Strategy.DOCUMENT, documentDigits, documentDigits);
+                // Document (CPF) is the userId/identifier only — never the card number
+                return new IntelbrasIdentity(Strategy.DOCUMENT, documentDigits, "");
             }
             strategy = Strategy.SHORT_NUMERIC;
         }

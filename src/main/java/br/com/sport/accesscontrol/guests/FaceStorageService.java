@@ -1,5 +1,7 @@
 package br.com.sport.accesscontrol.guests;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -14,6 +16,8 @@ import java.util.UUID;
 
 @Service
 public class FaceStorageService {
+
+    private static final Logger log = LoggerFactory.getLogger(FaceStorageService.class);
 
     private static final long MAX_BYTES = 5 * 1024 * 1024;
     private static final Set<String> EXTENSIONS = Set.of("jpg", "jpeg", "png", "webp");
@@ -47,7 +51,16 @@ public class FaceStorageService {
                 throw new IllegalArgumentException("Invalid upload path.");
             }
             file.transferTo(target);
-            return "/uploads/faces/" + filename;
+            long savedSizeBytes;
+            try {
+                savedSizeBytes = Files.size(target);
+            } catch (IOException e) {
+                savedSizeBytes = -1;
+            }
+            var url = "/uploads/faces/" + filename;
+            log.info("FACE_UPLOAD_STORED guest_id={} original_filename={} content_type={} original_size_bytes={} saved_path={} saved_size_bytes={}",
+                    guestId, file.getOriginalFilename(), file.getContentType(), file.getSize(), url, savedSizeBytes);
+            return url;
         } catch (IOException exception) {
             throw new IllegalArgumentException("Could not store face photo.");
         }

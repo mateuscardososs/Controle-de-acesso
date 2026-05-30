@@ -56,7 +56,8 @@ class IntelbrasRealProviderValidityTests {
         );
         var validFrom = Instant.parse("2026-06-10T18:00:00Z");
         var validUntil = Instant.parse("2026-06-11T07:00:00Z");
-        var person = new ProviderPerson(PersonType.GUEST, UUID.randomUUID(), "12345678901", null, "Visitante",
+        // Physical card required: GUEST with no card and no face hits INVALID path and throws
+        var person = new ProviderPerson(PersonType.GUEST, UUID.randomUUID(), "12345678901", "8765432109", "Visitante",
                 null, true, validFrom, validUntil, device.getArea().getId());
         var fromCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
         var untilCaptor = ArgumentCaptor.forClass(LocalDateTime.class);

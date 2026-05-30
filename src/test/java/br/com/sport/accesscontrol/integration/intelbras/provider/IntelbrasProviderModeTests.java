@@ -75,7 +75,7 @@ class IntelbrasProviderModeTests {
     }
 
     @Test
-    void documentIdentityStrategyUsesCpfForUserIdAndCardNoPreservingLeadingZero() {
+    void documentIdentityStrategyUsesCpfAsUserIdWithoutCardNo() {
         var identity = IntelbrasIdentityCodec.resolve(
                 IntelbrasIdentityCodec.Strategy.DOCUMENT,
                 PersonType.GUEST,
@@ -85,7 +85,23 @@ class IntelbrasProviderModeTests {
 
         assertThat(identity.strategy()).isEqualTo(IntelbrasIdentityCodec.Strategy.DOCUMENT);
         assertThat(identity.userId()).isEqualTo("05731650411");
-        assertThat(identity.cardNo()).isEqualTo("05731650411");
+        // CPF is the identifier (userId), NOT the card number — prevent fake card registration
+        assertThat(identity.cardNo()).isEmpty();
+    }
+
+    @Test
+    void documentStrategyNeverUsesDocumentAsCardNo() {
+        var cpf = "06331315470";
+        var identity = IntelbrasIdentityCodec.resolve(
+                IntelbrasIdentityCodec.Strategy.DOCUMENT,
+                PersonType.GUEST,
+                UUID.randomUUID(),
+                cpf
+        );
+
+        assertThat(identity.userId()).isEqualTo(cpf);
+        assertThat(identity.cardNo()).isEmpty();
+        assertThat(identity.cardNo()).isNotEqualTo(cpf);
     }
 
     @Test
