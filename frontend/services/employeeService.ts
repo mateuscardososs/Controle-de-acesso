@@ -41,6 +41,24 @@ export type EmployeePayload = {
   status: Employee["status"];
 };
 
+export type PublicEmployeeRegistrationPayload = {
+  fullName: string;
+  cpf: string;
+  phone: string;
+  email: string;
+  facePhoto: File;
+};
+
+export type PublicEmployeeRegistrationResponse = {
+  id: string;
+  full_name: string;
+  message: string;
+};
+
+export type PublicEmployeeCpfCheckResponse = {
+  registered: boolean;
+};
+
 export const employeeService = {
   async list() {
     const { data } = await api.get<Employee[]>("/api/employees");
@@ -71,6 +89,20 @@ export const employeeService = {
   },
   async deactivate(id: string) {
     const { data } = await api.patch<Employee>(`/api/employees/${id}/deactivate`);
+    return data;
+  },
+  async checkPublicCpf(cpf: string, signal?: AbortSignal) {
+    const { data } = await api.get<PublicEmployeeCpfCheckResponse>("/api/public/employees/check-cpf", { params: { cpf }, signal });
+    return data;
+  },
+  async publicRegister(payload: PublicEmployeeRegistrationPayload) {
+    const formData = new FormData();
+    formData.append("full_name", payload.fullName);
+    formData.append("cpf", payload.cpf);
+    formData.append("phone", payload.phone);
+    formData.append("email", payload.email);
+    formData.append("face_photo", payload.facePhoto);
+    const { data } = await api.post<PublicEmployeeRegistrationResponse>("/api/public/employees/register", formData);
     return data;
   }
 };

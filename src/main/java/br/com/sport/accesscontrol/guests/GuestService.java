@@ -13,6 +13,8 @@ import br.com.sport.accesscontrol.guests.GuestDtos.GuestCleanupMode;
 import br.com.sport.accesscontrol.guests.GuestDtos.GuestResponse;
 import br.com.sport.accesscontrol.guests.GuestDtos.PublicGuestRegistrationResponse;
 import br.com.sport.accesscontrol.guests.GuestDtos.PublicVisitorRegistrationResponse;
+import br.com.sport.accesscontrol.guests.GuestDtos.CpfValidationResponse;
+import br.com.sport.accesscontrol.guests.GuestDtos.CpfCheckinResponse;
 import br.com.sport.accesscontrol.mail.MailDeliveryResult;
 import br.com.sport.accesscontrol.mail.MailService;
 import br.com.sport.accesscontrol.integration.sync.GuestReadyForSyncEvent;
@@ -168,6 +170,7 @@ public class GuestService {
                 "public-visitor-registration",
                 Instant.now()
         ));
+        triggerGuestAutoSyncAfterRegistration(guest, "PUBLIC_REGISTRATION", false);
         var message = "Cadastro recebido com foto facial. A equipe responsável foi notificada.";
         return PublicVisitorRegistrationResponse.from(guest, message);
     }
@@ -413,11 +416,80 @@ public class GuestService {
         return PublicGuestRegistrationResponse.from(validInvite(token).getGuest());
     }
 
+    /**
+     * Feature 3 — public CPF check-in: validates whether a pre-registered guest exists for this CPF
+     * and is still awaiting the facial photo (status PENDING_REGISTRATION). Returns only the minimum
+     * data needed for the welcome screen — no email/phone/other sensitive fields.
+     */
+    @Transactional(readOnly = true)
+    public CpfValidationResponse validateCpfForCheckin(String cpf) {
+        var digits = CpfValidator.onlyDigits(cpf);
+        if (digits.isBlank()) {
+            log.info("PUBLIC_CPF_CHECKIN_VALIDATE found=false reason=blank_cpf");
+            return CpfValidationResponse.notFound();
+        }
+        return guestRepository.findFirstByCpfOrderByVisitStartDesc(digits)
+                .map(guest -> {
+                    if (guest.getStatus() != GuestStatus.PENDING_REGISTRATION) {
+                        log.info("PUBLIC_CPF_CHECKIN_VALIDATE guest_id={} found=false reason=already_registered status={}",
+                                guest.getId(), guest.getStatus());
+                        return CpfValidationResponse.alreadyRegistered();
+                    }
+                    log.info("PUBLIC_CPF_CHECKIN_VALIDATE guest_id={} found=true invited_lounge={}",
+                            guest.getId(), guest.getInvitedLounge());
+                    return CpfValidationResponse.welcome(guest);
+                })
+                .orElseGet(() -> {
+                    log.info("PUBLIC_CPF_CHECKIN_VALIDATE found=false reason=cpf_not_found");
+                    return CpfValidationResponse.notFound();
+                });
+    }
+
+    /**
+     * Feature 3 — public CPF check-in completion: stores the facial photo on the existing
+     * pre-registered guest, marks it COMPLETED and triggers automatic Intelbras sync.
+     */
+    @Transactional
+    public CpfCheckinResponse completeCheckinByCpf(String cpf, String facePhotoBase64) {
+        var digits = CpfValidator.onlyDigits(cpf);
+        var guest = guestRepository
+                .findFirstByCpfAndStatusOrderByVisitStartDesc(digits, GuestStatus.PENDING_REGISTRATION)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "CPF não encontrado ou cadastro já concluído. Verifique com o organizador."));
+        var oldData = snapshot(guest);
+        var autoSyncAlreadyDoneOrRunning = isAutoSyncAlreadyDoneOrRunning(guest.getSyncStatus());
+
+        // Resolve allowed areas from the pre-registered lounge before completing
+        applyAllowedAreas(guest);
+        validateResolvedAllowedAreas(guest);
+
+        var facePhotoUrl = faceStorageService.storeBase64(facePhotoBase64, guest.getId());
+        guest.completeRegistration(null, null, facePhotoUrl); // sets COMPLETED + markPendingSync
+        guestRepository.save(guest);
+
+        auditService.record("PUBLIC_CPF_CHECKIN_FACE_UPLOADED", "Guest", guest.getId(),
+                Map.of("facePhotoUrl", facePhotoUrl), oldData, snapshot(guest));
+        auditService.record("PUBLIC_CPF_CHECKIN_COMPLETED", "Guest", guest.getId(),
+                Map.of("source", "cpf-checkin"), oldData, snapshot(guest));
+        realtimePublisherService.publishSystemAlert(new SystemAlertMessage(
+                UUID.randomUUID(),
+                SystemAlertMessage.Severity.INFO,
+                "Check-in facial concluído",
+                "Visitante " + guest.getFullName() + " concluiu o check-in facial por CPF.",
+                "public-cpf-checkin",
+                Instant.now()
+        ));
+
+        triggerGuestAutoSyncAfterRegistration(guest, "PUBLIC_REGISTRATION", autoSyncAlreadyDoneOrRunning);
+        return CpfCheckinResponse.done(guest);
+    }
+
     @Transactional
     public GuestResponse completeRegistration(String token, String phone, String company, MultipartFile facePhoto) {
         var invite = validInvite(token);
         var guest = invite.getGuest();
         var oldData = snapshot(guest);
+        var autoSyncAlreadyDoneOrRunning = isAutoSyncAlreadyDoneOrRunning(guest.getSyncStatus());
         var facePhotoUrl = faceStorageService.store(facePhoto, guest.getId());
         guest.completeRegistration(phone, company, facePhotoUrl);
         invite.markUsed();
@@ -433,6 +505,7 @@ public class GuestService {
                 "guest-workflow",
                 Instant.now()
         ));
+        triggerGuestAutoSyncAfterRegistration(guest, "PUBLIC_REGISTRATION", autoSyncAlreadyDoneOrRunning);
         return GuestResponse.from(guest, null, null, delivery.status(), delivery.message());
     }
 
@@ -479,6 +552,28 @@ public class GuestService {
                 guest.getAllowedAreas() == null ? 0 : guest.getAllowedAreas().size(),
                 authenticatedUser());
         return GuestResponse.from(guest, null);
+    }
+
+    private void triggerGuestAutoSyncAfterRegistration(Guest guest, String source, boolean alreadyDoneOrRunning) {
+        if (guest == null || guest.getId() == null) {
+            return;
+        }
+        if (alreadyDoneOrRunning || isAutoSyncAlreadyDoneOrRunning(guest.getSyncStatus())) {
+            log.info("GUEST_AUTO_SYNC_SKIPPED guest_id={} source={} sync_status={} reason=already_synced_or_syncing",
+                    guest.getId(), source, guest.getSyncStatus());
+            return;
+        }
+        try {
+            log.info("GUEST_AUTO_SYNC_TRIGGERED guest_id={} source={}", guest.getId(), source);
+            requestSync(guest.getId());
+        } catch (Exception exception) {
+            log.warn("AUTO_SYNC_FAILED_AFTER_REGISTRATION person_type=GUEST guest_id={} source={} error={}",
+                    guest.getId(), source, exception.getMessage(), exception);
+        }
+    }
+
+    private boolean isAutoSyncAlreadyDoneOrRunning(SyncStatus syncStatus) {
+        return syncStatus == SyncStatus.SYNCED || syncStatus == SyncStatus.SYNCING;
     }
 
     @Transactional

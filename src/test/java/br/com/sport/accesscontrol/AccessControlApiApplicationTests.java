@@ -139,6 +139,32 @@ class AccessControlApiApplicationTests {
     }
 
     @Test
+    void publicEmployeeRegistrationCreatesActiveEmployeeWithoutTokenAndCpfCheckDetectsDuplicate() throws Exception {
+        var cpf = "246.813.579-28";
+        mockMvc.perform(get("/api/public/employees/check-cpf")
+                        .param("cpf", cpf))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.registered").value(false));
+
+        mockMvc.perform(multipart("/api/public/employees/register")
+                        .file(new MockMultipartFile("face_photo", "face.png", MediaType.IMAGE_PNG_VALUE, facePhoto().getBytes()))
+                        .param("full_name", "Colaborador Publico")
+                        .param("cpf", cpf)
+                        .param("email", "colaborador.publico@empresa.local")
+                        .param("phone", "81999990000"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").isNotEmpty())
+                .andExpect(jsonPath("$.full_name").value("Colaborador Publico"))
+                .andExpect(jsonPath("$.message").value("Cadastro realizado com sucesso"))
+                .andExpect(jsonPath("$.cpf").doesNotExist());
+
+        mockMvc.perform(get("/api/public/employees/check-cpf")
+                        .param("cpf", cpf))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.registered").value(true));
+    }
+
+    @Test
     void adminAccessesProtectedEndpoint() throws Exception {
         mockMvc.perform(get("/api/employees")
                         .header("Authorization", "Bearer " + adminToken()))

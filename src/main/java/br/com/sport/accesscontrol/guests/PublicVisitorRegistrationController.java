@@ -1,8 +1,13 @@
 package br.com.sport.accesscontrol.guests;
 
+import br.com.sport.accesscontrol.guests.GuestDtos.CpfCheckinRequest;
+import br.com.sport.accesscontrol.guests.GuestDtos.CpfCheckinResponse;
+import br.com.sport.accesscontrol.guests.GuestDtos.CpfValidationRequest;
+import br.com.sport.accesscontrol.guests.GuestDtos.CpfValidationResponse;
 import br.com.sport.accesscontrol.guests.GuestDtos.PublicVisitorRegistrationResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
@@ -43,5 +48,17 @@ public class PublicVisitorRegistrationController {
                 fullName, cpf, email, phone, company, visitReason, hostName, invitedDay, invitedLounge,
                 visitStart, visitEnd, facePhoto
         );
+    }
+
+    /** Feature 3 — validates a CPF against pre-registered (PENDING) guests. */
+    @PostMapping("/guests/validate-cpf")
+    CpfValidationResponse validateCpf(@RequestBody CpfValidationRequest request) {
+        return guestService.validateCpfForCheckin(request.cpf());
+    }
+
+    /** Feature 3 — completes a pre-registered guest with a facial photo and triggers sync. */
+    @PostMapping("/guests/complete-registration")
+    CpfCheckinResponse completeRegistration(@RequestBody CpfCheckinRequest request) {
+        return guestService.completeCheckinByCpf(request.cpf(), request.facePhoto());
     }
 }

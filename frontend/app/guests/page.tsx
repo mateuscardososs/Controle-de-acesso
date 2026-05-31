@@ -2,7 +2,8 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, CalendarDays, CheckCircle2, Copy, Eye, Loader2, Mail, Plus, RefreshCw, RotateCcw, Search, Trash2, XCircle, type LucideIcon } from "lucide-react";
+import { AlertCircle, CalendarDays, CheckCircle2, Copy, Eye, Loader2, Mail, Plus, RefreshCw, RotateCcw, Search, Trash2, UploadCloud, XCircle, type LucideIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
@@ -54,6 +55,7 @@ function formatGuestDay(value?: string | null) {
 
 export default function GuestsPage() {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const realtime = useRealtime();
   const guests = useQuery({ queryKey: ["guests"], queryFn: guestService.list });
   const devices = useQuery({ queryKey: ["devices"], queryFn: deviceService.list });
@@ -355,6 +357,7 @@ export default function GuestsPage() {
               )}
             </Button>
             <Button variant="secondary" icon={Trash2} onClick={() => setCleanupOpen(true)}>Limpar lista</Button>
+            <Button variant="secondary" icon={UploadCloud} onClick={() => router.push("/admin/guests/import")}>Importar planilha</Button>
             <Button icon={Plus} onClick={() => { resetCreateForm(); setOpen(true); }}>Novo visitante</Button>
           </div>
         )}

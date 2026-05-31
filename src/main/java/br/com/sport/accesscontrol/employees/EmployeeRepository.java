@@ -12,6 +12,7 @@ import java.util.UUID;
 
 public interface EmployeeRepository extends JpaRepository<Employee, UUID> {
     Optional<Employee> findByCpf(String cpf);
+    boolean existsByCpf(String cpf);
     Optional<Employee> findByCardNo(String cardNo);
     Optional<Employee> findFirstByFullNameIgnoreCase(String fullName);
 

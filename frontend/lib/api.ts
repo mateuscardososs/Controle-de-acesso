@@ -22,7 +22,7 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (typeof window !== "undefined" && error.response?.status === 401) {
-      const publicPaths = ["/", "/login", "/guest-registration"];
+      const publicPaths = ["/", "/login", "/guest-registration", "/register/employee", "/invite", "/checkin"];
       const isPublicPage = publicPaths.some((path) => window.location.pathname === path || window.location.pathname.startsWith(`${path}/`));
       window.localStorage.removeItem(TOKEN_KEY);
       if (!isPublicPage) {

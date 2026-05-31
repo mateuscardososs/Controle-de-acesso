@@ -66,6 +66,36 @@ export type GuestCleanupResponse = {
   message: string;
 };
 
+export type GuestImportPreviewRow = {
+  line: number;
+  fullName: string;
+  cpf: string;
+  phone: string;
+  invitedLounge: string;
+  invitedDay?: string;
+};
+
+export type GuestImportPreviewResponse = {
+  totalRowsInFile: number;
+  detectedHeaders: string[];
+  missingRequiredColumns: string[];
+  preview: GuestImportPreviewRow[];
+};
+
+export type GuestImportRowError = {
+  line: number;
+  cpf?: string;
+  reason: string;
+};
+
+export type GuestImportReport = {
+  total: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: GuestImportRowError[];
+};
+
 export type PublicGuestRegistration = {
   id: string;
   fullName: string;
@@ -147,6 +177,22 @@ export const guestService = {
   },
   async cleanup(payload: GuestCleanupPayload) {
     const { data } = await api.delete<GuestCleanupResponse>("/api/guests/cleanup", { data: payload });
+    return data;
+  },
+  async previewImport(file: File) {
+    const formData = new FormData();
+    formData.append("file", file);
+    const { data } = await api.post<GuestImportPreviewResponse>("/api/guests/import/preview", formData);
+    return data;
+  },
+  async importGuests(file: File) {
+    const formData = new FormData();
+    formData.append("file", file);
+    const { data } = await api.post<GuestImportReport>("/api/guests/import", formData, { timeout: 30000 });
+    return data;
+  },
+  async downloadImportTemplate() {
+    const { data } = await api.get<Blob>("/api/guests/import/template", { responseType: "blob" });
     return data;
   },
   async publicRegistration(token: string) {

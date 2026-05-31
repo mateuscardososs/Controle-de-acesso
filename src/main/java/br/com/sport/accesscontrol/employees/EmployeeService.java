@@ -118,6 +118,61 @@ public class EmployeeService {
         return EmployeeResponse.from(saved);
     }
 
+    @Transactional
+    public PublicEmployeeRegistrationDtos.PublicEmployeeRegistrationResponse publicRegister(
+            String fullName,
+            String cpf,
+            String phone,
+            String email,
+            MultipartFile facePhoto,
+            String facePhotoBase64
+    ) {
+        log.info("PUBLIC_EMPLOYEE_REGISTRATION_RECEIVED cpf_present={} face_upload_present={} face_base64_present={}",
+                hasText(cpf), facePhoto != null && !facePhoto.isEmpty(), hasText(facePhotoBase64));
+        validatePublicRegistration(fullName, cpf, phone, email, facePhoto, facePhotoBase64);
+        var normalizedCpf = normalizeCpf(cpf);
+        if (employeeRepository.existsByCpf(normalizedCpf)) {
+            throw new IllegalArgumentException("CPF já cadastrado.");
+        }
+        var validFrom = Instant.now();
+        var validUntil = validFrom.plus(DEFAULT_EMPLOYEE_VALIDITY);
+        var employee = new Employee(
+                fullName.trim(),
+                normalizedCpf,
+                normalizeEmail(email),
+                normalize(phone),
+                null,
+                null,
+                null,
+                null,
+                EmployeeStatus.ACTIVE,
+                validFrom,
+                validUntil
+        );
+        var saved = employeeRepository.save(employee);
+        saved.setFacePhotoUrl(storePublicEmployeeFace(facePhoto, facePhotoBase64, saved.getId()));
+        saved = employeeRepository.save(saved);
+        auditService.record("PUBLIC_EMPLOYEE_REGISTERED", "Employee", saved.getId(),
+                Map.of(
+                        "cpf", saved.getCpf(),
+                        "validFrom", saved.getAccessValidFrom(),
+                        "validUntil", saved.getAccessValidUntil()
+                ),
+                Map.of(),
+                employeeSnapshot(saved));
+        triggerEmployeeAutoSyncAfterRegistration(saved, "PUBLIC_REGISTRATION");
+        log.info("PUBLIC_EMPLOYEE_REGISTRATION_CREATED employee_id={} cpf={} valid_until={} sync_status={}",
+                saved.getId(), saved.getCpf(), saved.getAccessValidUntil(), saved.getSyncStatus());
+        return PublicEmployeeRegistrationDtos.PublicEmployeeRegistrationResponse.from(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public PublicEmployeeRegistrationDtos.CpfCheckResponse checkPublicCpf(String cpf) {
+        var digits = CpfValidator.onlyDigits(cpf);
+        var registered = digits.length() == 11 && employeeRepository.existsByCpf(digits);
+        return new PublicEmployeeRegistrationDtos.CpfCheckResponse(registered);
+    }
+
     @Transactional(readOnly = true)
     public List<EmployeeResponse> findAll() {
         return employeeRepository.findAll().stream().map(EmployeeResponse::from).toList();
@@ -159,13 +214,22 @@ public class EmployeeService {
     @Transactional
     public EmployeeResponse requestSync(UUID id) {
         var employee = getEmployee(id);
+        validateSyncEligibility(employee);
+        var oldData = employeeSnapshot(employee);
+        queueEmployeeSync(employee, oldData);
+        return EmployeeResponse.from(employee);
+    }
+
+    private void validateSyncEligibility(Employee employee) {
         if (employee.getStatus() != EmployeeStatus.ACTIVE) {
             throw new IllegalArgumentException("Colaborador precisa estar ativo para sincronizar.");
         }
         if (!hasText(employee.getFacePhotoUrl()) && !hasText(employee.getCardNo())) {
             throw new IllegalArgumentException("Informe foto facial ou tag/cartão antes da sincronização.");
         }
-        var oldData = employeeSnapshot(employee);
+    }
+
+    private void queueEmployeeSync(Employee employee, Map<String, Object> oldData) {
         applyFullAccessAreas(employee);
         employee.markPendingSync();
         employeeRepository.save(employee);
@@ -179,7 +243,29 @@ public class EmployeeService {
                 oldData,
                 employeeSnapshot(employee));
         eventPublisher.publishEvent(new EmployeeReadyForSyncEvent(employee.getId()));
-        return EmployeeResponse.from(employee);
+    }
+
+    private void triggerEmployeeAutoSyncAfterRegistration(Employee employee, String source) {
+        if (employee == null || employee.getId() == null) {
+            return;
+        }
+        if (isAutoSyncAlreadyDoneOrRunning(employee.getSyncStatus())) {
+            log.info("EMPLOYEE_AUTO_SYNC_SKIPPED employee_id={} source={} sync_status={} reason=already_synced_or_syncing",
+                    employee.getId(), source, employee.getSyncStatus());
+            return;
+        }
+        try {
+            log.info("EMPLOYEE_AUTO_SYNC_TRIGGERED employee_id={} source={}", employee.getId(), source);
+            requestSync(employee.getId());
+        } catch (Exception exception) {
+            log.warn("AUTO_SYNC_FAILED_AFTER_REGISTRATION person_type=EMPLOYEE employee_id={} source={} error={}",
+                    employee.getId(), source, exception.getMessage(), exception);
+        }
+    }
+
+    private boolean isAutoSyncAlreadyDoneOrRunning(br.com.sport.accesscontrol.integration.sync.SyncStatus syncStatus) {
+        return syncStatus == br.com.sport.accesscontrol.integration.sync.SyncStatus.SYNCED
+                || syncStatus == br.com.sport.accesscontrol.integration.sync.SyncStatus.SYNCING;
     }
 
     @Transactional
@@ -211,6 +297,32 @@ public class EmployeeService {
         if (request.role() == null) {
             throw new IllegalArgumentException("Employee role is required.");
         }
+    }
+
+    private void validatePublicRegistration(String fullName, String cpf, String phone, String email,
+                                            MultipartFile facePhoto, String facePhotoBase64) {
+        if (!hasText(fullName)) {
+            throw new IllegalArgumentException("Nome completo é obrigatório.");
+        }
+        if (!hasText(cpf)) {
+            throw new IllegalArgumentException("CPF é obrigatório.");
+        }
+        if (!hasText(phone)) {
+            throw new IllegalArgumentException("Telefone é obrigatório.");
+        }
+        if (!hasText(email)) {
+            throw new IllegalArgumentException("E-mail é obrigatório.");
+        }
+        if ((facePhoto == null || facePhoto.isEmpty()) && !hasText(facePhotoBase64)) {
+            throw new IllegalArgumentException("Foto facial é obrigatória.");
+        }
+    }
+
+    private String storePublicEmployeeFace(MultipartFile facePhoto, String facePhotoBase64, UUID employeeId) {
+        if (facePhoto != null && !facePhoto.isEmpty()) {
+            return faceStorageService.store(facePhoto, employeeId);
+        }
+        return faceStorageService.storeBase64(facePhotoBase64, employeeId);
     }
 
     private void updateLinkedUser(Employee employee, EmployeeRequest request, String email) {

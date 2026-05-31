@@ -68,6 +68,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -895,10 +896,13 @@ class EnterpriseArchitectureTests {
         var realtimePublisher = mock(RealtimePublisherService.class);
         var mailService = mock(MailService.class);
         var eventPublisher = mock(ApplicationEventPublisher.class);
+        var guestRepository = mock(GuestRepository.class);
         when(inviteRepository.findByToken("token")).thenReturn(Optional.of(invite));
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
+        when(guestRepository.save(guest)).thenReturn(guest);
         when(faceStorage.store(any(), eq(guest.getId()))).thenReturn("/uploads/faces/photo.png");
         when(mailService.sendGuestRegistrationCompleted(guest)).thenReturn(MailDeliveryResult.delivered());
-        var service = new GuestService(mock(GuestRepository.class), inviteRepository, faceStorage, auditService,
+        var service = new GuestService(guestRepository, inviteRepository, faceStorage, auditService,
                 realtimePublisher, mailService, eventPublisher, defaultLoungeConfig(), "http://localhost:3000", 72);
 
         var response = service.completeRegistration("token", "81999990000", "Empresa", png());
@@ -911,20 +915,25 @@ class EnterpriseArchitectureTests {
         verify(auditService).record(eq("GUEST_REGISTRATION_COMPLETED"), eq("Guest"), eq(guest.getId()), any(), any(), any());
         verify(mailService).sendGuestRegistrationCompleted(guest);
         verify(realtimePublisher).publishSystemAlert(any());
-        verifyNoInteractions(eventPublisher);
+        verify(eventPublisher).publishEvent(new GuestReadyForSyncEvent(guest.getId()));
     }
 
     @Test
-    void publicVisitorRegistrationKeepsGuestPendingSyncAndUsesInvitedDayWindowWithoutAutoSync() {
+    void publicVisitorRegistrationQueuesAutoSyncAndUsesInvitedDayWindow() {
         var guestRepository = mock(GuestRepository.class);
         var inviteRepository = mock(GuestInviteRepository.class);
         var faceStorage = mock(FaceStorageService.class);
         var eventPublisher = mock(ApplicationEventPublisher.class);
+        var savedGuest = new AtomicReference<Guest>();
         when(guestRepository.save(any(Guest.class))).thenAnswer(invocation -> {
             Guest guest = invocation.getArgument(0);
-            ReflectionTestUtils.setField(guest, "id", UUID.randomUUID());
+            if (guest.getId() == null) {
+                ReflectionTestUtils.setField(guest, "id", UUID.randomUUID());
+            }
+            savedGuest.set(guest);
             return guest;
         });
+        when(guestRepository.findByIdWithAllowedAreas(any(UUID.class))).thenAnswer(invocation -> Optional.ofNullable(savedGuest.get()));
         when(inviteRepository.save(any(GuestInvite.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(faceStorage.store(any(), any())).thenReturn("/uploads/faces/public.png");
         var service = new GuestService(guestRepository, inviteRepository, faceStorage, mock(AuditService.class),
@@ -949,11 +958,36 @@ class EnterpriseArchitectureTests {
         var expectedStart = LocalDate.of(2026, 6, 10).atTime(15, 0).atZone(ZoneId.of("America/Recife")).toInstant();
         var expectedEnd = LocalDate.of(2026, 6, 11).atTime(4, 0).atZone(ZoneId.of("America/Recife")).toInstant();
         assertThat(response.status()).isEqualTo(GuestStatus.COMPLETED);
-        verify(guestRepository).save(argThat((Guest guest) ->
+        verify(guestRepository, atLeastOnce()).save(argThat((Guest guest) ->
                 guest.getSyncStatus() == SyncStatus.PENDING_SYNC
                         && expectedStart.equals(guest.getVisitStart())
                         && expectedEnd.equals(guest.getVisitEnd())
         ));
+        verify(eventPublisher).publishEvent(any(GuestReadyForSyncEvent.class));
+    }
+
+    @Test
+    void guestAutoSyncAfterPublicCompletionSkipsWhenAlreadySyncing() {
+        var guest = guest();
+        guest.markSyncing();
+        var invite = new GuestInvite(guest, "token", Instant.now().plusSeconds(3600));
+        var inviteRepository = mock(GuestInviteRepository.class);
+        var guestRepository = mock(GuestRepository.class);
+        var faceStorage = mock(FaceStorageService.class);
+        var mailService = mock(MailService.class);
+        var eventPublisher = mock(ApplicationEventPublisher.class);
+        when(inviteRepository.findByToken("token")).thenReturn(Optional.of(invite));
+        when(faceStorage.store(any(), eq(guest.getId()))).thenReturn("/uploads/faces/photo.png");
+        when(mailService.sendGuestRegistrationCompleted(guest)).thenReturn(MailDeliveryResult.delivered());
+        var service = new GuestService(guestRepository, inviteRepository, faceStorage, mock(AuditService.class),
+                mock(RealtimePublisherService.class), mailService, eventPublisher,
+                defaultLoungeConfig(), "http://localhost:3000", 72);
+
+        var response = service.completeRegistration("token", "81999990000", "Empresa", png());
+
+        assertThat(response.status()).isEqualTo(GuestStatus.COMPLETED);
+        assertThat(response.syncStatus()).isEqualTo(SyncStatus.SYNCING);
+        verify(guestRepository, never()).findByIdWithAllowedAreas(any());
         verifyNoInteractions(eventPublisher);
     }
 

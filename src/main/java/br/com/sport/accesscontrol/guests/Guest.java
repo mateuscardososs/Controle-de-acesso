@@ -225,7 +225,9 @@ public class Guest extends TimestampedEntity {
         this.facePhotoUrl = facePhotoUrl;
         this.status = GuestStatus.COMPLETED;
         this.completedAt = Instant.now();
-        markPendingSync();
+        if (syncStatus != SyncStatus.SYNCED && syncStatus != SyncStatus.SYNCING) {
+            markPendingSync();
+        }
     }
 
     public void cancel() {

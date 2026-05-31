@@ -207,4 +207,45 @@ public final class GuestDtos {
             );
         }
     }
+
+    /** Feature 3 — public CPF-validation check-in flow. */
+    public record CpfValidationRequest(String cpf) {
+    }
+
+    public record CpfValidationResponse(
+            boolean found,
+            String fullName,
+            String invitedLounge,
+            String message
+    ) {
+        public static CpfValidationResponse notFound() {
+            return new CpfValidationResponse(false, null, null,
+                    "CPF não encontrado. Verifique com o organizador.");
+        }
+
+        public static CpfValidationResponse alreadyRegistered() {
+            return new CpfValidationResponse(false, null, null,
+                    "Usuário já cadastrado. Seu acesso já está ativo.");
+        }
+
+        public static CpfValidationResponse welcome(Guest guest) {
+            return new CpfValidationResponse(true, guest.getFullName(), guest.getInvitedLounge(),
+                    "Seja bem-vindo(a), " + guest.getFullName() + "!");
+        }
+    }
+
+    public record CpfCheckinRequest(String cpf, String facePhoto) {
+    }
+
+    public record CpfCheckinResponse(
+            boolean success,
+            String fullName,
+            String invitedLounge,
+            String message
+    ) {
+        public static CpfCheckinResponse done(Guest guest) {
+            return new CpfCheckinResponse(true, guest.getFullName(), guest.getInvitedLounge(),
+                    "Cadastro concluído! Bem-vindo(a) ao evento.");
+        }
+    }
 }

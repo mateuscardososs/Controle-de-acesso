@@ -15,6 +15,7 @@ public interface GuestRepository extends JpaRepository<Guest, UUID> {
     List<Guest> findByVisitStartLessThanEqualAndVisitEndGreaterThanEqual(Instant end, Instant start);
     List<Guest> findByStatusNotAndVisitEndBefore(GuestStatus status, Instant now);
     Optional<Guest> findFirstByCpfOrderByVisitStartDesc(String cpf);
+    Optional<Guest> findFirstByCpfAndStatusOrderByVisitStartDesc(String cpf, GuestStatus status);
     Optional<Guest> findFirstByFullNameIgnoreCaseOrderByVisitStartDesc(String fullName);
 
     @Query("SELECT DISTINCT g FROM Guest g LEFT JOIN FETCH g.allowedAreas WHERE g.id = :id")
