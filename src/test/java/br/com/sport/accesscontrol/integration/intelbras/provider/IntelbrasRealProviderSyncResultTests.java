@@ -182,7 +182,7 @@ class IntelbrasRealProviderSyncResultTests {
         when(cgiClient.replaceFace(anyString(), anyString(), anyString(), anyString(), eq("base64")))
                 .thenThrow(new RuntimeException("Face add rejected"));
 
-        // FACE_ONLY guest: step1 (base user) succeeds, step2 (replaceFace) throws → FAILED
+        // Visitor without a physical card still gets AccessControlCard first, then face.
         var result = provider.syncPerson(person(PersonType.GUEST, Set.of(allowedAreaId), "/faces/guest.jpg"));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
@@ -192,16 +192,19 @@ class IntelbrasRealProviderSyncResultTests {
     }
 
     @Test
-    void syncFaceOnlyGuestCreatesBaseUserThenClearsCardNo() {
+    void syncGuestWithoutPhysicalCardUsesUuidDerivedCardNoAndDoesNotClearCardNo() {
+        // PersonId UUID is fixed so shortNumeric(personId) is deterministic in this test
+        var personId = UUID.fromString("aabbccdd-0011-2233-4455-667788990000");
+        var expectedCardNo = br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasIdentityCodec.shortNumeric(personId);
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
         when(faceEncoder.toJpegBase64("/uploads/faces/guest.jpg")).thenReturn("photobase64");
         acceptAllCgiCommands();
 
         var result = provider.syncPerson(new ProviderPerson(
-                PersonType.GUEST, UUID.randomUUID(),
-                "06331315470",              // document = CPF
-                null,                        // no physical card
+                PersonType.GUEST, personId,
+                "06331315470",              // document = CPF → UserID
+                null,                        // no physical card → CardNo = shortNumeric(personId)
                 "Visitante Real",
                 "/uploads/faces/guest.jpg",
                 true,
@@ -210,29 +213,28 @@ class IntelbrasRealProviderSyncResultTests {
         ));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
-        // Step 1: base user created with CardNo=CPF as temporary placeholder
-        var cardNoCaptor = ArgumentCaptor.forClass(String.class);
+        assertThat(expectedCardNo).matches("\\d{6}"); // shortNumeric is always 6 digits
+        assertThat(expectedCardNo).isNotEqualTo("0633131547"); // not the old CPF[0:10]
         verify(cgiClient).upsertAccessUser(anyString(), anyString(), anyString(),
-                eq("06331315470"), cardNoCaptor.capture(), anyString(), any(), any());
-        assertThat(cardNoCaptor.getValue()).isEqualTo("06331315470");  // temporary = userId
-        // Step 2: face added
+                eq("06331315470"), eq(expectedCardNo), anyString(), any(), any());
         verify(cgiClient).replaceFace(anyString(), anyString(), anyString(), eq("06331315470"), eq("photobase64"));
-        // Step 3: CardNo cleared (must be called so user ends up without card)
-        verify(cgiClient).clearCardNoForUser(anyString(), anyString(), anyString(),
+        verify(cgiClient, never()).clearCardNoForUser(anyString(), anyString(), anyString(),
                 eq("06331315470"), anyString(), any(), any());
     }
 
     @Test
-    void syncFaceOnlyEmployeeCreatesBaseUserThenClearsCardNo() {
+    void syncEmployeeWithoutPhysicalCardUsesUuidDerivedCardNoAndDoesNotClearCardNo() {
+        var personId = UUID.fromString("11223344-5566-7788-99aa-bbccddeeff00");
+        var expectedCardNo = br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasIdentityCodec.shortNumeric(personId);
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
         when(faceEncoder.toJpegBase64("/uploads/faces/employee.jpg")).thenReturn("empbase64");
         acceptAllCgiCommands();
 
         var result = provider.syncPerson(new ProviderPerson(
-                PersonType.EMPLOYEE, UUID.randomUUID(),
-                "12345678901",               // document = CPF
-                null,                         // no physical card
+                PersonType.EMPLOYEE, personId,
+                "12345678901",               // document = CPF → UserID
+                null,                         // no physical card → CardNo = shortNumeric(personId)
                 "Colaborador Face",
                 "/uploads/faces/employee.jpg",
                 true,
@@ -241,24 +243,49 @@ class IntelbrasRealProviderSyncResultTests {
         ));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
+        assertThat(expectedCardNo).matches("\\d{6}");
+        assertThat(expectedCardNo).isNotEqualTo("1234567890"); // not the old CPF[0:10]
+        verify(cgiClient).upsertAccessUser(anyString(), anyString(), anyString(),
+                eq("12345678901"), eq(expectedCardNo), anyString(), any(), any());
         verify(cgiClient).replaceFace(anyString(), anyString(), anyString(), eq("12345678901"), eq("empbase64"));
-        verify(cgiClient).clearCardNoForUser(anyString(), anyString(), anyString(),
+        verify(cgiClient, never()).clearCardNoForUser(anyString(), anyString(), anyString(),
                 eq("12345678901"), anyString(), any(), any());
     }
 
     @Test
-    void faceOnlyFailsWhenCardNoIsNotClearedAfterSync() {
+    void visitorWithoutPhysicalCardSucceedsWithUuidDerivedCardNoAndFaceWasSent() {
+        var personId = UUID.fromString("deadbeef-cafe-babe-feed-facade000001");
+        var expectedCardNo = br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasIdentityCodec.shortNumeric(personId);
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
         when(faceEncoder.toJpegBase64("/uploads/faces/guest.jpg")).thenReturn("photobase64");
-        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
-                .thenReturn("OK");
-        // Simulate device accepting face but clearCardNo failing
+        acceptAllCgiCommands();
+
+        var result = provider.syncPerson(new ProviderPerson(
+                PersonType.GUEST, personId,
+                "06331315470", null, "Visitante Real",
+                "/uploads/faces/guest.jpg", true,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600),
+                null, Set.of(allowedAreaId)
+        ));
+
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
+        assertThat(result.successCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isZero();
+        assertThat(expectedCardNo).matches("\\d{6}");
+        verify(cgiClient).upsertAccessUser(anyString(), anyString(), anyString(),
+                eq("06331315470"), eq(expectedCardNo), anyString(), any(), any());
+        verify(cgiClient, never()).clearCardNoForUser(anyString(), anyString(), anyString(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    void visitorWithoutPhysicalCardDoesNotCallCleanupEvenIfCleanupWouldThrow() {
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
+        when(faceEncoder.toJpegBase64("/uploads/faces/guest.jpg")).thenReturn("photobase64");
+        acceptAllCgiCommands();
         when(cgiClient.clearCardNoForUser(anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
-                .thenThrow(new RuntimeException("Device rejected empty CardNo update"));
-        // findAccessControlCards returns a record with UserID (used for verification)
-        when(cgiClient.findAccessControlCards(anyString(), anyString(), anyString(), anyString()))
-                .thenAnswer(invocation -> List.of(Map.of("UserID", invocation.getArgument(3, String.class))));
+                .thenThrow(new RuntimeException("Firmware: condition.CardNo not supported (400)"));
 
         var result = provider.syncPerson(new ProviderPerson(
                 PersonType.GUEST, UUID.randomUUID(),
@@ -268,9 +295,43 @@ class IntelbrasRealProviderSyncResultTests {
                 null, Set.of(allowedAreaId)
         ));
 
-        // CardNo not cleared → device must not be counted as success
-        assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
-        assertThat(result.successCount()).isZero();
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
+        assertThat(result.successCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isZero();
+        verify(cgiClient, never()).clearCardNoForUser(anyString(), anyString(), anyString(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    void postInsertVerifyNotFoundIsWarnOnlyAndDeviceCountsAsSuccess() {
+        // verifyAccessUserCreated() is called after upsertAccessUser() in the CARD path.
+        // When findAccessControlCards() returns empty (hardware latency — insert returned 200
+        // but the record is not yet visible), the verify should only log ACCESS_USER_VERIFY_NOT_FOUND
+        // as a warning and NOT fail the device. The sync continues and counts the device as success.
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
+        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn("OK");
+        // Simulate hardware latency: insert returned 200 but record not yet visible in finder query
+        when(cgiClient.findAccessControlCards(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(List.of());
+
+        var result = provider.syncPerson(new ProviderPerson(
+                PersonType.EMPLOYEE, UUID.randomUUID(),
+                "12345678901",
+                "8765432109",  // physical card → hasPhysicalCard=true → CARD path → verifyAccessUserCreated called
+                "Colaborador Teste",
+                null,          // no face → CARD_ONLY, face step skipped
+                true,
+                Instant.now().minusSeconds(3600), Instant.now().plusSeconds(3600),
+                null, Set.of(allowedAreaId)
+        ));
+
+        // Verify returns empty (hardware latency) but must NOT fail the device
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
+        assertThat(result.successCount()).isEqualTo(1);
+        assertThat(result.totalTargets()).isEqualTo(1);
+        // upsertAccessUser succeeded → face step skipped (no face photo) → device counted as synced
+        verify(cgiClient, never()).replaceFace(anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -302,11 +363,12 @@ class IntelbrasRealProviderSyncResultTests {
     private void acceptAllCgiCommands() {
         when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn("OK");
-        when(cgiClient.clearCardNoForUser(anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
-                .thenReturn("OK");
-        // findAccessControlCards returns a record with only UserID (no CardNo) — simulates cleared state
         when(cgiClient.findAccessControlCards(anyString(), anyString(), anyString(), anyString()))
-                .thenAnswer(invocation -> List.of(Map.of("UserID", invocation.getArgument(3, String.class))));
+                .thenAnswer(invocation -> List.of(Map.of(
+                        "UserID", invocation.getArgument(3, String.class),
+                        "CardNo", invocation.getArgument(3, String.class).toString().length() == 11
+                                ? invocation.getArgument(3, String.class).substring(0, 10)
+                                : invocation.getArgument(3, String.class))));
     }
 
     private ProviderPerson person(PersonType type, Set<UUID> allowedAreaIds, String facePhotoUrl) {

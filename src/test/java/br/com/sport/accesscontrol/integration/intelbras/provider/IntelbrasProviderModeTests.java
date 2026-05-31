@@ -70,42 +70,59 @@ class IntelbrasProviderModeTests {
         ));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
-        assertThat(result.message()).contains("Nenhuma controladora online para as áreas permitidas");
+        assertThat(result.message()).contains("Nenhuma catraca encontrada para o camarote selecionado");
         verify(connectionService, never()).selectOnlineConfiguredDevice(any());
     }
 
     @Test
-    void documentIdentityStrategyUsesCpfAsUserIdWithoutCardNo() {
+    void documentIdentityStrategyUsesCpfAsUserIdAndUuidDerivedCardNo() {
+        var personId = UUID.fromString("903956fa-6a1c-4ef8-aaf4-111111111111");
         var identity = IntelbrasIdentityCodec.resolve(
                 IntelbrasIdentityCodec.Strategy.DOCUMENT,
                 PersonType.GUEST,
-                UUID.fromString("903956fa-6a1c-4ef8-aaf4-111111111111"),
+                personId,
                 "057.316.504-11"
         );
 
         assertThat(identity.strategy()).isEqualTo(IntelbrasIdentityCodec.Strategy.DOCUMENT);
         assertThat(identity.userId()).isEqualTo("05731650411");
-        // CPF is the identifier (userId), NOT the card number — prevent fake card registration
-        assertThat(identity.cardNo()).isEmpty();
+        // CardNo is now shortNumeric(personId) — unique per UUID, no collision between CPFs
+        assertThat(identity.cardNo()).isEqualTo(IntelbrasIdentityCodec.shortNumeric(personId));
+        assertThat(identity.cardNo()).matches("\\d{6}");  // shortNumeric always produces 6 digits
+        assertThat(identity.cardNo()).isNotEqualTo("0573165041"); // NOT the old CPF[0:10]
+        assertThat(identity.cardNo()).isNotEqualTo("05731650411"); // NOT the full CPF
     }
 
     @Test
-    void documentStrategyNeverUsesDocumentAsCardNo() {
+    void documentStrategyCardNoIsUuidDerivedNotCpfPrefix() {
+        var personId = UUID.fromString("12345678-abcd-ef01-2345-6789abcdef01");
         var cpf = "06331315470";
         var identity = IntelbrasIdentityCodec.resolve(
                 IntelbrasIdentityCodec.Strategy.DOCUMENT,
                 PersonType.GUEST,
-                UUID.randomUUID(),
+                personId,
                 cpf
         );
 
         assertThat(identity.userId()).isEqualTo(cpf);
-        assertThat(identity.cardNo()).isEmpty();
-        assertThat(identity.cardNo()).isNotEqualTo(cpf);
+        // CardNo must be UUID-derived (6 digits), never the CPF or its prefix
+        assertThat(identity.cardNo()).isEqualTo(IntelbrasIdentityCodec.shortNumeric(personId));
+        assertThat(identity.cardNo()).matches("\\d{6}");
+        assertThat(identity.cardNo()).isNotEqualTo("0633131547"); // NOT CPF[0:10]
+        assertThat(identity.cardNo()).isNotEqualTo(cpf);          // NOT full CPF
+        // Two different CPFs with same prefix produce different CardNos (no collision)
+        var otherPersonId = UUID.fromString("99999999-abcd-ef01-2345-6789abcdef99");
+        var collisionCandidate = IntelbrasIdentityCodec.resolve(
+                IntelbrasIdentityCodec.Strategy.DOCUMENT,
+                PersonType.GUEST,
+                otherPersonId,
+                "06331315401"  // same first 10 digits as cpf above
+        );
+        assertThat(identity.cardNo()).isNotEqualTo(collisionCandidate.cardNo());
     }
 
     @Test
-    void documentIdentityStrategyFallsBackToShortNumericWithoutDocument() {
+    void documentIdentityStrategyWithoutDocumentDoesNotGenerateCardNo() {
         var identity = IntelbrasIdentityCodec.resolve(
                 IntelbrasIdentityCodec.Strategy.DOCUMENT,
                 PersonType.GUEST,
@@ -113,9 +130,9 @@ class IntelbrasProviderModeTests {
                 null
         );
 
-        assertThat(identity.strategy()).isEqualTo(IntelbrasIdentityCodec.Strategy.SHORT_NUMERIC);
-        assertThat(identity.userId()).matches("\\d+");
-        assertThat(identity.cardNo()).isEqualTo(identity.userId());
+        assertThat(identity.strategy()).isEqualTo(IntelbrasIdentityCodec.Strategy.DOCUMENT);
+        assertThat(identity.userId()).isEmpty();
+        assertThat(identity.cardNo()).isEmpty();
     }
 
     private ProviderPerson person(boolean active, String facePhotoUrl) {

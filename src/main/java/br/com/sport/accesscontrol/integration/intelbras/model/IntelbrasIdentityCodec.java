@@ -18,10 +18,12 @@ public final class IntelbrasIdentityCodec {
         if (strategy == Strategy.DOCUMENT) {
             var documentDigits = digits(document);
             if (!documentDigits.isBlank()) {
-                // Document (CPF) is the userId/identifier only — never the card number
-                return new IntelbrasIdentity(Strategy.DOCUMENT, documentDigits, "");
+                // UserID = full CPF (11 digits, unchanged).
+                // CardNo = shortNumeric(personId): UUID-derived 6-digit number — guaranteed unique,
+                // no collision between two CPFs sharing the same prefix.
+                return new IntelbrasIdentity(Strategy.DOCUMENT, documentDigits, shortNumeric(personId));
             }
-            strategy = Strategy.SHORT_NUMERIC;
+            return new IntelbrasIdentity(Strategy.DOCUMENT, "", "");
         }
         if (strategy == Strategy.SHORT_ALPHANUMERIC) {
             return new IntelbrasIdentity(Strategy.SHORT_ALPHANUMERIC, shortAlphanumericUserId(personType, personId), shortNumeric(personId));
@@ -44,6 +46,14 @@ public final class IntelbrasIdentityCodec {
         return Long.toString(CARD_MIN + Math.floorMod(mixed, CARD_RANGE));
     }
 
+    public static String cardNoFromDocument(String document) {
+        var documentDigits = digits(document);
+        if (documentDigits.length() != 11) {
+            return "";
+        }
+        return documentDigits.substring(0, 10);
+    }
+
     private static String prefix(PersonType personType) {
         if (personType == PersonType.GUEST) {
             return "G";
@@ -54,7 +64,7 @@ public final class IntelbrasIdentityCodec {
         return "U";
     }
 
-    private static String digits(String value) {
+    public static String digits(String value) {
         return value == null ? "" : value.replaceAll("\\D", "");
     }
 

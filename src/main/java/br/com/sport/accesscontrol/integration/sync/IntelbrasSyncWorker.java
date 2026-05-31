@@ -50,7 +50,9 @@ public class IntelbrasSyncWorker {
     private final MailService mailService;
     private final MeterRegistry meterRegistry;
     private final int maxAttempts;
+    private final br.com.sport.accesscontrol.areas.LoungeAreaResolver loungeAreaResolver;
 
+    /** Legacy / test constructor without LoungeAreaResolver. */
     public IntelbrasSyncWorker(EmployeeRepository employeeRepository, GuestRepository guestRepository,
                                DeviceRepository deviceRepository,
                                AccessControlProvider provider, AuditService auditService,
@@ -60,6 +62,21 @@ public class IntelbrasSyncWorker {
                                MailService mailService,
                                MeterRegistry meterRegistry,
                                @Value("${app.integration.intelbras.sync.max-attempts:3}") int maxAttempts) {
+        this(employeeRepository, guestRepository, deviceRepository, provider, auditService, eventPublisher,
+                realtimePublisher, systemRealtimePublisher, mailService, meterRegistry, maxAttempts, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public IntelbrasSyncWorker(EmployeeRepository employeeRepository, GuestRepository guestRepository,
+                               DeviceRepository deviceRepository,
+                               AccessControlProvider provider, AuditService auditService,
+                               IntegrationEventPublisher eventPublisher,
+                               IntegrationSyncRealtimePublisher realtimePublisher,
+                               RealtimePublisherService systemRealtimePublisher,
+                               MailService mailService,
+                               MeterRegistry meterRegistry,
+                               @Value("${app.integration.intelbras.sync.max-attempts:3}") int maxAttempts,
+                               br.com.sport.accesscontrol.areas.LoungeAreaResolver loungeAreaResolver) {
         this.employeeRepository = employeeRepository;
         this.guestRepository = guestRepository;
         this.deviceRepository = deviceRepository;
@@ -71,10 +88,15 @@ public class IntelbrasSyncWorker {
         this.mailService = mailService;
         this.meterRegistry = meterRegistry;
         this.maxAttempts = maxAttempts;
+        this.loungeAreaResolver = loungeAreaResolver;
     }
 
     @RabbitListener(queues = RabbitMqConfig.INTELBRAS_SYNC_QUEUE)
     public void consume(IntelbrasSyncMessage message) {
+        log.info("GUEST_SYNC_WORKER_RECEIVED person_type={} person_id={} attempt={}",
+                message == null ? "null" : message.personType(),
+                message == null ? "null" : message.personId(),
+                message == null ? 0 : message.attempt());
         log.info("SYNC_EVENT_CONSUMED person_type={} person_id={} attempt={}",
                 message == null ? "null" : message.personType(),
                 message == null ? "null" : message.personId(),
@@ -99,6 +121,9 @@ public class IntelbrasSyncWorker {
                 case UNKNOWN -> new ProviderSyncResult(ProviderSyncStatus.FAILED, "Unknown person type cannot be synced.", java.time.Duration.ZERO);
             };
             sample.stop(meterRegistry.timer("intelbras.sync.latency", "result", result.status().name()));
+            log.info("GUEST_SYNC_WORKER_FINISHED person_type={} person_id={} attempt={} result={} success={} failed={} total={}",
+                    message.personType(), message.personId(), message.attempt(),
+                    result.status().name(), result.successCount(), result.failedCount(), result.totalTargets());
             if (result.successful()) {
                 meterRegistry.counter("intelbras.sync.success.count", "type", message.personType().name()).increment();
                 return;
@@ -110,6 +135,9 @@ public class IntelbrasSyncWorker {
             handleFailure(message, result.message());
         } catch (Exception exception) {
             sample.stop(meterRegistry.timer("intelbras.sync.latency", "result", "EXCEPTION"));
+            log.error("GUEST_SYNC_WORKER_FAILED person_type={} person_id={} attempt={} exception_type={} error={}",
+                    message.personType(), message.personId(), message.attempt(),
+                    exception.getClass().getSimpleName(), safe(exception.getMessage()));
             log.error("SYNC_WORKER_FAILED_BEFORE_PROVIDER person_type={} person_id={} attempt={} exception_type={} error={}",
                     message.personType(), message.personId(), message.attempt(),
                     exception.getClass().getSimpleName(), safe(exception.getMessage()), exception);
@@ -174,13 +202,13 @@ public class IntelbrasSyncWorker {
         log.info("intelbras_sync_guest_validity guest_id={} invited_day={} valid_from={} valid_until={}",
                 guestId, guest.getInvitedDay(), validFrom, validUntil);
         java.util.Set<java.util.UUID> allowedGuestAreas = guest.getAllowedAreas() == null
-                ? java.util.Collections.<java.util.UUID>emptySet()
+                ? new java.util.LinkedHashSet<>()
                 : guest.getAllowedAreas().stream()
                         .filter(br.com.sport.accesscontrol.areas.Area::isActive)
                         .map(br.com.sport.accesscontrol.areas.Area::getId)
                         .filter(java.util.Objects::nonNull)
                         .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
-        var areaNames = guest.getAllowedAreas() == null ? "" :
+        String areaNames = guest.getAllowedAreas() == null ? "" :
                 guest.getAllowedAreas().stream()
                         .filter(br.com.sport.accesscontrol.areas.Area::isActive)
                         .map(br.com.sport.accesscontrol.areas.Area::getName)
@@ -195,9 +223,45 @@ public class IntelbrasSyncWorker {
                 guest.getSyncStatus(), guest.getSyncAttempts(), guest.getInvitedLounge(),
                 allowedGuestAreas.stream().map(UUID::toString).collect(java.util.stream.Collectors.joining(",")),
                 areaNames, guest.getFacePhotoUrl() != null && !guest.getFacePhotoUrl().isBlank());
+        var targetMode = br.com.sport.accesscontrol.appconfig.LoungeConfig.COLLABORATOR_LOUNGE
+                .equalsIgnoreCase(guest.getInvitedLounge()) ? "ALL_ACTIVE_DEVICES" : "AREA_BASED";
+        log.info("GUEST_SYNC_TARGET_MODE guest_id={} invited_lounge={} target_mode={} target_count={} area_ids=[{}] area_names=[{}]",
+                guestId, guest.getInvitedLounge(), targetMode, allowedGuestAreas.size(),
+                allowedGuestAreas.stream().map(UUID::toString).collect(java.util.stream.Collectors.joining(",")),
+                areaNames);
+        if (allowedGuestAreas.isEmpty() && loungeAreaResolver != null) {
+            // Recalculate areas from invitedLounge — handles guests registered before area config
+            // or guests whose guest_allowed_areas is empty/incorrect.
+            log.warn("GUEST_SYNC_RECALCULATING_AREAS guest_id={} cpf={} invited_lounge={} — stored areas empty, recalculating from lounge resolver",
+                    guestId, guest.getCpf(), guest.getInvitedLounge());
+            var recalculated = loungeAreaResolver.resolveForLounge(guest.getInvitedLounge());
+            allowedGuestAreas = recalculated.stream()
+                    .filter(br.com.sport.accesscontrol.areas.Area::isActive)
+                    .map(br.com.sport.accesscontrol.areas.Area::getId)
+                    .filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+            areaNames = recalculated.stream()
+                    .filter(br.com.sport.accesscontrol.areas.Area::isActive)
+                    .map(br.com.sport.accesscontrol.areas.Area::getName)
+                    .filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.joining(","));
+            log.info("GUEST_SYNC_RECALCULATED_AREAS guest_id={} cpf={} invited_lounge={} recalc_area_count={} recalc_area_names=[{}]",
+                    guestId, guest.getCpf(), guest.getInvitedLounge(), allowedGuestAreas.size(), areaNames);
+        }
+
         if (allowedGuestAreas.isEmpty()) {
-            log.warn("SYNC_PROVIDER_NOT_CALLED_REASON guest_id={} reason=no_allowed_areas invited_lounge={}",
-                    guestId, guest.getInvitedLounge());
+            var noTargetsMessage = "Nenhuma catraca encontrada para o camarote selecionado: " + guest.getInvitedLounge();
+            log.warn("SYNC_PROVIDER_NOT_CALLED_REASON guest_id={} reason=no_allowed_areas invited_lounge={} cpf={} sync_status={} message={}",
+                    guestId, guest.getInvitedLounge(), guest.getCpf(), guest.getSyncStatus(),
+                    noTargetsMessage);
+            var result = new ProviderSyncResult(
+                    ProviderSyncStatus.FAILED,
+                    noTargetsMessage,
+                    java.time.Duration.ZERO,
+                    0, 0, 0, 0
+            );
+            finishGuest(guest, result, target);
+            return result;
         }
         var result = provider.syncPerson(new ProviderPerson(
                 PersonType.GUEST,

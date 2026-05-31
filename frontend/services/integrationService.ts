@@ -13,6 +13,15 @@ export type IntelbrasEventImportResult = {
   devicesScanned: number;
 };
 
+export type BulkSyncResult = {
+  status: string;
+  guestsQueued: number;
+  employeesQueued: number;
+  totalQueued: number;
+  guestsSkipped: number;
+  employeesSkipped: number;
+};
+
 export const integrationService = {
   async intelbrasStatus() {
     const { data } = await api.get<IntelbrasIntegrationStatus>("/api/integration/intelbras/status");
@@ -24,6 +33,10 @@ export const integrationService = {
   },
   async importIntelbrasDeviceEvents(deviceId: string) {
     const { data } = await api.post<IntelbrasEventImportResult>(`/api/admin/intelbras/devices/${deviceId}/events/import`);
+    return data;
+  },
+  async retryBulk() {
+    const { data } = await api.post<BulkSyncResult>("/api/integration/retry/bulk");
     return data;
   }
 };

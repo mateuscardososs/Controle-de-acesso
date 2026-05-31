@@ -121,9 +121,9 @@ export default function PublicVisitorRegistrationPage() {
                 <Input label="E-mail (opcional)" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
                 <Input label="Dia convidado" type="date" value={form.invitedDay} onChange={(event) => setForm({ ...form, invitedDay: event.target.value })} required />
               </div>
-              <Select label="Camarote convidado" value={form.invitedLounge} onChange={(event) => setForm({ ...form, invitedLounge: event.target.value })} required>
+              <Select label="Camarote / Função" value={form.invitedLounge} onChange={(event) => setForm({ ...form, invitedLounge: event.target.value })} required>
                 <option value="">Selecione</option>
-                {(lounges.data ?? []).map((lounge) => <option key={lounge} value={lounge}>{lounge}</option>)}
+                {(lounges.data ?? []).map((lounge) => <option key={lounge} value={lounge}>{loungeDisplayLabel(lounge)}</option>)}
               </Select>
               <div>
                 <span className="mb-2 block text-sm font-medium text-slate-300">Foto facial</span>
@@ -146,6 +146,14 @@ export default function PublicVisitorRegistrationPage() {
       <footer className="pb-2 text-center text-xs text-slate-700">Cadastro seguro</footer>
     </main>
   );
+}
+
+/** Maps internal lounge values to user-facing display labels.
+ *  The value submitted to the backend stays unchanged — only the visible text differs.
+ *  "Front 2" displays as "Front 3" (visual-only rename, no backend or DB change). */
+function loungeDisplayLabel(lounge: string): string {
+  if (lounge === "Front 2") return "Front 3";
+  return lounge;
 }
 
 function publicRegistrationErrorMessage(error: unknown) {

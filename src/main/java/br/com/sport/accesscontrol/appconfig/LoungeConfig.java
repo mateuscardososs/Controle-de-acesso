@@ -11,6 +11,9 @@ import java.util.Objects;
 @Component
 public class LoungeConfig {
 
+    /** Sentinel value for the collaborator lounge — always available regardless of app.lounges config. */
+    public static final String COLLABORATOR_LOUNGE = "Colaborador";
+
     public static final List<String> OFFICIAL_LOUNGES = List.of(
             "Front 1",
             "Front 2",
@@ -31,10 +34,19 @@ public class LoungeConfig {
     }
 
     public List<String> getLounges() {
-        return lounges;
+        // Colaborador is always appended — independently of the app.lounges property and Docker env vars
+        if (lounges.contains(COLLABORATOR_LOUNGE)) {
+            return lounges;
+        }
+        var result = new java.util.ArrayList<>(lounges);
+        result.add(COLLABORATOR_LOUNGE);
+        return java.util.Collections.unmodifiableList(result);
     }
 
     public boolean isValid(String value) {
+        if (COLLABORATOR_LOUNGE.equalsIgnoreCase(value == null ? "" : value.trim())) {
+            return true;
+        }
         var officialName = officialName(value);
         return officialName != null && lounges.contains(officialName);
     }
@@ -42,7 +54,21 @@ public class LoungeConfig {
     private static Map<String, String> officialLoungesByKey() {
         var values = new LinkedHashMap<String, String>();
         OFFICIAL_LOUNGES.forEach(lounge -> values.put(normalizeKey(lounge), lounge));
+        values.put(normalizeKey("Front 3"), "Front 2");
+        values.put(normalizeKey("Instrucional 1"), "Institucional 1");
+        values.put(normalizeKey("Instrucional Vereadores"), "Institucional Vereadores");
         return values;
+    }
+
+    public String canonicalName(String value) {
+        return canonicalLoungeName(value);
+    }
+
+    public static String canonicalLoungeName(String value) {
+        if (COLLABORATOR_LOUNGE.equalsIgnoreCase(value == null ? "" : value.trim())) {
+            return COLLABORATOR_LOUNGE;
+        }
+        return officialName(value);
     }
 
     private static String officialName(String value) {
@@ -50,6 +76,6 @@ public class LoungeConfig {
     }
 
     private static String normalizeKey(String value) {
-        return value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
+        return value == null ? "" : value.trim().replaceAll("\\s+", " ").toLowerCase(java.util.Locale.ROOT);
     }
 }

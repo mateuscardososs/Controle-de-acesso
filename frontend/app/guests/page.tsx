@@ -11,7 +11,7 @@ import { apiErrorMessage } from "@/lib/errors";
 import { configService } from "@/services/configService";
 import { Device, deviceService } from "@/services/deviceService";
 import { guestService, Guest, GuestStatus, SyncStatus } from "@/services/guestService";
-import { integrationService } from "@/services/integrationService";
+import { integrationService, BulkSyncResult } from "@/services/integrationService";
 import { useRealtime } from "@/src/hooks/useRealtime";
 import { Badge } from "@/src/components/ui/Badge";
 import { Button } from "@/src/components/ui/Button";
@@ -113,6 +113,13 @@ export default function GuestsPage() {
 
   const selectedDetails = details ? guestsWithRealtime.find((guest) => guest.id === details.id) ?? details : null;
 
+  const pendingSyncCount = useMemo(
+    () => guestsWithRealtime.filter(
+      (g) => g.syncStatus === "PENDING_SYNC" || g.syncStatus === "SYNC_FAILED"
+    ).length,
+    [guestsWithRealtime]
+  );
+
   const create = useMutation({
     mutationFn: () => {
       if (!facePhoto) throw new Error("Tire a foto pela câmera para continuar.");
@@ -170,11 +177,55 @@ export default function GuestsPage() {
       );
     },
     onSuccess: () => {
+      // Trigger one immediate refresh, then polling takes over (see useEffect below)
       queryClient.invalidateQueries({ queryKey: ["guests"] });
     },
-    onError: (error) => setToast({ tone: "error", message: apiErrorMessage(error, "Não foi possível iniciar a sincronização Intelbras.") }),
-    onSettled: () => setActiveSyncId(null)
+    onError: (error) => {
+      setToast({ tone: "error", message: apiErrorMessage(error, "Não foi possível iniciar a sincronização Intelbras.") });
+      setActiveSyncId(null);
+    }
+    // onSettled removed: activeSyncId is cleared by polling when status changes, or by onError above
   });
+
+  const bulkSync = useMutation<BulkSyncResult>({
+    mutationFn: () => integrationService.retryBulk(),
+    onSuccess: (result) => {
+      setToast({
+        tone: "success",
+        message: result.totalQueued > 0
+          ? `${result.totalQueued} usuário(s) enfileirado(s) para sincronização.`
+          : "Nenhum usuário pendente encontrado."
+      });
+      queryClient.invalidateQueries({ queryKey: ["guests"] });
+    },
+    onError: (error) => setToast({ tone: "error", message: apiErrorMessage(error, "Não foi possível iniciar a sincronização em lote.") })
+  });
+
+  // Polling fallback: when a sync is in progress, poll every 2s for up to 30s
+  // so the UI reflects the final status even if the WebSocket event is delayed/missed.
+  useEffect(() => {
+    if (!activeSyncId) return;
+    const POLL_INTERVAL_MS = 2000;
+    const MAX_POLLS = 15; // 15 × 2s = 30s max
+    let polls = 0;
+
+    const timerId = window.setInterval(async () => {
+      polls++;
+      await queryClient.invalidateQueries({ queryKey: ["guests"] });
+
+      const data = queryClient.getQueryData<Guest[]>(["guests"]);
+      const guest = data?.find((g) => g.id === activeSyncId);
+      const pendingStatuses: Array<string> = ["PENDING_SYNC", "SYNCING"];
+      const finished = !guest || !pendingStatuses.includes(guest.syncStatus ?? "PENDING_SYNC");
+
+      if (polls >= MAX_POLLS || finished) {
+        window.clearInterval(timerId);
+        setActiveSyncId(null);
+      }
+    }, POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(timerId);
+  }, [activeSyncId, queryClient]);
 
   useEffect(() => {
     if (!toast) return;
@@ -286,6 +337,23 @@ export default function GuestsPage() {
         description="Convites, cadastro facial e sincronização operacional com Intelbras real."
         actions={(
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              icon={RefreshCw}
+              disabled={bulkSync.isPending}
+              onClick={() => bulkSync.mutate()}
+            >
+              {bulkSync.isPending ? "Sincronizando..." : (
+                <>
+                  Sincronizar todos
+                  {pendingSyncCount > 0 && (
+                    <span className="ml-1.5 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-amber-400/25 px-1 text-[10px] font-bold leading-none text-amber-300">
+                      {pendingSyncCount}
+                    </span>
+                  )}
+                </>
+              )}
+            </Button>
             <Button variant="secondary" icon={Trash2} onClick={() => setCleanupOpen(true)}>Limpar lista</Button>
             <Button icon={Plus} onClick={() => { resetCreateForm(); setOpen(true); }}>Novo visitante</Button>
           </div>

@@ -23,6 +23,7 @@ import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -150,8 +151,7 @@ class IntelbrasClientTests {
                 .contains("/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.UserID=16");
         assertThat(requests.get(3).uri().toString())
                 .contains("/cgi-bin/recordUpdater.cgi?action=insert&name=AccessControlCard")
-                // No physical card provided via 7-arg overload → CardNo must NOT appear
-                .doesNotContain("CardNo=")
+                .contains("CardNo=16")
                 .contains("CardStatus=0")
                 .contains("UserID=16")
                 .contains("CardName=Alexandre16")
@@ -205,6 +205,7 @@ class IntelbrasClientTests {
         assertThat(requests.get(3).uri().toString())
                 .contains("/cgi-bin/recordUpdater.cgi?action=update&name=AccessControlCard")
                 .contains("recno=22")
+                .contains("CardNo=16")
                 .contains("CardStatus=0")
                 .contains("UserID=16")
                 .contains("ValidDateStart=2026-05-20%2008%3A00%3A00")
@@ -259,7 +260,7 @@ class IntelbrasClientTests {
     }
 
     @Test
-    void cgiClientOmitsCardNoWhenNoPhysicalCard() throws Exception {
+    void cgiClientDerivesCardNoFromCpfWhenNoPhysicalCard() throws Exception {
         var httpClient = mock(HttpClient.class);
         var properties = properties();
         var challenge = stringResponse(401, "", Map.of(
@@ -273,7 +274,7 @@ class IntelbrasClientTests {
 
         var client = new IntelbrasCgiClient(httpClient, properties, new ObjectMapper());
 
-        // Guest with CPF as userId but no physical card — CardNo must NOT appear
+        // Guest with CPF as userId but no physical card uses CPF without the last digit as CardNo.
         client.upsertAccessUser(
                 "192.168.15.5", "admin", "admin123",
                 "06331315470",  // userId = CPF
@@ -289,8 +290,105 @@ class IntelbrasClientTests {
         var insertUri = requests.get(3).uri().toString();
         assertThat(insertUri)
                 .contains("UserID=06331315470")
-                .doesNotContain("CardNo=")          // no card registered → no CPF as fake card
+                .contains("CardNo=0633131547")
+                .doesNotContain("CardNo=06331315470")
                 .contains("CardName=Visitante%20Real");
+    }
+
+    @Test
+    void faceOnlyBaseInsertUsesCpf10CardNoDifferentFromFullCpf() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        var notFound = stringResponse(200, "found=0", Map.of());
+        var ok = stringResponse(200, "OK", Map.of());
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(notFound)
+                .thenReturn(ok);
+
+        var client = new IntelbrasCgiClient(httpClient, properties(), new ObjectMapper());
+
+        var result = client.upsertFaceOnlyAccessUser(
+                "192.168.15.5", "admin", "admin123",
+                "06331315470",
+                "Visitante Real",
+                LocalDateTime.of(2026, 5, 20, 8, 0),
+                LocalDateTime.of(2037, 12, 31, 23, 59, 59)
+        );
+
+        assertThat(result.usedTemporaryCardNo()).isFalse();
+        assertThat(result.temporaryCardNo()).isEqualTo("0633131547");
+        var requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(httpClient, times(2)).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        var insertUri = requestCaptor.getAllValues().get(1).uri().toString();
+        assertThat(insertUri)
+                .contains("/cgi-bin/recordUpdater.cgi?action=insert&name=AccessControlCard")
+                .contains("CardNo=0633131547")
+                .contains("CardName=Visitante%20Real")
+                .contains("UserID=06331315470")
+                .doesNotContain("CardNo=06331315470");
+    }
+
+    @Test
+    void faceOnlyBaseUpdateUsesExistingRecordInsteadOfInsert() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        var existing = stringResponse(200, """
+                found=1
+                records[0].RecNo=22
+                records[0].UserID=06331315470
+                records[0].CardNo=2391496943
+                """, Map.of());
+        var ok = stringResponse(200, "OK", Map.of());
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(existing)
+                .thenReturn(ok);
+
+        var client = new IntelbrasCgiClient(httpClient, properties(), new ObjectMapper());
+
+        var result = client.upsertFaceOnlyAccessUser(
+                "192.168.15.5", "admin", "admin123",
+                "06331315470",
+                "Visitante Real",
+                LocalDateTime.of(2026, 5, 20, 8, 0),
+                LocalDateTime.of(2037, 12, 31, 23, 59, 59)
+        );
+
+        assertThat(result.action()).isEqualTo("update");
+        assertThat(result.usedTemporaryCardNo()).isFalse();
+        var requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(httpClient, times(2)).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        var updateUri = requestCaptor.getAllValues().get(1).uri().toString();
+        assertThat(updateUri)
+                .contains("/cgi-bin/recordUpdater.cgi?action=update&name=AccessControlCard")
+                .contains("recno=22")
+                .contains("CardNo=0633131547")
+                .contains("UserID=06331315470")
+                .doesNotContain("action=insert")
+                .doesNotContain("CardNo=06331315470");
+    }
+
+    @Test
+    void faceOnlyInsertBadRequestDoesNotReturnFalseSuccess() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        var notFound = stringResponse(200, "found=0", Map.of());
+        var badRequest = stringResponse(400, "Error Bad Request", Map.of());
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(notFound)
+                .thenReturn(badRequest)
+                .thenReturn(badRequest)
+                .thenReturn(badRequest)
+                .thenReturn(badRequest)
+                .thenReturn(badRequest)
+                .thenReturn(notFound);
+
+        var client = new IntelbrasCgiClient(httpClient, properties(), new ObjectMapper());
+
+        assertThatThrownBy(() -> client.upsertFaceOnlyAccessUser(
+                "192.168.15.5", "admin", "admin123",
+                "06331315470",
+                "Visitante Real",
+                LocalDateTime.of(2026, 5, 20, 8, 0),
+                LocalDateTime.of(2037, 12, 31, 23, 59, 59)
+        )).isInstanceOf(IntelbrasIntegrationException.class)
+                .hasMessageContaining("status=400");
     }
 
     @Test
@@ -318,6 +416,84 @@ class IntelbrasClientTests {
 
         assertThat(result).isEqualTo("EXISTS_WITHOUT_RECNO");
         verify(httpClient, times(2)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+    }
+
+    @Test
+    void clearCardNoForUserReportsClearedWhenReReadShowsEmptyCardNo() throws Exception {
+        // Safe cleanup flow needs 7 HTTP responses (200 direct, no digest challenge, for simplicity):
+        // 1. lookup-by-UserID (before) — CardNo=2391496943
+        // 2. lookup-by-CardNo (before) — CPF found as a card
+        // 3. strategy-A update — OK
+        // 4. verify-A by-UserID — no CardNo (cleared on UserID side)
+        // 5. verify-A by-CardNo — found=0 (CPF no longer a card → truly cleared)
+        // 6. FINAL_USER_STATE by-UserID — any valid body
+        // 7. FINAL_USER_STATE by-CardNo — found=0
+        var httpClient = mock(HttpClient.class);
+        var cardPopulated = stringResponse(200, "found=1\nrecords[0].RecNo=22\nrecords[0].UserID=06331315470\nrecords[0].CardNo=2391496943\n", Map.of());
+        var cardByCardNoFound = stringResponse(200, "found=1\nrecords[0].RecNo=22\nrecords[0].CardNo=2391496943\n", Map.of());
+        var ok = stringResponse(200, "OK", Map.of());
+        var cardGone = stringResponse(200, "found=1\nrecords[0].RecNo=22\nrecords[0].UserID=06331315470\n", Map.of());
+        var notFound = stringResponse(200, "found=0\n", Map.of());
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(cardPopulated)    // 1. lookup-by-UserID before
+                .thenReturn(cardByCardNoFound) // 2. lookup-by-CardNo before
+                .thenReturn(ok)              // 3. strategy A update
+                .thenReturn(cardGone)        // 4. verify-A by-UserID: no CardNo field
+                .thenReturn(notFound)        // 5. verify-A by-CardNo: CPF not a card anymore
+                .thenReturn(cardGone)        // 6. FINAL_USER_STATE by-UserID
+                .thenReturn(notFound);       // 7. FINAL_USER_STATE by-CardNo
+
+        var client = new IntelbrasCgiClient(httpClient, properties(), new ObjectMapper());
+        var result = client.clearCardNoForUser("192.168.15.5", "admin", "admin123",
+                "06331315470", "Visitante Real",
+                LocalDateTime.of(2026, 5, 20, 8, 0), LocalDateTime.of(2037, 12, 31, 23, 59, 59));
+
+        assertThat(result.cleared()).isTrue();
+        assertThat(result.cardNoBefore()).isEqualTo("2391496943");
+        assertThat(result.cardNoAfter()).isEmpty();
+        assertThat(result.userExists()).isTrue();
+        verify(httpClient, times(7)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+    }
+
+    @Test
+    void clearCardNoForUserReportsNotClearedWhenAllStrategiesFail() throws Exception {
+        // Safe cleanup strategies (UPDATE CardNo="", VerifyMode=3) fail to clear the CardNo.
+        // 10 HTTP responses (no digest challenge):
+        // 1-2. lookup-by-UserID + by-CardNo (before): CardNo populated
+        // 3.   strategy A update: OK
+        // 4-5. verify-A by-UserID + by-CardNo: STILL populated
+        // 6.   strategy B update: OK
+        // 7-8. verify-B by-UserID + by-CardNo: STILL populated
+        // 9-10. FINAL_USER_STATE by-UserID + by-CardNo
+        var httpClient = mock(HttpClient.class);
+        var stillPopulated = stringResponse(200, "found=1\nrecords[0].RecNo=22\nrecords[0].UserID=06331315470\nrecords[0].CardNo=2391496943\n", Map.of());
+        var cardStillFound = stringResponse(200, "found=1\nrecords[0].RecNo=22\nrecords[0].CardNo=2391496943\n", Map.of());
+        var ok = stringResponse(200, "OK", Map.of());
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(stillPopulated)  // 1. lookup-by-UserID before
+                .thenReturn(cardStillFound)  // 2. lookup-by-CardNo before
+                .thenReturn(ok)              // 3. strategy A update
+                .thenReturn(stillPopulated)  // 4. verify-A by-UserID
+                .thenReturn(cardStillFound)  // 5. verify-A by-CardNo — still there
+                .thenReturn(ok)              // 6. strategy B update
+                .thenReturn(stillPopulated)  // 7. verify-B by-UserID
+                .thenReturn(cardStillFound)  // 8. verify-B by-CardNo — still there
+                .thenReturn(stillPopulated)  // 9. FINAL_USER_STATE by-UserID
+                .thenReturn(cardStillFound); // 10. FINAL_USER_STATE by-CardNo
+
+        var client = new IntelbrasCgiClient(httpClient, properties(), new ObjectMapper());
+        var result = client.clearCardNoForUser("192.168.15.5", "admin", "admin123",
+                "06331315470", "Visitante Real",
+                LocalDateTime.of(2026, 5, 20, 8, 0), LocalDateTime.of(2037, 12, 31, 23, 59, 59));
+
+        assertThat(result.cleared()).isFalse();
+        assertThat(result.cardNoBefore()).isEqualTo("2391496943");
+        assertThat(result.cardNoAfter()).isEqualTo("2391496943");
+        assertThat(result.userExists()).isTrue();
+        var requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(httpClient, times(10)).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        assertThat(requestCaptor.getAllValues().stream().map(request -> request.uri().toString()).toList())
+                .noneMatch(uri -> uri.contains("action=remove&name=AccessControlCard"));
     }
 
     @Test

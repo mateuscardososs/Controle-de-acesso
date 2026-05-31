@@ -74,6 +74,7 @@ public class GuestController {
 
     @PostMapping("/{id}/sync")
     GuestResponse sync(@PathVariable UUID id) {
+        log.info("GUEST_SYNC_REQUEST_RECEIVED person_type=GUEST person_id={}", id);
         log.info("SYNC_REQUEST_RECEIVED person_type=GUEST person_id={}", id);
         return guestService.requestSync(id);
     }

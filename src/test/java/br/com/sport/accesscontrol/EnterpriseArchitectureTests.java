@@ -66,6 +66,7 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -964,7 +965,7 @@ class EnterpriseArchitectureTests {
         var guestRepository = mock(GuestRepository.class);
         var auditService = mock(AuditService.class);
         var eventPublisher = mock(ApplicationEventPublisher.class);
-        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
         when(guestRepository.save(guest)).thenReturn(guest);
         var service = new GuestService(guestRepository, mock(GuestInviteRepository.class), mock(FaceStorageService.class),
                 auditService, mock(RealtimePublisherService.class), mock(MailService.class),
@@ -1200,6 +1201,7 @@ class EnterpriseArchitectureTests {
     void intelbrasSyncWorkerRetriesThenSendsToDlqAfterMaxAttempts() {
         var guest = guest();
         guest.completeRegistration("81999990000", "Empresa", "/uploads/faces/photo.png");
+        guest.replaceAllowedAreas(Set.of(area()));
         var guestRepository = mock(GuestRepository.class);
         var provider = mock(AccessControlProvider.class);
         var publisher = mock(IntegrationEventPublisher.class);
@@ -1221,6 +1223,7 @@ class EnterpriseArchitectureTests {
     void intelbrasSyncWorkerProcessesValidGuestMessage() {
         var guest = guest();
         guest.completeRegistration("81999990000", "Empresa", "/uploads/faces/photo.png");
+        guest.replaceAllowedAreas(Set.of(area()));
         var guestRepository = mock(GuestRepository.class);
         var provider = mock(AccessControlProvider.class);
         var realtime = mock(IntegrationSyncRealtimePublisher.class);
@@ -1252,6 +1255,7 @@ class EnterpriseArchitectureTests {
     void intelbrasSyncWorkerDoesNotSendDuplicateGuestApprovalEmail() {
         var guest = guest();
         guest.completeRegistration("81999990000", "Empresa", "/uploads/faces/photo.png");
+        guest.replaceAllowedAreas(Set.of(area()));
         guest.markAccessApprovedEmail("SENT", "E-mail enviado.", true);
         var guestRepository = mock(GuestRepository.class);
         var provider = mock(AccessControlProvider.class);
@@ -1372,7 +1376,9 @@ class EnterpriseArchitectureTests {
     @Test
     void intelbrasSyncPublisherSendsRawMessageToRabbit() {
         var rabbitTemplate = mock(RabbitTemplate.class);
-        var publisher = new IntegrationEventPublisher(rabbitTemplate);
+        var publisher = new IntegrationEventPublisher(rabbitTemplate,
+                mock(br.com.sport.accesscontrol.guests.GuestRepository.class),
+                mock(br.com.sport.accesscontrol.employees.EmployeeRepository.class));
         var id = UUID.randomUUID();
         var message = new IntelbrasSyncMessage(br.com.sport.accesscontrol.common.PersonType.GUEST, id, 1);
 

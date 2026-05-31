@@ -1,6 +1,7 @@
 package br.com.sport.accesscontrol.integration.intelbras.client;
 
 import br.com.sport.accesscontrol.integration.intelbras.config.IntelbrasProperties;
+import br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasIdentityCodec;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -96,6 +97,9 @@ public class IntelbrasCgiClient {
 
     public String upsertAccessUser(String host, String username, String password, String userId, String cardNo,
                                    String cardName, LocalDateTime validFrom, LocalDateTime validUntil) {
+        var finalCardNo = normalizeCardNoForUpsert(userId, cardNo);
+        var physicalCardProvided = !digits(cardNo).isBlank()
+                && !(digits(userId).length() == 11 && digits(cardNo).equals(digits(userId)));
         var lookup = accessUserLookup(host, username, password, userId);
         if (lookup.found() && (lookup.recNo() == null || lookup.recNo().isBlank())) {
             log.info("intelbras_cgi_access_user_upsert_skip_existing_without_recno host={} user_id={}",
@@ -103,81 +107,295 @@ public class IntelbrasCgiClient {
             return "EXISTS_WITHOUT_RECNO";
         }
         var action = lookup.found() ? "update" : "insert";
-        log.info("intelbras_cgi_access_user_upsert host={} user_id={} action={} recno={}",
-                IntelbrasHttpSupport.maskHost(host), userId, action, lookup.recNo() == null ? "" : lookup.recNo());
-        var payloads = compatibleAccessUserPayloads(action, lookup.recNo(), userId, cardNo, cardName, validFrom, validUntil);
+        log.info("intelbras_cgi_access_user_upsert host={} user_id={} action={} recno={} card_no={} physical_card={}",
+                IntelbrasHttpSupport.maskHost(host), userId, action,
+                lookup.recNo() == null ? "" : lookup.recNo(), finalCardNo, physicalCardProvided);
+        var payloads = compatibleAccessUserPayloads(action, lookup.recNo(), userId, finalCardNo, cardName, validFrom, validUntil);
         try {
             return executeAccessUserPayloads(host, username, password, payloads);
         } catch (IntelbrasIntegrationException exception) {
             if (!"insert".equals(action)) {
+                // UPDATE failed — if we used a physical card, log clearly
+                if (physicalCardProvided) {
+                    log.warn("ACCESS_USER_UPDATE_FAILED_PHYSICAL_CARD host={} user_id={} card_no={} error={}",
+                            IntelbrasHttpSupport.maskHost(host), userId, finalCardNo, safe(exception.getMessage()));
+                }
                 throw exception;
             }
-            log.warn("intelbras_device_rejected_payload host={} endpoint=recordUpdater.cgi?action=insert payload={} error={} fallback=update",
-                    IntelbrasHttpSupport.maskHost(host), payloads.getFirst().params(), safe(exception.getMessage()));
+            // INSERT failed — try to look up in case the record was partially created
+            log.warn("ACCESS_USER_INSERT_FAILED host={} user_id={} card_no={} physical_card={} error={} — retrying as update or fallback",
+                    IntelbrasHttpSupport.maskHost(host), userId, finalCardNo, physicalCardProvided, safe(exception.getMessage()));
+            // Attempt to resolve CardNo conflict: another UserID may own this CardNo from an old sync
+            // (e.g. old CPF[0:10] records still registered in the controller)
+            if (tryResolveCardNoConflict(host, username, password, finalCardNo, userId)) {
+                log.info("ACCESS_USER_INSERT_RETRY_AFTER_CONFLICT_RESOLUTION host={} user_id={} card_no={}",
+                        IntelbrasHttpSupport.maskHost(host), userId, finalCardNo);
+                try {
+                    return executeAccessUserPayloads(host, username, password, payloads);
+                } catch (IntelbrasIntegrationException conflictRetryEx) {
+                    log.warn("ACCESS_USER_INSERT_AFTER_CONFLICT_RESOLUTION_FAILED host={} user_id={} card_no={} error={}",
+                            IntelbrasHttpSupport.maskHost(host), userId, finalCardNo, safe(conflictRetryEx.getMessage()));
+                }
+            }
             var retryLookup = accessUserLookup(host, username, password, userId);
-            if (retryLookup.recNo() == null || retryLookup.recNo().isBlank()) {
-                throw exception;
+            if (retryLookup.recNo() != null && !retryLookup.recNo().isBlank()) {
+                log.info("ACCESS_USER_INSERT_RETRY_AS_UPDATE host={} user_id={} recno={} card_no={}",
+                        IntelbrasHttpSupport.maskHost(host), userId, retryLookup.recNo(), finalCardNo);
+                var updatePayloads = compatibleAccessUserPayloads("update", retryLookup.recNo(), userId, finalCardNo, cardName,
+                        validFrom, validUntil);
+                return executeAccessUserPayloads(host, username, password, updatePayloads);
             }
-            var updatePayloads = compatibleAccessUserPayloads("update", retryLookup.recNo(), userId, cardNo, cardName,
-                    validFrom, validUntil);
-            return executeAccessUserPayloads(host, username, password, updatePayloads);
+            // Physical card INSERT failed and record not found — try document-derived CardNo as last resort
+            if (physicalCardProvided) {
+                var derivedCardNo = cardNoForUserIdWithoutPhysicalCard(userId);
+                log.warn("ACCESS_USER_INSERT_PHYSICAL_CARD_ALL_VARIANTS_FAILED_FALLBACK host={} user_id={} failed_card={} fallback_card={} — physical card rejected by all variants, retrying with document-derived CardNo",
+                        IntelbrasHttpSupport.maskHost(host), userId, finalCardNo, derivedCardNo);
+                var fallbackPayloads = compatibleAccessUserPayloads(action, null, userId, derivedCardNo, cardName,
+                        validFrom, validUntil);
+                return executeAccessUserPayloads(host, username, password, fallbackPayloads);
+            }
+            throw exception;
         }
     }
 
     public String upsertAccessUser(String host, String username, String password, String userId, String cardName,
                                    LocalDateTime validFrom, LocalDateTime validUntil) {
-        // No physical card provided: pass empty cardNo so document is not registered as a card
         return upsertAccessUser(host, username, password, userId, "", cardName, validFrom, validUntil);
     }
 
-    /**
-     * Removes the CardNo from an existing AccessControlCard record by sending an UPDATE with CardNo="".
-     * Used in the FACE_ONLY sync flow: after the base user is created with a temporary CardNo (required by
-     * SS 5531 INSERT), this call clears it so the user authenticates only by face, not by card.
-     */
-    public String clearCardNoForUser(String host, String username, String password, String userId,
-                                     String cardName, LocalDateTime validFrom, LocalDateTime validUntil) {
+    public AccessUserUpsertResult upsertFaceOnlyAccessUser(String host, String username, String password, String userId,
+                                                           String cardName, LocalDateTime validFrom,
+                                                           LocalDateTime validUntil) {
+        var derivedCardNo = cardNoForUserIdWithoutPhysicalCard(userId);
         var lookup = accessUserLookup(host, username, password, userId);
+        if (lookup.found() && (lookup.recNo() == null || lookup.recNo().isBlank())) {
+            log.info("ACCESS_USER_FACE_ONLY_BASE_EXISTS_WITHOUT_RECNO host={} user_id={} card_no_current={}",
+                    IntelbrasHttpSupport.maskHost(host), userId, lookup.cardNo());
+            return new AccessUserUpsertResult("EXISTS_WITHOUT_RECNO", "exists", derivedCardNo, false);
+        }
+        if (lookup.found()) {
+            log.info("ACCESS_USER_FACE_ONLY_BASE_UPDATE host={} user_id={} recno={} current_card_no={} target_card_no={}",
+                    IntelbrasHttpSupport.maskHost(host), userId, lookup.recNo(), lookup.cardNo(), derivedCardNo);
+            var payloads = compatibleAccessUserPayloads("update", lookup.recNo(), userId, derivedCardNo, cardName,
+                    validFrom, validUntil);
+            var response = executeAccessUserPayloads(host, username, password, payloads);
+            return new AccessUserUpsertResult(response, "update", derivedCardNo, false);
+        }
+
+        log.info("ACCESS_USER_FACE_ONLY_BASE_INSERT_PREPARED host={} user_id={} card_no={} card_no_is_full_cpf={}",
+                IntelbrasHttpSupport.maskHost(host), userId, derivedCardNo, derivedCardNo.equals(digits(userId)));
+        var payloads = compatibleFaceOnlyInsertPayloads(userId, derivedCardNo, cardName, validFrom, validUntil);
+        try {
+            var response = executeAccessUserPayloads(host, username, password, payloads);
+            return new AccessUserUpsertResult(response, "insert", derivedCardNo, false);
+        } catch (IntelbrasIntegrationException exception) {
+            log.warn("ACCESS_USER_FACE_ONLY_INSERT_FAILED_LOOKUP_RETRY host={} user_id={} card_no={} error={}",
+                    IntelbrasHttpSupport.maskHost(host), userId, derivedCardNo, safe(exception.getMessage()));
+            var retryLookup = accessUserLookup(host, username, password, userId);
+            if (retryLookup.recNo() == null || retryLookup.recNo().isBlank()) {
+                throw exception;
+            }
+            var updatePayloads = compatibleAccessUserPayloads("update", retryLookup.recNo(), userId, derivedCardNo, cardName,
+                    validFrom, validUntil);
+            var response = executeAccessUserPayloads(host, username, password, updatePayloads);
+            return new AccessUserUpsertResult(response, "update_after_partial_insert", derivedCardNo, false);
+        }
+    }
+
+    /**
+     * Clears the CardNo from an existing AccessControlCard registration record using safe update strategies:
+     * A) UPDATE with CardNo="" (firmware may accept or silently ignore)
+     * B) UPDATE with VerifyMode=3 plus CardNo="" (some firmware clears only with VerifyMode present)
+     *
+     * <p>Verification is authoritative: after each strategy, the record is re-read BOTH by UserID
+     * (to see what the device returns for the record) AND by CardNo (to confirm the temporary card is no longer
+     * registered as a card in the device's card lookup table).
+     *
+     * <p>HTTP 200 from an update is NOT proof of clearing — the SS 5531/5541 firmware silently ignores
+     * CardNo="" updates and still returns 200. Only the reverse CardNo-lookup confirms the truth.
+     */
+    public CardClearResult clearCardNoForUser(String host, String username, String password, String userId,
+                                              String cardName, LocalDateTime validFrom, LocalDateTime validUntil) {
+        // ── Initial state read ──────────────────────────────────────────────────────────────────────
+        log.info("FACE_ONLY_CARD_LOOKUP_REQUEST host={} user_id={} endpoint=recordFinder&name=AccessControlCard",
+                IntelbrasHttpSupport.maskHost(host), userId);
+        var lookup = accessUserLookup(host, username, password, userId);
+        var cardNoBefore = lookup.cardNo();
+        log.info("FACE_ONLY_CARD_LOOKUP_RESPONSE host={} user_id={} found={} recno={} card_no_by_userid_query={}",
+                IntelbrasHttpSupport.maskHost(host), userId, lookup.found(),
+                lookup.recNo() == null ? "" : lookup.recNo(), cardNoBefore);
+
+        // Also query BY CardNo. Non-fatal: not all firmware versions support condition.CardNo.
+        // If this query throws (e.g. firmware returns 400 for unsupported condition), treat as "not found".
+        AccessUserLookup byCardNo;
+        if (cardNoBefore.isBlank()) {
+            byCardNo = new AccessUserLookup(false, null, "");
+        } else {
+            try {
+                byCardNo = lookupAccessControlCardByCardNo(host, username, password, cardNoBefore);
+                log.info("FACE_ONLY_CARD_LOOKUP_BY_CARDNO host={} user_id={} query=condition.CardNo={} found={} record_count={}",
+                        IntelbrasHttpSupport.maskHost(host), userId, cardNoBefore, byCardNo.found(),
+                        byCardNo.recNo() == null ? 0 : 1);
+            } catch (Exception byCardNoEx) {
+                log.warn("FACE_ONLY_CARD_LOOKUP_BY_CARDNO_FAILED host={} user_id={} card_no={} error={}",
+                        IntelbrasHttpSupport.maskHost(host), userId, cardNoBefore, safe(byCardNoEx.getMessage()));
+                byCardNo = new AccessUserLookup(false, null, "");
+            }
+        }
+
         if (!lookup.found()) {
             log.warn("FACE_ONLY_CARD_CLEANUP_SKIP host={} user_id={} reason=user_not_found",
                     IntelbrasHttpSupport.maskHost(host), userId);
-            return "NOT_FOUND";
+            return new CardClearResult(false, null, cardNoBefore, "", false);
+        }
+        if (lookup.found() && cardNoBefore.isBlank() && !byCardNo.found()) {
+            log.info("FACE_ONLY_CARD_CLEANUP_ALREADY_EMPTY host={} user_id={} recno={} — no card registered by either query",
+                    IntelbrasHttpSupport.maskHost(host), userId, lookup.recNo());
+            return new CardClearResult(true, lookup.recNo(), "", "", true);
         }
         if (lookup.recNo() == null || lookup.recNo().isBlank()) {
-            log.warn("FACE_ONLY_CARD_CLEANUP_SKIP host={} user_id={} reason=no_recno_for_update",
-                    IntelbrasHttpSupport.maskHost(host), userId);
-            return "NO_RECNO";
+            log.warn("FACE_ONLY_CARD_CLEANUP_SKIP host={} user_id={} reason=no_recno_for_update card_no_before={} by_card_no_found={}",
+                    IntelbrasHttpSupport.maskHost(host), userId, cardNoBefore, byCardNo.found());
+            return new CardClearResult(false, null, cardNoBefore, cardNoBefore, true);
         }
-        // Build an UPDATE with explicit CardNo="" to clear the card number in the device database
-        var params = new LinkedHashMap<String, String>();
-        params.put("action", "update");
-        params.put("name", "AccessControlCard");
-        params.put("recno", lookup.recNo());
-        params.put("CardNo", "");   // explicit empty string — signals "no card" to the device
-        params.put("CardStatus", "0");
-        params.put("CardName", cardName == null || cardName.isBlank() ? userId : cardName);
-        params.put("UserID", userId);
-        params.put("ValidDateStart", DEVICE_TIME.format(validFrom));
-        params.put("ValidDateEnd", DEVICE_TIME.format(validUntil));
-        var path = "/cgi-bin/recordUpdater.cgi?" + query(params);
-        log.info("FACE_ONLY_CARD_CLEANUP_REQUEST host={} user_id={} recno={} card_no_value=empty endpoint={}",
-                IntelbrasHttpSupport.maskHost(host), userId, lookup.recNo(), path);
+
+        // ── Strategy A: UPDATE with CardNo="" ───────────────────────────────────────────────────────
+        var clearParams = new LinkedHashMap<String, String>();
+        clearParams.put("action", "update");
+        clearParams.put("name", "AccessControlCard");
+        clearParams.put("recno", lookup.recNo());
+        clearParams.put("CardNo", "");
+        clearParams.put("CardStatus", "0");
+        clearParams.put("CardName", cardName == null || cardName.isBlank() ? userId : cardName);
+        clearParams.put("UserID", userId);
+        clearParams.put("ValidDateStart", DEVICE_TIME.format(validFrom));
+        clearParams.put("ValidDateEnd", DEVICE_TIME.format(validUntil));
+        var clearPath = "/cgi-bin/recordUpdater.cgi?" + query(clearParams);
+        log.info("CARD_CLEANUP_REQUEST strategy=A_UPDATE_EMPTY_CARDNO host={} user_id={} recno={} card_no_before={} card_no_target=\"\" full_url={}",
+                IntelbrasHttpSupport.maskHost(host), userId, lookup.recNo(), cardNoBefore, clearPath);
         try {
-            var response = getText(host, username, password, path);
-            ensureCgiBodyAccepted(host, path, response);
-            log.info("FACE_ONLY_CARD_CLEANUP_RESPONSE host={} user_id={} method=GET card_no_cleared=true response={}",
-                    IntelbrasHttpSupport.maskHost(host), userId, safe(response));
-            return response;
-        } catch (IntelbrasIntegrationException getException) {
-            log.warn("FACE_ONLY_CARD_CLEANUP_GET_FAILED host={} user_id={} error={} — retrying with POST",
-                    IntelbrasHttpSupport.maskHost(host), userId, safe(getException.getMessage()));
-            var body = query(params);
-            var postPath = "/cgi-bin/recordUpdater.cgi";
-            var response = postForm(host, username, password, postPath, body);
-            ensureCgiBodyAccepted(host, postPath, response);
-            log.info("FACE_ONLY_CARD_CLEANUP_RESPONSE host={} user_id={} method=POST card_no_cleared=true response={}",
-                    IntelbrasHttpSupport.maskHost(host), userId, safe(response));
-            return response;
+            var resp = getText(host, username, password, clearPath);
+            ensureCgiBodyAccepted(host, clearPath, resp);
+            log.info("CARD_CLEANUP_RESPONSE strategy=A host={} user_id={} method=GET http_status=200 body={}",
+                    IntelbrasHttpSupport.maskHost(host), userId, safe(resp));
+        } catch (IntelbrasIntegrationException ex) {
+            log.warn("CARD_CLEANUP_RESPONSE strategy=A_GET_FAILED host={} user_id={} error={} — retrying POST",
+                    IntelbrasHttpSupport.maskHost(host), userId, safe(ex.getMessage()));
+            try {
+                var body = query(clearParams);
+                var resp = postForm(host, username, password, "/cgi-bin/recordUpdater.cgi", body);
+                ensureCgiBodyAccepted(host, "/cgi-bin/recordUpdater.cgi", resp);
+                log.info("CARD_CLEANUP_RESPONSE strategy=A_POST host={} user_id={} http_status=200 body={}",
+                        IntelbrasHttpSupport.maskHost(host), userId, safe(resp));
+            } catch (IntelbrasIntegrationException postEx) {
+                log.warn("CARD_CLEANUP_RESPONSE strategy=A_POST_FAILED host={} user_id={} error={}",
+                        IntelbrasHttpSupport.maskHost(host), userId, safe(postEx.getMessage()));
+            }
+        }
+        var verifyA = verifyCardCleared(host, username, password, userId, "A_UPDATE_EMPTY_CARDNO", cardNoBefore);
+        if (verifyA.cleared()) {
+            logFinalUserState(host, username, password, userId, cardNoBefore, "strategy_A_success");
+            return verifyA;
+        }
+
+        // Strategy B: UPDATE with VerifyMode=3 plus CardNo="".
+        var vmParams = new LinkedHashMap<String, String>();
+        vmParams.put("action", "update");
+        vmParams.put("name", "AccessControlCard");
+        vmParams.put("recno", lookup.recNo());
+        vmParams.put("CardNo", "");
+        vmParams.put("CardStatus", "0");
+        vmParams.put("VerifyMode", "3");  // face-only auth mode
+        vmParams.put("CardName", cardName == null || cardName.isBlank() ? userId : cardName);
+        vmParams.put("UserID", userId);
+        vmParams.put("ValidDateStart", DEVICE_TIME.format(validFrom));
+        vmParams.put("ValidDateEnd", DEVICE_TIME.format(validUntil));
+        var vmPath = "/cgi-bin/recordUpdater.cgi?" + query(vmParams);
+        log.info("CARD_CLEANUP_REQUEST strategy=B_VERIFYMODE_3 host={} user_id={} recno={} full_url={}",
+                IntelbrasHttpSupport.maskHost(host), userId, lookup.recNo(), vmPath);
+        try {
+            var resp = getText(host, username, password, vmPath);
+            ensureCgiBodyAccepted(host, vmPath, resp);
+            log.info("CARD_CLEANUP_RESPONSE strategy=B host={} user_id={} http_status=200 body={}",
+                    IntelbrasHttpSupport.maskHost(host), userId, safe(resp));
+        } catch (IntelbrasIntegrationException ex) {
+            log.warn("CARD_CLEANUP_RESPONSE strategy=B_FAILED host={} user_id={} error={} — VerifyMode=3 not supported or rejected",
+                    IntelbrasHttpSupport.maskHost(host), userId, safe(ex.getMessage()));
+        }
+        var verifyB = verifyCardCleared(host, username, password, userId, "B_VERIFYMODE_3", cardNoBefore);
+        if (verifyB.cleared()) {
+            logFinalUserState(host, username, password, userId, cardNoBefore, "strategy_B_success");
+            return verifyB;
+        }
+        logFinalUserState(host, username, password, userId, cardNoBefore, "safe_strategies_failed");
+        return verifyB;
+    }
+
+    /** Re-reads AccessControlCard BOTH by UserID and by CardNo to produce an authoritative cleared verdict.
+     *  The by-CardNo query is non-fatal: if it throws (unsupported by firmware), it is treated as "not found". */
+    private CardClearResult verifyCardCleared(String host, String username, String password,
+                                              String userId, String strategy, String cardNoBefore) {
+        var byUserId = accessUserLookup(host, username, password, userId);
+        boolean cardStillRegisteredByCardNo;
+        var cardNoLookupValue = cardNoBefore == null ? "" : cardNoBefore.trim();
+        if (cardNoLookupValue.isBlank()) {
+            cardStillRegisteredByCardNo = false;
+        } else {
+            try {
+                var byCardNo = lookupAccessControlCardByCardNo(host, username, password, cardNoLookupValue);
+                cardStillRegisteredByCardNo = byCardNo.found();
+            } catch (Exception ex) {
+                log.warn("CARD_CLEANUP_VERIFY_CARDNO_QUERY_FAILED strategy={} host={} user_id={} card_no={} error={}",
+                        strategy, IntelbrasHttpSupport.maskHost(host), userId, cardNoLookupValue,
+                        safe(ex.getMessage()));
+                cardStillRegisteredByCardNo = false;
+            }
+        }
+        var cardNoAfterUserId = byUserId.cardNo();
+        var cleared = cardNoAfterUserId.isBlank() && !cardStillRegisteredByCardNo;
+        log.info("CARD_CLEANUP_VERIFY strategy={} host={} user_id={} card_no_before={} card_no_by_userid_query={} card_no_lookup_value={} card_no_still_registered={} user_exists={} cleared={}",
+                strategy, IntelbrasHttpSupport.maskHost(host), userId,
+                cardNoBefore, cardNoAfterUserId, cardNoLookupValue, cardStillRegisteredByCardNo,
+                byUserId.found(), cleared);
+        return new CardClearResult(cleared, byUserId.recNo(), cardNoBefore, cardNoAfterUserId, byUserId.found());
+    }
+
+    /** Queries AccessControlCard by CardNo (reverse lookup) to check if a value is registered as a card. */
+    private AccessUserLookup lookupAccessControlCardByCardNo(String host, String username, String password,
+                                                              String cardNo) {
+        var path = "/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.CardNo=" + encode(cardNo);
+        var body = getText(host, username, password, path);
+        log.info("CARD_LOOKUP_BY_CARDNO host={} card_no={} raw_body={}",
+                IntelbrasHttpSupport.maskHost(host), cardNo, safe(body));
+        var records = IntelbrasRecordFinderParser.parseRecords(body);
+        if (records.isEmpty()) {
+            return new AccessUserLookup(false, null, "");
+        }
+        var first = records.getFirst();
+        return new AccessUserLookup(true, blankToEmpty(text(first, "RecNo")), blankToEmpty(text(first, "CardNo")));
+    }
+
+    /** Dumps the complete AccessControlCard state for a user to aid production diagnosis. */
+    private void logFinalUserState(String host, String username, String password, String userId,
+                                   String cardNoLookupValue, String context) {
+        try {
+            var pathByUserId = "/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.UserID=" + encode(userId);
+            var bodyByUserId = getText(host, username, password, pathByUserId);
+            var lookupCardNo = cardNoLookupValue == null || cardNoLookupValue.isBlank() ? userId : cardNoLookupValue;
+            var pathByCardNo = "/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.CardNo=" + encode(lookupCardNo);
+            var bodyByCardNo = getText(host, username, password, pathByCardNo);
+            var records = IntelbrasRecordFinderParser.parseRecords(bodyByUserId);
+            var allFields = records.stream()
+                    .map(r -> r.entrySet().stream()
+                            .map(e -> e.getKey() + "=" + e.getValue())
+                            .collect(java.util.stream.Collectors.joining(", ", "{", "}")))
+                    .collect(java.util.stream.Collectors.joining(" | "));
+            log.info("FINAL_USER_STATE context={} host={} user_id={} card_no_lookup_value={} by_userid_raw={} by_cardno_raw={} all_fields_by_userid=[{}]",
+                    context, IntelbrasHttpSupport.maskHost(host), userId, lookupCardNo,
+                    safe(bodyByUserId), safe(bodyByCardNo), allFields);
+        } catch (Exception ex) {
+            log.warn("FINAL_USER_STATE_FAILED host={} user_id={} error={}",
+                    IntelbrasHttpSupport.maskHost(host), userId, safe(ex.getMessage()));
         }
     }
 
@@ -227,14 +445,15 @@ public class IntelbrasCgiClient {
         if (body == null) return false;
         var value = body.trim();
         var lower = value.toLowerCase();
-        // Explicit false
+        // Explicit literal false (the most common rejection response from SS 5531)
         if (lower.equals("false")) return true;
-        // JSON: {"result": false}
+        // JSON: {"result": false}  — checks for JSON value false, not just the word
         if (lower.contains(": false") || lower.contains(":false")) return true;
-        // JSON: {"errCode": -1} or similar negative errCode
+        // JSON: {"errCode": -N} — only negative errCode values indicate rejection
         if (lower.contains("errcode") && (lower.contains(": -") || lower.contains(":-"))) return true;
-        // Generic error/failed keywords
-        if (lower.contains("error") || lower.contains("failed")) return true;
+        // Note: "error" / "failed" substring checks are intentionally excluded here.
+        // They cause false positives when the firmware embeds these words in benign messages.
+        // Positive responses ("true" or empty) do NOT contain ": false" or negative errCode.
         return false;
     }
 
@@ -448,8 +667,12 @@ public class IntelbrasCgiClient {
     }
 
     private AccessUserLookup accessUserLookup(String host, String username, String password, String userId) {
+        // Registration record lookup — name=AccessControlCard (NOT AccessControlCardRec, which is the event log)
         var path = "/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.UserID=" + encode(userId);
         var body = getText(host, username, password, path);
+        // Full raw body log — required to see every field the device actually returns (cannot rely on parsed subset)
+        log.info("ACCESS_USER_LOOKUP_RESPONSE host={} user_id={} endpoint={} raw_body={}",
+                IntelbrasHttpSupport.maskHost(host), userId, path, safe(body));
         var values = IntelbrasRecordFinderParser.parseKeyValues(body);
         var foundCount = longValue(values, "found", "Found");
         var found = foundCount != null && foundCount > 0;
@@ -458,7 +681,7 @@ public class IntelbrasCgiClient {
             if (userId.equalsIgnoreCase(text(record, "UserID"))) {
                 var recNo = text(record, "RecNo");
                 if (recNo != null && !recNo.isBlank()) {
-                    return new AccessUserLookup(true, recNo);
+                    return new AccessUserLookup(true, recNo, blankToEmpty(text(record, "CardNo")));
                 }
                 found = true;
             }
@@ -466,15 +689,19 @@ public class IntelbrasCgiClient {
         if (!records.isEmpty()) {
             var recNo = text(records.getFirst(), "RecNo");
             if (recNo != null && !recNo.isBlank()) {
-                return new AccessUserLookup(true, recNo);
+                return new AccessUserLookup(true, recNo, blankToEmpty(text(records.getFirst(), "CardNo")));
             }
             found = true;
         }
         var topLevelRecNo = firstValue(values, "RecNo", "recno", "RecordNo", "recordNo");
         if (topLevelRecNo != null && !topLevelRecNo.isBlank()) {
-            return new AccessUserLookup(true, topLevelRecNo);
+            return new AccessUserLookup(true, topLevelRecNo, blankToEmpty(firstValue(values, "CardNo", "cardNo")));
         }
-        return new AccessUserLookup(found, null);
+        return new AccessUserLookup(found, null, "");
+    }
+
+    private String blankToEmpty(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private List<AccessUserPayload> compatibleAccessUserPayloads(String action, String recNo, String userId,
@@ -482,12 +709,49 @@ public class IntelbrasCgiClient {
                                                                  LocalDateTime validFrom,
                                                                  LocalDateTime validUntil) {
         var payloads = new ArrayList<AccessUserPayload>();
+        // 1) Primary: CardStatus=0 + validity dates (most common)
         payloads.add(accessUserPayload("documented_card_status_with_validity", action, recNo, userId, cardNo, cardName,
                 validFrom, validUntil, true));
+        // 2) With CardType=0 and UserType=0 — required by some SS 5531/5541 firmware versions
+        payloads.add(accessUserPayloadWithCardType("with_cardtype_usertype_validity", action, recNo, userId, cardNo,
+                cardName, validFrom, validUntil));
+        // 3) Minimal no-dates (some firmware rejects ValidDateStart/ValidDateEnd on INSERT)
+        payloads.add(accessUserPayload("minimal_cardstatus_no_dates", action, recNo, userId, cardNo, cardName, true));
+        // 4) Legacy with Doors/TimeSections (broad compatibility, last resort before bare minimal)
         payloads.add(legacyAccessUserPayload("legacy_full_get", action, recNo, userId, cardNo, cardName,
                 validFrom, validUntil));
+        // 5) Absolutely minimal — just CardNo, CardName, UserID
         payloads.add(accessUserPayload("minimal_without_card_status", action, recNo, userId, cardNo, cardName,
                 false));
+        return payloads;
+    }
+
+    private AccessUserPayload accessUserPayloadWithCardType(String variant, String action, String recNo,
+                                                            String userId, String cardNo, String cardName,
+                                                            LocalDateTime validFrom, LocalDateTime validUntil) {
+        var params = new LinkedHashMap<>(
+                accessUserPayload(variant, action, recNo, userId, cardNo, cardName, true).params());
+        params.put("CardType", "0");
+        params.put("UserType", "0");
+        params.put("ValidDateStart", DEVICE_TIME.format(validFrom));
+        params.put("ValidDateEnd", DEVICE_TIME.format(validUntil));
+        return new AccessUserPayload(variant, params);
+    }
+
+    private List<AccessUserPayload> compatibleFaceOnlyInsertPayloads(String userId, String cardNo,
+                                                                     String cardName, LocalDateTime validFrom,
+                                                                     LocalDateTime validUntil) {
+        var payloads = new ArrayList<AccessUserPayload>();
+        payloads.add(accessUserPayload("face_only_minimal_document_card", "insert", null, userId, cardNo,
+                cardName, false));
+        payloads.add(accessUserPayload("face_only_card_status_card_type", "insert", null, userId, cardNo,
+                cardName, false));
+        payloads.getLast().params().put("CardStatus", "0");
+        payloads.getLast().params().put("CardType", "0");
+        payloads.add(accessUserPayload("face_only_without_validity", "insert", null, userId, cardNo,
+                cardName));
+        payloads.add(accessUserPayload("face_only_with_validity", "insert", null, userId, cardNo,
+                cardName, validFrom, validUntil, true));
         return payloads;
     }
 
@@ -504,7 +768,7 @@ public class IntelbrasCgiClient {
         if (recNo != null && !recNo.isBlank()) {
             params.put("recno", recNo);
         }
-        // Include CardNo only when a physical card is provided — never use document/CPF as fallback
+        // CardNo is either a real physical card or the 10-digit value derived from CPF.
         if (cardNo != null && !cardNo.isBlank()) {
             params.put("CardNo", cardNo);
         }
@@ -552,44 +816,84 @@ public class IntelbrasCgiClient {
             var path = accessUserPath(payload);
             var cardNoSent = payload.params().get("CardNo");
             var userIdSent = payload.params().get("UserID");
-            var hasPhysicalCard = cardNoSent != null && !cardNoSent.isBlank() && !cardNoSent.equals(userIdSent);
-            log.info("CARD_SYNC_REQUEST variant={} method=GET host={} user_id={} card_no={} has_physical_card={} has_card_status={} has_validity={}",
+            var hasCardNo = cardNoSent != null && !cardNoSent.isBlank();
+            var derivedFromDocument = cardNoSent != null
+                    && cardNoSent.equals(IntelbrasIdentityCodec.cardNoFromDocument(userIdSent));
+            var cardNoSource = hasCardNo ? (derivedFromDocument ? "DOCUMENT_DERIVED" : "PERSON_CARD") : "NONE";
+            var actionType = payload.params().get("action");
+            log.info("CARD_SYNC_REQUEST variant={} method=GET host={} user_id={} card_no={} has_card_no={} card_no_source={} has_card_status={} has_validity={}",
                     payload.variant(), IntelbrasHttpSupport.maskHost(host),
-                    userIdSent, cardNoSent, hasPhysicalCard,
+                    userIdSent, cardNoSent, hasCardNo, cardNoSource,
                     payload.params().containsKey("CardStatus"),
                     payload.params().containsKey("ValidDateStart"));
+            log.info("ACCESS_USER_PAYLOAD_VARIANT variant={} method=GET action={} host={} user_id={} card_no={} has_cardtype={} has_dates={} has_doors={} full_url={}",
+                    payload.variant(), actionType, IntelbrasHttpSupport.maskHost(host),
+                    userIdSent, cardNoSent,
+                    payload.params().containsKey("CardType"),
+                    payload.params().containsKey("ValidDateStart"),
+                    payload.params().containsKey("Doors[0]"),
+                    path);
+            if ("insert".equals(actionType)) {
+                log.info("ACCESS_USER_INSERT_REQUEST_FULL host={} user_id={} card_no={} variant={} full_url={}",
+                        IntelbrasHttpSupport.maskHost(host), userIdSent, cardNoSent, payload.variant(), path);
+            }
             try {
                 var response = getText(host, username, password, path);
                 ensureCgiBodyAccepted(host, path, response);
+                log.info("ACCESS_USER_PAYLOAD_VARIANT variant={} method=GET status=accepted host={} user_id={} body={}",
+                        payload.variant(), IntelbrasHttpSupport.maskHost(host), userIdSent, safe(response));
                 log.info("CARD_SYNC_RESPONSE variant={} method=GET host={} user_id={} card_no={} accepted=true body={}",
                         payload.variant(), IntelbrasHttpSupport.maskHost(host), userIdSent, cardNoSent, safe(response));
+                if ("insert".equals(actionType)) {
+                    log.info("ACCESS_USER_INSERT_RESPONSE_FULL host={} user_id={} card_no={} variant={} http_status=200 body={}",
+                            IntelbrasHttpSupport.maskHost(host), userIdSent, cardNoSent, payload.variant(), safe(response));
+                    log.info("ACCESS_USER_INSERT_RESPONSE host={} user_id={} card_no={} http_status=200 body={}",
+                            IntelbrasHttpSupport.maskHost(host), userIdSent, cardNoSent, safe(response));
+                }
                 log.info("intelbras_record_updater_success host={} variant={} method=GET endpoint={} response_body={}",
                         IntelbrasHttpSupport.maskHost(host), payload.variant(), path, safe(response));
                 return response;
             } catch (IntelbrasIntegrationException exception) {
                 lastException = exception;
+                log.warn("ACCESS_USER_PAYLOAD_VARIANT variant={} method=GET status=REJECTED host={} user_id={} card_no={} error={}",
+                        payload.variant(), IntelbrasHttpSupport.maskHost(host), userIdSent, cardNoSent,
+                        safe(exception.getMessage()));
                 log.warn("CARD_SYNC_RESPONSE variant={} method=GET host={} user_id={} card_no={} accepted=false error={}",
                         payload.variant(), IntelbrasHttpSupport.maskHost(host), userIdSent, cardNoSent,
                         safe(exception.getMessage()));
                 log.warn("intelbras_device_rejected_payload host={} endpoint={} variant={} method=GET payload={} error={}",
                         IntelbrasHttpSupport.maskHost(host), path, payload.variant(), payload.params(),
                         safe(exception.getMessage()));
+                if ("insert".equals(actionType)) {
+                    log.warn("ACCESS_USER_INSERT_RESPONSE_FULL host={} user_id={} card_no={} variant={} accepted=false error={}",
+                            IntelbrasHttpSupport.maskHost(host), userIdSent, cardNoSent, payload.variant(), safe(exception.getMessage()));
+                    log.warn("ACCESS_USER_INSERT_RESPONSE host={} user_id={} card_no={} accepted=false error={}",
+                            IntelbrasHttpSupport.maskHost(host), userIdSent, cardNoSent, safe(exception.getMessage()));
+                }
             }
 
             if (index == 0) {
                 logAccessUserPayload(host, payload, "POST");
                 var postPath = "/cgi-bin/recordUpdater.cgi";
                 var body = query(payload.params());
-                log.info("CARD_SYNC_REQUEST variant={} method=POST host={} user_id={} card_no={} has_physical_card={} has_card_status={} has_validity={}",
+                log.info("CARD_SYNC_REQUEST variant={} method=POST host={} user_id={} card_no={} has_card_no={} card_no_source={} has_card_status={} has_validity={}",
                         payload.variant(), IntelbrasHttpSupport.maskHost(host),
-                        userIdSent, cardNoSent, hasPhysicalCard,
+                        userIdSent, cardNoSent, hasCardNo, cardNoSource,
                         payload.params().containsKey("CardStatus"),
                         payload.params().containsKey("ValidDateStart"));
+                if ("insert".equals(actionType)) {
+                    log.info("ACCESS_USER_INSERT_REQUEST host={} user_id={} card_no={} method=POST endpoint={} body={}",
+                            IntelbrasHttpSupport.maskHost(host), userIdSent, cardNoSent, postPath, body);
+                }
                 try {
                     var response = postForm(host, username, password, postPath, body);
                     ensureCgiBodyAccepted(host, postPath, response);
                     log.info("CARD_SYNC_RESPONSE variant={} method=POST host={} user_id={} card_no={} accepted=true body={}",
                             payload.variant(), IntelbrasHttpSupport.maskHost(host), userIdSent, cardNoSent, safe(response));
+                    if ("insert".equals(actionType)) {
+                        log.info("ACCESS_USER_INSERT_RESPONSE host={} user_id={} card_no={} http_status=200 body={}",
+                                IntelbrasHttpSupport.maskHost(host), userIdSent, cardNoSent, safe(response));
+                    }
                     log.info("intelbras_record_updater_success host={} variant={} method=POST endpoint={} response_body={}",
                             IntelbrasHttpSupport.maskHost(host), payload.variant(), postPath, safe(response));
                     return response;
@@ -601,6 +905,10 @@ public class IntelbrasCgiClient {
                     log.warn("intelbras_device_rejected_payload host={} endpoint={} variant={} method=POST payload={} error={}",
                             IntelbrasHttpSupport.maskHost(host), postPath, payload.variant(), payload.params(),
                             safe(exception.getMessage()));
+                    if ("insert".equals(actionType)) {
+                        log.warn("ACCESS_USER_INSERT_RESPONSE host={} user_id={} card_no={} accepted=false error={}",
+                                IntelbrasHttpSupport.maskHost(host), userIdSent, cardNoSent, safe(exception.getMessage()));
+                    }
                 }
             }
         }
@@ -800,6 +1108,80 @@ public class IntelbrasCgiClient {
         return value.replaceAll("(?i)(password|senha)=([^\\s,;]+)", "$1=***");
     }
 
+    /**
+     * Detects and removes a conflicting AccessControlCard record that uses the same CardNo
+     * but belongs to a different UserID (stale record from a previous sync with the old
+     * CPF[0:10] strategy). Called as a fallback when INSERT fails with 400.
+     *
+     * @return true if a conflict was found and the stale record was deleted, false otherwise
+     */
+    private boolean tryResolveCardNoConflict(String host, String username, String password,
+                                              String cardNo, String ownerUserId) {
+        if (cardNo == null || cardNo.isBlank()) {
+            return false;
+        }
+        try {
+            var path = "/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.CardNo=" + encode(cardNo);
+            var body = getText(host, username, password, path);
+            var records = IntelbrasRecordFinderParser.parseRecords(body);
+            for (var record : records) {
+                var recNo = text(record, "RecNo");
+                var conflictingUserId = text(record, "UserID");
+                if (recNo == null || recNo.isBlank()) {
+                    continue;
+                }
+                if (ownerUserId.equalsIgnoreCase(conflictingUserId)) {
+                    continue; // same user — not a conflict
+                }
+                // Different UserID owns this CardNo — delete the stale record
+                var deletePath = "/cgi-bin/recordUpdater.cgi?action=remove&name=AccessControlCard&recno=" + encode(recNo);
+                var deleteResponse = getText(host, username, password, deletePath);
+                ensureCgiBodyAccepted(host, deletePath, deleteResponse);
+                log.info("CARDNO_CONFLICT_RESOLVED device_host={} card_no={} old_user_id={} new_user_id={} recno={}",
+                        IntelbrasHttpSupport.maskHost(host), cardNo, conflictingUserId, ownerUserId, recNo);
+                return true;
+            }
+        } catch (Exception ex) {
+            log.warn("CARDNO_CONFLICT_CHECK_FAILED host={} card_no={} owner_user_id={} error={} — skipping conflict resolution",
+                    IntelbrasHttpSupport.maskHost(host), cardNo, ownerUserId, safe(ex.getMessage()));
+        }
+        return false;
+    }
+
+    private String normalizeCardNoForUpsert(String userId, String cardNo) {
+        var cardNoDigits = digits(cardNo);
+        var userIdDigits = digits(userId);
+        if (!cardNoDigits.isBlank() && !(userIdDigits.length() == 11 && cardNoDigits.equals(userIdDigits))) {
+            // 6-digit CardNo = UUID_DERIVED (shortNumeric); longer = physical card
+            var source = cardNoDigits.length() == 6 ? "UUID_DERIVED" : "PHYSICAL_CARD";
+            log.info("CARDNO_SOURCE source={} user_id={} card_no={} card_no_raw={}",
+                    source, userIdDigits, cardNoDigits, safe(cardNo));
+            return cardNoDigits;
+        }
+        var derived = cardNoForUserIdWithoutPhysicalCard(userId);
+        log.info("CARDNO_SOURCE source=DOCUMENT_DERIVED_FALLBACK user_id={} card_no={} physical_card_raw={}",
+                userIdDigits, derived, safe(cardNo));
+        return derived;
+    }
+
+    private String cardNoForUserIdWithoutPhysicalCard(String userId) {
+        var derived = IntelbrasIdentityCodec.cardNoFromDocument(userId);
+        if (!derived.isBlank()) {
+            log.info("CARDNO_DERIVED_FROM_DOCUMENT user_id={} card_no={}", digits(userId), derived);
+            return derived;
+        }
+        var userIdDigits = digits(userId);
+        if (!userIdDigits.isBlank() && userIdDigits.length() <= 10) {
+            return userIdDigits;
+        }
+        throw new IllegalArgumentException("Nao foi possivel derivar CardNo: UserID deve ser CPF com 11 digitos"
+                + " ou identificador numerico curto.");
+    }
+
+    private String digits(String value) {
+        return value == null ? "" : value.replaceAll("\\D", "");
+    }
+
     private String summarize(String value) {
         if (value == null) {
             return "";
@@ -807,7 +1189,19 @@ public class IntelbrasCgiClient {
         return value.length() <= 300 ? value : value.substring(0, 300) + "...";
     }
 
-    private record AccessUserLookup(boolean found, String recNo) {
+    private record AccessUserLookup(boolean found, String recNo, String cardNo) {
+    }
+
+    /**
+     * Authoritative result of clearing a CardNo, verified by re-reading the AccessControlCard registration.
+     * {@code cleared} is true only when a fresh lookup confirms the stored CardNo is empty — never on HTTP 200 alone.
+     */
+    public record CardClearResult(boolean cleared, String recNo, String cardNoBefore, String cardNoAfter,
+                                  boolean userExists) {
+    }
+
+    public record AccessUserUpsertResult(String response, String action, String temporaryCardNo,
+                                         boolean usedTemporaryCardNo) {
     }
 
     private record AccessUserPayload(String variant, Map<String, String> params) {

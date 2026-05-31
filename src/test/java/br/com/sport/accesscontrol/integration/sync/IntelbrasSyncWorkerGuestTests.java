@@ -32,6 +32,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class IntelbrasSyncWorkerGuestTests {
@@ -195,12 +197,13 @@ class IntelbrasSyncWorkerGuestTests {
         var guest = completedGuest(null);
         guest.replaceAllowedAreas(new LinkedHashSet<>());
         when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
-        when(provider.syncPerson(any())).thenReturn(failed("Visitante sem áreas permitidas"));
 
         worker.process(new IntelbrasSyncMessage(PersonType.GUEST, guest.getId(), 1));
 
         assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.SYNC_FAILED);
-        assertThat(guest.getLastSyncError()).contains("Visitante sem áreas permitidas");
+        assertThat(guest.getLastSyncError()).contains("Nenhuma catraca encontrada para o camarote selecionado");
+        assertThat(guest.getSyncTargetCount()).isZero();
+        verify(provider, never()).syncPerson(any());
     }
 
     @Test
@@ -242,6 +245,7 @@ class IntelbrasSyncWorkerGuestTests {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+        guest.replaceAllowedAreas(new LinkedHashSet<>(List.of(area("Front 1", true))));
         return guest;
     }
 

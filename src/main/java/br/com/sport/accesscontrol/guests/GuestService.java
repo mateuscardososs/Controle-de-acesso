@@ -104,7 +104,7 @@ public class GuestService {
         var guest = guestRepository.save(new Guest(
                 request.fullName(), normalizedCpf, request.email(), request.phone(), request.company(),
                 request.visitReason(), request.hostName(), request.visitStart(), request.visitEnd(),
-                resolveInvitedDay(request.invitedDay(), request.visitStart()), normalize(request.invitedLounge())
+                resolveInvitedDay(request.invitedDay(), request.visitStart()), canonicalInvitedLounge(request.invitedLounge())
         ));
         applyAllowedAreas(guest);
         validateResolvedAllowedAreas(guest);
@@ -153,6 +153,11 @@ public class GuestService {
         var guest = registration.guest();
         auditService.record("PUBLIC_GUEST_FACE_UPLOADED", "Guest", guest.getId(),
                 Map.of("facePhotoUrl", registration.facePhotoUrl()), registration.oldData(), snapshot(guest));
+
+        if (loungeAreaResolver != null && loungeAreaResolver.isCollaboratorLounge(guest.getInvitedLounge())) {
+            log.info("PUBLIC_GUEST_REGISTERED_AS_COLLABORATOR guest_id={} cpf={}",
+                    guest.getId(), guest.getCpf());
+        }
 
         auditService.record("PUBLIC_GUEST_CREATED", "Guest", guest.getId(), Map.of("source", "public-home"), Map.of(), snapshot(guest));
         realtimePublisherService.publishSystemAlert(new SystemAlertMessage(
@@ -233,7 +238,7 @@ public class GuestService {
         var normalizedCpf = CpfValidator.normalizeOrThrow(request.cpf());
         guest.update(request.fullName(), normalizedCpf, request.email(), request.phone(), request.company(),
                 request.visitReason(), request.hostName(), request.visitStart(), request.visitEnd(),
-                resolveInvitedDay(request.invitedDay(), request.visitStart()), normalize(request.invitedLounge()),
+                resolveInvitedDay(request.invitedDay(), request.visitStart()), canonicalInvitedLounge(request.invitedLounge()),
                 request.status());
         applyAllowedAreas(guest);
         validateResolvedAllowedAreas(guest);
@@ -258,11 +263,19 @@ public class GuestService {
             if (!loungeConfig.isValid(guest.getInvitedLounge())) {
                 throw new IllegalArgumentException("Camarote inválido");
             }
-            if (!containsAreaName(activeAllowedAreas, LoungeAreaResolver.GENERAL_AREA_NAME)) {
-                throw new IllegalArgumentException("Área base Portaria não configurada.");
-            }
-            if (!containsAreaName(activeAllowedAreas, guest.getInvitedLounge())) {
-                throw new IllegalArgumentException("Área ativa do camarote não configurada: " + guest.getInvitedLounge());
+            if (!loungeAreaResolver.isCollaboratorLounge(guest.getInvitedLounge())) {
+                // For regular lounge guests, check that Portaria and the lounge area exist.
+                if (!containsAreaName(activeAllowedAreas, LoungeAreaResolver.GENERAL_AREA_NAME)) {
+                    log.warn("LOUNGE_AREA_NOT_CONFIGURED guest_id={} invited_lounge={} reason=portaria_missing — área Portaria não encontrada no DB; sync continuará mas pode não atingir nenhum dispositivo.",
+                            guest.getId(), guest.getInvitedLounge());
+                }
+                if (!containsLoungeArea(activeAllowedAreas, guest.getInvitedLounge())) {
+                    log.warn("LOUNGE_AREA_NOT_CONFIGURED guest_id={} invited_lounge={} resolved_areas=[{}] — área do camarote não encontrada no DB; sync usará apenas áreas resolvidas (provavelmente Portaria). Configure uma área com o nome do camarote para rotear corretamente.",
+                            guest.getId(), guest.getInvitedLounge(),
+                            activeAllowedAreas.stream().map(Area::getName).collect(Collectors.joining(",")));
+                    throw new IllegalArgumentException("Área ativa do camarote não configurada: "
+                            + guest.getInvitedLounge());
+                }
             }
         }
         if (guest.getStatus() == GuestStatus.COMPLETED && activeAllowedAreas.isEmpty()) {
@@ -299,6 +312,13 @@ public class GuestService {
         return areas.stream()
                 .map(Area::getName)
                 .anyMatch(areaName -> areaName != null && areaName.trim().equalsIgnoreCase(name.trim()));
+    }
+
+    private boolean containsLoungeArea(List<Area> areas, String invitedLounge) {
+        if (loungeAreaResolver == null) {
+            return containsAreaName(areas, invitedLounge);
+        }
+        return areas.stream().anyMatch(area -> loungeAreaResolver.matchesLoungeArea(area, invitedLounge));
     }
 
     @Transactional
@@ -418,11 +438,22 @@ public class GuestService {
 
     @Transactional
     public GuestResponse requestSync(UUID id) {
-        var guest = getById(id);
+        var guest = guestRepository.findByIdWithAllowedAreas(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Guest not found: " + id));
+        log.info("GUEST_SYNC_AREAS_LOADED guest_id={} area_count={}",
+                id, guest.getAllowedAreas() == null ? 0 : guest.getAllowedAreas().size());
+        var facePresent = !isBlank(guest.getFacePhotoUrl());
+        var areasCount = guest.getAllowedAreas() == null ? 0 : guest.getAllowedAreas().size();
+        var eligible = guest.getStatus() == GuestStatus.COMPLETED && facePresent;
+        var eligibilityReason = guest.getStatus() != GuestStatus.COMPLETED ? "status_not_completed"
+                : !facePresent ? "face_photo_missing" : "ok";
+        log.info("GUEST_SYNC_ELIGIBILITY guest_id={} status={} sync_status={} face_photo_url_present={} invited_lounge={} allowed_area_count={} eligible={} reason={}",
+                id, guest.getStatus(), guest.getSyncStatus(), facePresent,
+                guest.getInvitedLounge(), areasCount, eligible, eligibilityReason);
         if (guest.getStatus() != GuestStatus.COMPLETED) {
             throw new IllegalArgumentException("Visitante precisa estar completo para sincronizar.");
         }
-        if (isBlank(guest.getFacePhotoUrl())) {
+        if (!facePresent) {
             throw new IllegalArgumentException("Visitante precisa enviar foto facial antes da sincronização.");
         }
         var oldData = snapshot(guest);
@@ -443,6 +474,10 @@ public class GuestService {
                 oldData,
                 snapshot(guest));
         eventPublisher.publishEvent(new GuestReadyForSyncEvent(guest.getId()));
+        log.info("GUEST_SYNC_ENQUEUED guest_id={} cpf={} invited_lounge={} allowed_area_count={} operator={}",
+                guest.getId(), guest.getCpf(), guest.getInvitedLounge(),
+                guest.getAllowedAreas() == null ? 0 : guest.getAllowedAreas().size(),
+                authenticatedUser());
         return GuestResponse.from(guest, null);
     }
 
@@ -538,7 +573,7 @@ public class GuestService {
                 invitedAccessStart(resolvedInvitedDay),
                 invitedAccessEnd(resolvedInvitedDay),
                 resolvedInvitedDay,
-                invitedLounge.trim()
+                canonicalInvitedLounge(invitedLounge)
         ));
         applyAllowedAreas(guest);
         validateResolvedAllowedAreas(guest);
@@ -606,6 +641,11 @@ public class GuestService {
 
     private String normalize(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private String canonicalInvitedLounge(String value) {
+        var canonical = loungeConfig.canonicalName(value);
+        return canonical == null ? normalize(value) : canonical;
     }
 
     private String onlyDigits(String value) {

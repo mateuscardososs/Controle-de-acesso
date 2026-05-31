@@ -86,6 +86,60 @@ class GuestAdminVisitorRegistrationTests {
     }
 
     @Test
+    void adminFront3AliasStoresFront2AndResolvesFront2Area() {
+        var service = serviceWithAreas("Portaria", "Front 1", "Front 2");
+
+        var response = service.adminVisitorRegistration(
+                "Visitante Front 3 Visual",
+                "52998224725",
+                "front3@empresa.local",
+                "81999990000",
+                LocalDate.of(2026, 6, 10),
+                "Front 3",
+                photo()
+        );
+
+        assertThat(response.invitedLounge()).isEqualTo("Front 2");
+        assertThat(response.allowedAreaNames()).containsExactly("Portaria", "Front 2");
+    }
+
+    @Test
+    void adminInstitucional1ResolvesInstrucionalAreaAlias() {
+        var service = serviceWithAreas("Portaria", "Instrucional 1");
+
+        var response = service.adminVisitorRegistration(
+                "Visitante Institucional",
+                "52998224725",
+                "institucional@empresa.local",
+                "81999990000",
+                LocalDate.of(2026, 6, 10),
+                "Institucional 1",
+                photo()
+        );
+
+        assertThat(response.invitedLounge()).isEqualTo("Institucional 1");
+        assertThat(response.allowedAreaNames()).containsExactly("Portaria", "Instrucional 1");
+    }
+
+    @Test
+    void adminInstitucionalVereadoresResolvesInstrucionalAreaAlias() {
+        var service = serviceWithAreas("Portaria", "Instrucional Vereadores");
+
+        var response = service.adminVisitorRegistration(
+                "Visitante Vereadores",
+                "52998224725",
+                "vereadores@empresa.local",
+                "81999990000",
+                LocalDate.of(2026, 6, 10),
+                "Institucional Vereadores",
+                photo()
+        );
+
+        assertThat(response.invitedLounge()).isEqualTo("Institucional Vereadores");
+        assertThat(response.allowedAreaNames()).containsExactly("Portaria", "Instrucional Vereadores");
+    }
+
+    @Test
     void adminRegistrationRejectsInvalidCpf() {
         var service = serviceWithAreas("Portaria", "Front 1");
 
@@ -142,6 +196,66 @@ class GuestAdminVisitorRegistrationTests {
     }
 
     @Test
+    void colaboradorRegistrationGetsAllActiveAreas() {
+        var service = serviceWithAreas("Portaria", "Front 1", "Front 2", "Institucional 1");
+
+        var response = service.adminVisitorRegistration(
+                "Colaborador Teste",
+                "52998224725",
+                "colaborador@empresa.local",
+                "81999990000",
+                LocalDate.of(2026, 6, 10),
+                "Colaborador",
+                photo()
+        );
+
+        assertThat(response.status()).isEqualTo(GuestStatus.COMPLETED);
+        assertThat(response.syncStatus()).isEqualTo(SyncStatus.PENDING_SYNC);
+        assertThat(response.invitedLounge()).isEqualTo("Colaborador");
+        // Collaborator gets ALL active areas — Portaria, Front 1, Front 2, Institucional 1
+        assertThat(response.allowedAreaNames()).containsExactlyInAnyOrder(
+                "Portaria", "Front 1", "Front 2", "Institucional 1");
+    }
+
+    @Test
+    void colaboradorRegistrationIsAcceptedByPublicFlow() {
+        var service = serviceWithAreas("Portaria", "Front 1", "Front 2");
+
+        // Collaborator lounge is always valid regardless of app.lounges list
+        var response = service.adminVisitorRegistration(
+                "Colaborador Operacional",
+                "52998224725",
+                null,
+                "81999990000",
+                LocalDate.of(2026, 6, 10),
+                "Colaborador",
+                photo()
+        );
+
+        assertThat(response.status()).isEqualTo(GuestStatus.COMPLETED);
+        assertThat(response.allowedAreaNames()).containsExactlyInAnyOrder("Portaria", "Front 1", "Front 2");
+    }
+
+    @Test
+    void regularVisitorRegistrationUnaffectedByColaboradorAddition() {
+        // Verify that existing visitor lounge sync is not broken
+        var service = serviceWithAreas("Portaria", "Front 1", "Front 2");
+
+        var response = service.adminVisitorRegistration(
+                "Visitante Normal",
+                "52998224725",
+                null,
+                "81999990000",
+                LocalDate.of(2026, 6, 10),
+                "Front 1",
+                photo()
+        );
+
+        assertThat(response.allowedAreaNames()).containsExactly("Portaria", "Front 1");
+        assertThat(response.allowedAreaNames()).doesNotContain("Front 2");
+    }
+
+    @Test
     void adminRegistrationRejectsInvalidLounge() {
         var service = serviceWithAreas("Portaria", "Front 1", "Front 2", "Institucional 1", "Institucional Vereadores");
 
@@ -151,7 +265,7 @@ class GuestAdminVisitorRegistrationTests {
                 "camarote@empresa.local",
                 "81999990000",
                 LocalDate.of(2026, 6, 10),
-                "Front 3",
+                "Área VIP",
                 photo()
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Camarote inválido");
@@ -194,7 +308,7 @@ class GuestAdminVisitorRegistrationTests {
         ReflectionTestUtils.setField(guest, "id", UUID.randomUUID());
         guest.completeRegistration("81999990000", null, "/uploads/faces/admin.png");
         guest.replaceAllowedAreas(java.util.Set.of(area("Portaria")));
-        when(guestRepository.findById(guest.getId())).thenReturn(Optional.of(guest));
+        when(guestRepository.findByIdWithAllowedAreas(guest.getId())).thenReturn(Optional.of(guest));
         when(guestRepository.save(any(Guest.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         var response = service.requestSync(guest.getId());
@@ -236,6 +350,8 @@ class GuestAdminVisitorRegistrationTests {
             String name = invocation.getArgument(0);
             return Optional.ofNullable(areas.get(name.toLowerCase(java.util.Locale.ROOT)));
         });
+        // Required for Colaborador path which calls resolveAllForEmployee() → findAllByActiveTrue()
+        when(areaRepository.findAllByActiveTrue()).thenReturn(new java.util.ArrayList<>(areas.values()));
 
         return new GuestService(
                 guestRepository,
