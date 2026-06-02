@@ -71,6 +71,11 @@ public class EmployeeController {
         return employeeService.update(id, request);
     }
 
+    @PatchMapping("/{id}")
+    EmployeeResponse patch(@PathVariable UUID id, @Valid @RequestBody EmployeePatchRequest request) {
+        return employeeService.patch(id, request);
+    }
+
     @PatchMapping("/{id}/deactivate")
     EmployeeResponse deactivate(@PathVariable UUID id) {
         return employeeService.deactivate(id);

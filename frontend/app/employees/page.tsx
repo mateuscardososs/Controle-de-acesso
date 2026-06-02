@@ -12,16 +12,19 @@ import { Modal } from "@/src/components/ui/Modal";
 import { DataTable } from "@/src/components/shared/DataTable";
 import { StatusBadge } from "@/src/components/shared/StatusBadge";
 import { CameraCapture } from "@/src/components/shared/CameraCapture";
+import { EmployeeEditModal } from "@/src/components/employees/EmployeeEditModal";
 import { employeeService, Employee } from "@/services/employeeService";
+import { areaService } from "@/services/areaService";
 import { adminCleanupService } from "@/services/adminCleanupService";
 import { authService } from "@/services/authService";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 export default function EmployeesPage() {
   const queryClient = useQueryClient();
   const employees = useQuery({ queryKey: ["employees"], queryFn: employeeService.list });
+  const areas = useQuery({ queryKey: ["areas"], queryFn: areaService.list });
   const user = useQuery({ queryKey: ["me"], queryFn: authService.me, retry: false });
   const canManage = user.data?.role === "ADMIN" || user.data?.role === "HR";
   const canCleanup = user.data?.role === "ADMIN";
@@ -37,6 +40,8 @@ export default function EmployeesPage() {
   const [message, setMessage] = useState("");
   const [open, setOpen] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [toastError, setToastError] = useState("");
 
   const [confirmDelete, setConfirmDelete] = useState<Employee | null>(null);
   const [deleteError, setDeleteError] = useState("");
@@ -95,6 +100,12 @@ export default function EmployeesPage() {
     onError: (error) => setCleanupError(apiErrorMessage(error, "Não foi possível limpar colaboradores."))
   });
 
+  useEffect(() => {
+    if (!toastError) return;
+    const timeout = window.setTimeout(() => setToastError(""), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [toastError]);
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     create.mutate();
@@ -114,6 +125,30 @@ export default function EmployeesPage() {
     setCleanupConfirmation("");
     setCleanupError("");
     cleanupEmployees.reset();
+  }
+
+  async function saveEmployeeEdit(values: {
+    id: string;
+    fullName: string;
+    email: string;
+    phone?: string;
+    jobTitle?: string;
+    allowedAreaIds: string[];
+    areasChanged: boolean;
+  }) {
+    const updated = await employeeService.update(values.id, {
+      fullName: values.fullName,
+      email: values.email,
+      phone: values.phone,
+      jobTitle: values.jobTitle,
+      allowedAreaIds: values.allowedAreaIds
+    });
+    const finalEmployee = values.areasChanged ? await employeeService.sync(values.id) : updated;
+    queryClient.setQueryData<Employee[]>(["employees"], (current) =>
+      current?.map((employee) => employee.id === values.id ? finalEmployee : employee)
+    );
+    await queryClient.invalidateQueries({ queryKey: ["employees"] });
+    setMessage(values.areasChanged ? "Colaborador salvo. Sincronização enfileirada." : "Colaborador salvo.");
   }
 
   const filteredEmployees = (employees.data ?? []).filter((employee) => {
@@ -214,7 +249,7 @@ export default function EmployeesPage() {
                       variant="ghost"
                       icon={Pencil}
                       className="h-9 px-4 text-sm"
-                      disabled
+                      onClick={() => { setEditingEmployee(employee); setMessage(""); }}
                     >
                       Editar
                     </Button>
@@ -266,6 +301,15 @@ export default function EmployeesPage() {
           </div>
         </form>
       </Modal>
+
+      <EmployeeEditModal
+        employee={editingEmployee}
+        areas={areas.data ?? []}
+        open={!!editingEmployee}
+        onClose={() => setEditingEmployee(null)}
+        onSave={saveEmployeeEdit}
+        onServerError={setToastError}
+      />
 
       <Modal
         title="Desativar colaborador"
@@ -336,6 +380,11 @@ export default function EmployeesPage() {
           </div>
         </form>
       </Modal>
+      {toastError ? (
+        <div className="fixed right-4 top-4 z-[70] max-w-sm rounded-xl border border-red-300/25 bg-red-950/90 px-4 py-3 text-sm font-medium text-red-100 shadow-enterprise backdrop-blur">
+          {toastError}
+        </div>
+      ) : null}
     </AdminShell>
   );
 }

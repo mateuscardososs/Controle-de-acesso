@@ -120,8 +120,10 @@ class IntelbrasRealProviderValidityTests {
     }
 
     private void acceptVerification(IntelbrasCgiClient cgiClient) {
-        when(cgiClient.findAccessControlCards(anyString(), anyString(), anyString(), anyString()))
-                .thenAnswer(invocation -> List.of(Map.of("UserID", invocation.getArgument(3, String.class))));
+        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(true);
+        when(cgiClient.isCardAssociatedWithUser(anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(true);
     }
 
     private Device device() {

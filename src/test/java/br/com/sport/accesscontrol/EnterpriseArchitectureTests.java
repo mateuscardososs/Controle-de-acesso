@@ -1207,7 +1207,9 @@ class EnterpriseArchitectureTests {
     void intelbrasSyncWorkerMarksEmployeeSyncedAndPublishesAuditAndRealtime() {
         var employee = new Employee("Colaborador", "123", null, null, null, null, null,
                 Instant.now(), Instant.now().plusSeconds(3600));
+        // cardNo é o cartão RFID físico (não usado para Intelbras); intelbrasCardNo é o que vai para a controladora
         employee.setCardNo("445566");
+        employee.setIntelbrasCardNo("4455667788");
         ReflectionTestUtils.setField(employee, "id", UUID.randomUUID());
         var employeeRepository = mock(EmployeeRepository.class);
         var provider = mock(AccessControlProvider.class);
@@ -1222,7 +1224,7 @@ class EnterpriseArchitectureTests {
         assertThat(employee.getSyncStatus()).isEqualTo(SyncStatus.SYNCED);
         verify(employeeRepository).save(employee);
         verify(provider).syncPerson(argThat(person ->
-                "445566".equals(person.cardNo())
+                "4455667788".equals(person.cardNo())   // intelbrasCardNo, não o cartão RFID físico
                         && person.validFrom().equals(employee.getAccessValidFrom())
                         && person.validUntil().equals(employee.getAccessValidUntil())
         ));

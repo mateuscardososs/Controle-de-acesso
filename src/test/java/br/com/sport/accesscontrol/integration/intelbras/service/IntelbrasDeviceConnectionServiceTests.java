@@ -48,6 +48,7 @@ class IntelbrasDeviceConnectionServiceTests {
 
         assertThat(service.selectOnlineConfiguredDevice(device.getArea().getId())).isEmpty();
         assertThat(service.onlineConfiguredDevices()).isEmpty();
+        assertThat(service.selectOnlineConfiguredDevicesForAreas(Set.of(device.getArea().getId()))).isEmpty();
     }
 
     @Test

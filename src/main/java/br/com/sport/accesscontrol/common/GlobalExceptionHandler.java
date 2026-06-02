@@ -38,6 +38,11 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, exception.getMessage());
     }
 
+    @ExceptionHandler(UnprocessableEntityException.class)
+    ResponseEntity<ApiError> handleUnprocessableEntity(UnprocessableEntityException exception) {
+        return build(HttpStatus.UNPROCESSABLE_ENTITY, exception.getMessage());
+    }
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     ResponseEntity<ApiError> handleUnreadablePayload() {
         return build(HttpStatus.BAD_REQUEST, "Request body is invalid or malformed.");

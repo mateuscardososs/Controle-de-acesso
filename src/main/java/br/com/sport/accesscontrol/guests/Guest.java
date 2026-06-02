@@ -94,6 +94,9 @@ public class Guest extends TimestampedEntity {
     @Column(name = "access_approved_email_message")
     private String accessApprovedEmailMessage;
 
+    @Column(name = "intelbras_card_no", length = 10, unique = true)
+    private String intelbrasCardNo;
+
     @ManyToMany(fetch = FetchType.LAZY)
     @JoinTable(
             name = "guest_allowed_areas",
@@ -284,6 +287,14 @@ public class Guest extends TimestampedEntity {
 
     public boolean hasAccessApprovedEmailBeenSent() {
         return accessApprovedEmailSentAt != null;
+    }
+
+    public String getIntelbrasCardNo() {
+        return intelbrasCardNo;
+    }
+
+    public void setIntelbrasCardNo(String intelbrasCardNo) {
+        this.intelbrasCardNo = intelbrasCardNo;
     }
 
     public void markAccessApprovedEmail(String status, String message, boolean sent) {

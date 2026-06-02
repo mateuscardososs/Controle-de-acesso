@@ -22,4 +22,14 @@ class GlobalExceptionHandlerTests {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().status()).isEqualTo(404);
     }
+
+    @Test
+    void unprocessableEntityReturnsHttp422() {
+        var response = handler.handleUnprocessableEntity(new UnprocessableEntityException("Foto facial inválida."));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().status()).isEqualTo(422);
+        assertThat(response.getBody().details()).contains("Foto facial inválida.");
+    }
 }

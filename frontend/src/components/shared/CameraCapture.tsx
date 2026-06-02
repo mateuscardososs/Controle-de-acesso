@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Camera, CheckCircle2, Image, Loader2, RotateCcw, Upload, Video, X, XCircle } from "lucide-react";
 import { Button } from "@/src/components/ui/Button";
+import { faceService, type FaceValidationChecks } from "@/services/faceService";
 
 type CameraCaptureProps = {
   value: File | null;
@@ -13,43 +14,30 @@ type CameraCaptureProps = {
 };
 
 type ActiveTab = "camera" | "upload";
-type QualityStatus = "idle" | "validating" | "approved" | "rejected";
-type QualityCheckStatus = "pending" | "pass" | "fail" | "skipped";
-type QualityCheckKey = "lighting" | "size" | "face" | "contrast";
-type QualityChecks = Record<QualityCheckKey, QualityCheckStatus>;
+type QualityStatus = "idle" | "validating" | "approved" | "rejected" | "error";
 type QualityState = {
   status: QualityStatus;
   message: string;
-  checks: QualityChecks;
-};
-type FaceDetectorResult = {
-  boundingBox?: DOMRectReadOnly;
-};
-type FaceDetectorConstructor = new (options?: { fastMode?: boolean; maxDetectedFaces?: number }) => {
-  detect: (image: HTMLImageElement | HTMLCanvasElement | ImageBitmap | VideoFrame) => Promise<FaceDetectorResult[]>;
+  checks?: FaceValidationChecks;
 };
 
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB — alinhado com FaceStorageService
-const MIN_LUMINANCE = 60;
-const MIN_IMAGE_SIZE = 200;
-const MIN_CONTRAST_STD_DEV = 20;
-const APPROVED_QUALITY_MESSAGE = "Foto aprovada! Rosto identificado com sucesso.";
-const VALIDATING_QUALITY_MESSAGE = "Verificando qualidade da foto...";
-const QUALITY_FAILURE_PRIORITY: QualityCheckKey[] = ["lighting", "size", "contrast", "face"];
-const QUALITY_FAILURE_MESSAGES: Record<QualityCheckKey, string> = {
-  lighting: "Foto muito escura. Vá para um lugar com mais luz e tente novamente.",
-  size: "Foto muito pequena. Aproxime o rosto da câmera.",
-  contrast: "Foto sem contraste suficiente. Verifique a iluminação e o fundo.",
-  face: "Nenhum rosto detectado. Centralize seu rosto na câmera e tente novamente."
-};
+const VALIDATING_MESSAGE = "Validando a foto no servidor...";
+const BACKEND_ERROR_MESSAGE = "Não foi possível validar a foto agora. Tente novamente.";
 
-declare global {
-  interface Window {
-    FaceDetector?: FaceDetectorConstructor;
-  }
-}
+// Rótulos das checagens reais retornadas pelo backend (sem decisão no client).
+const CHECK_LABELS: { key: keyof FaceValidationChecks; label: string }[] = [
+  { key: "faceDetected", label: "Rosto detectado" },
+  { key: "singleFace", label: "Apenas um rosto" },
+  { key: "brightnessOk", label: "Iluminação" },
+  { key: "sharpnessOk", label: "Nitidez" },
+  { key: "contrastOk", label: "Contraste" },
+  { key: "centeredOk", label: "Centralização" },
+  { key: "sizeOk", label: "Tamanho do rosto" },
+  { key: "faceFullyVisibleOk", label: "Rosto descoberto" }
+];
 
 function isCameraAvailable(): boolean {
   if (typeof window === "undefined") return false;
@@ -62,7 +50,7 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
   const [activeTab, setActiveTab] = useState<ActiveTab>(cameraSupported ? "camera" : "upload");
   const [cameraActive, setCameraActive] = useState(false);
   const [candidateFile, setCandidateFile] = useState<File | null>(null);
-  const [quality, setQuality] = useState<QualityState>(emptyQualityState);
+  const [quality, setQuality] = useState<QualityState>({ status: "idle", message: "" });
   const [error, setError] = useState("");
   const [uploadError, setUploadError] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -83,7 +71,6 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
     return () => stopCamera();
   }, []);
 
-  // Para a câmera ao mudar de aba
   function handleTabChange(tab: ActiveTab) {
     if (tab === "upload") stopCamera();
     setActiveTab(tab);
@@ -158,6 +145,7 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // Pré-checagem visual apenas (formato/tamanho). A DECISÃO de aprovação é do backend.
     const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
     if (!ALLOWED_TYPES.includes(file.type) && !ALLOWED_EXTENSIONS.includes(ext)) {
       setUploadError("Formato inválido. Use JPG, PNG ou WEBP.");
@@ -183,49 +171,44 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
     const runId = validationRunRef.current + 1;
     validationRunRef.current = runId;
     setCandidateFile(file);
-    setQuality({ status: "validating", message: VALIDATING_QUALITY_MESSAGE, checks: pendingQualityChecks() });
+    setQuality({ status: "validating", message: VALIDATING_MESSAGE });
     onChange(null);
 
     try {
-      const result = await validatePhotoQuality(file);
+      const result = await faceService.validate(file);
       if (validationRunRef.current !== runId) return;
-      setQuality(result);
-      if (result.status === "approved") {
+
+      if (result.approved) {
+        setQuality({ status: "approved", message: result.message, checks: result.checks });
         setCandidateFile(null);
         onChange(file);
         return;
       }
+      // Reprovado pelo backend — mostra o motivo real e NÃO aceita a foto.
+      setQuality({ status: "rejected", message: result.message, checks: result.checks });
       onChange(null);
-    } catch (qualityError) {
-      console.warn("FACE_PHOTO_QUALITY_VALIDATION_SKIPPED", qualityError);
+    } catch (validationError) {
       if (validationRunRef.current !== runId) return;
-      setQuality({
-        status: "approved",
-        message: APPROVED_QUALITY_MESSAGE,
-        checks: {
-          lighting: "skipped",
-          size: "skipped",
-          face: "skipped",
-          contrast: "skipped"
-        }
-      });
-      setCandidateFile(null);
-      onChange(file);
+      // Erro de backend/rede: NUNCA aprovar automaticamente.
+      console.warn("FACE_PHOTO_BACKEND_VALIDATION_FAILED", validationError);
+      setQuality({ status: "error", message: BACKEND_ERROR_MESSAGE });
+      onChange(null);
     }
   }
 
   function clearPhoto() {
     validationRunRef.current += 1;
     setCandidateFile(null);
-    setQuality(emptyQualityState());
+    setQuality({ status: "idle", message: "" });
     onChange(null);
   }
+
+  const rejectedOrError = quality.status === "rejected" || quality.status === "error";
 
   // ─── Render ───────────────────────────────────────────────────────
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
-      {/* Abas — só mostra se câmera for suportada */}
       {cameraSupported && (
         <div className="mb-3 flex gap-1 rounded-xl bg-white/5 p-1">
           <TabButton active={activeTab === "camera"} onClick={() => handleTabChange("camera")} icon={Video} label="Câmera ao vivo" />
@@ -233,7 +216,6 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
         </div>
       )}
 
-      {/* Aviso quando câmera não está disponível (HTTP fora de localhost) */}
       {!cameraSupported && (
         <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-300/20 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-100">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
@@ -282,13 +264,13 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
             {preview && (
               <Button
                 type="button"
-                variant={quality.status === "rejected" ? "danger" : "secondary"}
+                variant={rejectedOrError ? "danger" : "secondary"}
                 icon={RotateCcw}
-                className={quality.status === "rejected" ? "ring-1 ring-red-300/30" : undefined}
+                className={rejectedOrError ? "ring-1 ring-red-300/30" : undefined}
                 disabled={disabled || quality.status === "validating"}
                 onClick={retakeFromCamera}
               >
-                {quality.status === "rejected" ? "Tirar nova foto" : "Refazer"}
+                {rejectedOrError ? "Tirar nova foto" : "Refazer"}
               </Button>
             )}
           </div>
@@ -298,7 +280,6 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
       {/* ─── ABA UPLOAD / CÂMERA NATIVA ─── */}
       {(activeTab === "upload" || !cameraSupported) && (
         <>
-          {/* Preview da imagem selecionada */}
           {preview ? (
             <div className="relative overflow-hidden rounded-xl border border-white/10 bg-slate-950">
               <img src={preview} alt="Foto selecionada" className="h-64 w-full object-cover" />
@@ -314,7 +295,6 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
               )}
             </div>
           ) : (
-            /* Área de clique / drop */
             <button
               type="button"
               disabled={disabled}
@@ -340,7 +320,6 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
             </div>
           )}
 
-          {/* Input escondido — capture="user" abre câmera frontal no celular */}
           <input
             ref={fileInputRef}
             type="file"
@@ -355,13 +334,13 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
             {preview ? (
               <Button
                 type="button"
-                variant={quality.status === "rejected" ? "danger" : "secondary"}
+                variant={rejectedOrError ? "danger" : "secondary"}
                 icon={RotateCcw}
-                className={quality.status === "rejected" ? "ring-1 ring-red-300/30" : undefined}
+                className={rejectedOrError ? "ring-1 ring-red-300/30" : undefined}
                 disabled={disabled || quality.status === "validating"}
                 onClick={() => fileInputRef.current?.click()}
               >
-                {quality.status === "rejected" ? "Tirar nova foto" : "Trocar foto"}
+                {rejectedOrError ? "Tirar nova foto" : "Trocar foto"}
               </Button>
             ) : (
               <Button type="button" variant="secondary" icon={Upload} disabled={disabled} onClick={() => fileInputRef.current?.click()}>
@@ -394,203 +373,48 @@ function QualityFeedback({ quality }: { quality: QualityState }) {
   }
 
   const approved = quality.status === "approved";
-  const rejected = quality.status === "rejected";
-  const message = qualityMessage(quality);
-  const hasVisibleChecks = Object.values(quality.checks).some((status) => status !== "skipped");
+  const validating = quality.status === "validating";
 
   return (
     <div className={`mt-3 rounded-xl border p-3 ${
       approved
         ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-100"
-        : rejected
-          ? "border-red-300/20 bg-red-500/12 text-red-100"
-          : "border-white/10 bg-white/[0.055] text-slate-200"
+        : validating
+          ? "border-white/10 bg-white/[0.055] text-slate-200"
+          : "border-red-300/20 bg-red-500/12 text-red-100"
     }`}>
       <div className="flex items-start gap-2 text-sm font-semibold">
-        {quality.status === "validating" ? (
+        {validating ? (
           <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-slate-300" />
         ) : approved ? (
           <CheckCircle2 className="mt-0.5 h-4 w-4 text-emerald-300" />
         ) : (
           <XCircle className="mt-0.5 h-4 w-4 text-red-300" />
         )}
-        <span>{message}</span>
+        <span>{quality.message}</span>
       </div>
-      {hasVisibleChecks ? (
+      {quality.checks && !validating ? (
         <div className="mt-3 grid gap-2 text-xs font-medium text-slate-300 sm:grid-cols-2">
-          <QualityPill checkKey="lighting" label="Iluminação" status={quality.checks.lighting} />
-          <QualityPill checkKey="size" label="Tamanho" status={quality.checks.size} />
-          <QualityPill checkKey="contrast" label="Contraste" status={quality.checks.contrast} />
-          <QualityPill checkKey="face" label="Rosto" status={quality.checks.face} />
+          {CHECK_LABELS.map(({ key, label }) => (
+            <CheckPill key={key} label={label} ok={Boolean(quality.checks?.[key])} />
+          ))}
         </div>
       ) : null}
     </div>
   );
 }
 
-function QualityPill({ checkKey, label, status }: { checkKey: QualityCheckKey; label: string; status: QualityCheckStatus }) {
-  if (status === "skipped") {
-    return null;
-  }
-
-  const icon = status === "pass"
-    ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-200" />
-    : status === "fail"
-      ? <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-200" />
-      : <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-500" />;
-  const text = status === "pass"
-    ? `${label}: OK`
-    : status === "fail"
-      ? QUALITY_FAILURE_MESSAGES[checkKey]
-      : `${label}: aguardando`;
-
+function CheckPill({ label, ok }: { label: string; ok: boolean }) {
   return (
     <div className="flex items-start gap-1.5 rounded-lg border border-white/10 bg-black/15 px-2 py-1.5 leading-snug">
-      {icon}
-      <span>{text}</span>
+      {ok ? (
+        <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-200" />
+      ) : (
+        <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-200" />
+      )}
+      <span>{label}: {ok ? "OK" : "ajustar"}</span>
     </div>
   );
-}
-
-function qualityMessage(quality: QualityState): string {
-  if (quality.status === "validating") {
-    return VALIDATING_QUALITY_MESSAGE;
-  }
-  if (quality.status === "approved") {
-    return APPROVED_QUALITY_MESSAGE;
-  }
-  if (quality.status === "rejected") {
-    return firstQualityFailureMessage(quality.checks) ?? quality.message;
-  }
-  return "";
-}
-
-function firstQualityFailureMessage(checks: QualityChecks): string | undefined {
-  for (const check of QUALITY_FAILURE_PRIORITY) {
-    if (checks[check] === "fail") {
-      return QUALITY_FAILURE_MESSAGES[check];
-    }
-  }
-  return undefined;
-}
-
-async function validatePhotoQuality(file: File): Promise<QualityState> {
-  const image = await loadImage(file);
-  const checks = pendingQualityChecks();
-  const width = image.naturalWidth || image.width;
-  const height = image.naturalHeight || image.height;
-
-  checks.size = width >= MIN_IMAGE_SIZE && height >= MIN_IMAGE_SIZE ? "pass" : "fail";
-
-  const metrics = imageMetrics(image, width, height);
-  checks.lighting = metrics.averageLuminance >= MIN_LUMINANCE ? "pass" : "fail";
-  checks.contrast = metrics.standardDeviation >= MIN_CONTRAST_STD_DEV ? "pass" : "fail";
-  checks.face = await detectFace(image);
-
-  if (checks.lighting === "fail") {
-    return rejectQuality(QUALITY_FAILURE_MESSAGES.lighting, checks);
-  }
-  if (checks.size === "fail") {
-    return rejectQuality(QUALITY_FAILURE_MESSAGES.size, checks);
-  }
-  if (checks.contrast === "fail") {
-    return rejectQuality(QUALITY_FAILURE_MESSAGES.contrast, checks);
-  }
-  if (checks.face === "fail") {
-    return rejectQuality(QUALITY_FAILURE_MESSAGES.face, checks);
-  }
-
-  return {
-    status: "approved",
-    message: APPROVED_QUALITY_MESSAGE,
-    checks
-  };
-}
-
-function imageMetrics(image: HTMLImageElement, width: number, height: number) {
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) {
-    throw new Error("Canvas unavailable.");
-  }
-  ctx.drawImage(image, 0, 0, width, height);
-  const pixels = ctx.getImageData(0, 0, width, height).data;
-  let sum = 0;
-  let sumSquares = 0;
-  let count = 0;
-
-  for (let index = 0; index < pixels.length; index += 4) {
-    const luminance = 0.2126 * pixels[index] + 0.7152 * pixels[index + 1] + 0.0722 * pixels[index + 2];
-    sum += luminance;
-    sumSquares += luminance * luminance;
-    count++;
-  }
-
-  const averageLuminance = count ? sum / count : 0;
-  const variance = count ? sumSquares / count - averageLuminance * averageLuminance : 0;
-  return {
-    averageLuminance,
-    standardDeviation: Math.sqrt(Math.max(variance, 0))
-  };
-}
-
-async function detectFace(image: HTMLImageElement): Promise<QualityCheckStatus> {
-  if (typeof window === "undefined" || !window.FaceDetector) {
-    console.warn("FACE_PHOTO_FACEDETECTOR_UNAVAILABLE");
-    return "skipped";
-  }
-  try {
-    const detector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
-    const faces = await detector.detect(image);
-    return faces.length > 0 ? "pass" : "fail";
-  } catch (faceError) {
-    console.warn("FACE_PHOTO_FACEDETECTOR_FAILED", faceError);
-    return "skipped";
-  }
-}
-
-function loadImage(file: File) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new window.Image();
-    const url = URL.createObjectURL(file);
-    image.onload = () => {
-      URL.revokeObjectURL(url);
-      resolve(image);
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Image could not be loaded."));
-    };
-    image.src = url;
-  });
-}
-
-function rejectQuality(message: string, checks: QualityChecks): QualityState {
-  return { status: "rejected", message, checks };
-}
-
-function emptyQualityState(): QualityState {
-  return {
-    status: "idle",
-    message: "",
-    checks: {
-      lighting: "pending",
-      size: "pending",
-      face: "pending",
-      contrast: "pending"
-    }
-  };
-}
-
-function pendingQualityChecks(): QualityChecks {
-  return {
-    lighting: "pending",
-    size: "pending",
-    face: "pending",
-    contrast: "pending"
-  };
 }
 
 // ─── Sub-componente tab ────────────────────────────────────────────────────────

@@ -87,8 +87,10 @@ class IntelbrasRealProviderSyncResultTests {
                     }
                     throw new RuntimeException("CGI error");
                 });
-        when(cgiClient.findAccessControlCards(anyString(), anyString(), anyString(), anyString()))
-                .thenAnswer(invocation -> List.of(Map.of("UserID", invocation.getArgument(3, String.class))));
+        when(cgiClient.isAccessUserPresent(eq("192.168.50.101"), anyString(), anyString(), anyString()))
+                .thenReturn(true);
+        when(cgiClient.isCardAssociatedWithUser(eq("192.168.50.101"), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(true);
 
         // CARD_ONLY employee: upsertAccessUser fails on 9 devices
         var result = provider.syncPerson(personWithCard(PersonType.EMPLOYEE, Set.of(allowedAreaId), "8765432109"));
@@ -181,8 +183,9 @@ class IntelbrasRealProviderSyncResultTests {
         when(faceEncoder.toJpegBase64("/faces/guest.jpg")).thenReturn("base64");
         when(cgiClient.replaceFace(anyString(), anyString(), anyString(), anyString(), eq("base64")))
                 .thenThrow(new RuntimeException("Face add rejected"));
+        when(cgiClient.isFacePresent(anyString(), anyString(), anyString(), anyString())).thenReturn(false);
 
-        // Visitor without a physical card still gets AccessControlCard first, then face.
+        // Visitor without a physical card uses the FACE_ONLY path and fails if face sync fails.
         var result = provider.syncPerson(person(PersonType.GUEST, Set.of(allowedAreaId), "/faces/guest.jpg"));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
@@ -192,10 +195,8 @@ class IntelbrasRealProviderSyncResultTests {
     }
 
     @Test
-    void syncGuestWithoutPhysicalCardUsesUuidDerivedCardNoAndDoesNotClearCardNo() {
-        // PersonId UUID is fixed so shortNumeric(personId) is deterministic in this test
+    void syncGuestWithoutPhysicalCardUsesFaceOnlyAndClearsTemporaryCardNo() {
         var personId = UUID.fromString("aabbccdd-0011-2233-4455-667788990000");
-        var expectedCardNo = br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasIdentityCodec.shortNumeric(personId);
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
         when(faceEncoder.toJpegBase64("/uploads/faces/guest.jpg")).thenReturn("photobase64");
@@ -203,8 +204,8 @@ class IntelbrasRealProviderSyncResultTests {
 
         var result = provider.syncPerson(new ProviderPerson(
                 PersonType.GUEST, personId,
-                "06331315470",              // document = CPF → UserID
-                null,                        // no physical card → CardNo = shortNumeric(personId)
+                "06331315470",              // document = CPF -> UserID
+                null,                        // no physical card -> FACE_ONLY
                 "Visitante Real",
                 "/uploads/faces/guest.jpg",
                 true,
@@ -213,19 +214,18 @@ class IntelbrasRealProviderSyncResultTests {
         ));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
-        assertThat(expectedCardNo).matches("\\d{6}"); // shortNumeric is always 6 digits
-        assertThat(expectedCardNo).isNotEqualTo("0633131547"); // not the old CPF[0:10]
-        verify(cgiClient).upsertAccessUser(anyString(), anyString(), anyString(),
-                eq("06331315470"), eq(expectedCardNo), anyString(), any(), any());
+        verify(cgiClient).upsertFaceOnlyAccessUser(anyString(), anyString(), anyString(),
+                eq("06331315470"), anyString(), any(), any());
+        verify(cgiClient, never()).upsertAccessUser(anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), any(), any());
         verify(cgiClient).replaceFace(anyString(), anyString(), anyString(), eq("06331315470"), eq("photobase64"));
-        verify(cgiClient, never()).clearCardNoForUser(anyString(), anyString(), anyString(),
+        verify(cgiClient).clearCardNoForUser(anyString(), anyString(), anyString(),
                 eq("06331315470"), anyString(), any(), any());
     }
 
     @Test
-    void syncEmployeeWithoutPhysicalCardUsesUuidDerivedCardNoAndDoesNotClearCardNo() {
+    void syncEmployeeWithoutPhysicalCardUsesFaceOnlyAndClearsTemporaryCardNo() {
         var personId = UUID.fromString("11223344-5566-7788-99aa-bbccddeeff00");
-        var expectedCardNo = br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasIdentityCodec.shortNumeric(personId);
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
         when(faceEncoder.toJpegBase64("/uploads/faces/employee.jpg")).thenReturn("empbase64");
@@ -233,8 +233,8 @@ class IntelbrasRealProviderSyncResultTests {
 
         var result = provider.syncPerson(new ProviderPerson(
                 PersonType.EMPLOYEE, personId,
-                "12345678901",               // document = CPF → UserID
-                null,                         // no physical card → CardNo = shortNumeric(personId)
+                "12345678901",               // document = CPF -> UserID
+                null,                         // no physical card -> FACE_ONLY
                 "Colaborador Face",
                 "/uploads/faces/employee.jpg",
                 true,
@@ -243,19 +243,18 @@ class IntelbrasRealProviderSyncResultTests {
         ));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
-        assertThat(expectedCardNo).matches("\\d{6}");
-        assertThat(expectedCardNo).isNotEqualTo("1234567890"); // not the old CPF[0:10]
-        verify(cgiClient).upsertAccessUser(anyString(), anyString(), anyString(),
-                eq("12345678901"), eq(expectedCardNo), anyString(), any(), any());
+        verify(cgiClient).upsertFaceOnlyAccessUser(anyString(), anyString(), anyString(),
+                eq("12345678901"), anyString(), any(), any());
+        verify(cgiClient, never()).upsertAccessUser(anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), any(), any());
         verify(cgiClient).replaceFace(anyString(), anyString(), anyString(), eq("12345678901"), eq("empbase64"));
-        verify(cgiClient, never()).clearCardNoForUser(anyString(), anyString(), anyString(),
+        verify(cgiClient).clearCardNoForUser(anyString(), anyString(), anyString(),
                 eq("12345678901"), anyString(), any(), any());
     }
 
     @Test
-    void visitorWithoutPhysicalCardSucceedsWithUuidDerivedCardNoAndFaceWasSent() {
+    void visitorWithoutPhysicalCardSucceedsWithFaceOnlyAndFaceWasSent() {
         var personId = UUID.fromString("deadbeef-cafe-babe-feed-facade000001");
-        var expectedCardNo = br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasIdentityCodec.shortNumeric(personId);
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
         when(faceEncoder.toJpegBase64("/uploads/faces/guest.jpg")).thenReturn("photobase64");
@@ -272,20 +271,21 @@ class IntelbrasRealProviderSyncResultTests {
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
         assertThat(result.successCount()).isEqualTo(1);
         assertThat(result.failedCount()).isZero();
-        assertThat(expectedCardNo).matches("\\d{6}");
-        verify(cgiClient).upsertAccessUser(anyString(), anyString(), anyString(),
-                eq("06331315470"), eq(expectedCardNo), anyString(), any(), any());
-        verify(cgiClient, never()).clearCardNoForUser(anyString(), anyString(), anyString(), anyString(), anyString(), any(), any());
+        verify(cgiClient).upsertFaceOnlyAccessUser(anyString(), anyString(), anyString(),
+                eq("06331315470"), anyString(), any(), any());
+        verify(cgiClient).replaceFace(anyString(), anyString(), anyString(), eq("06331315470"), eq("photobase64"));
+        verify(cgiClient).clearCardNoForUser(anyString(), anyString(), anyString(), eq("06331315470"),
+                anyString(), any(), any());
     }
 
     @Test
-    void visitorWithoutPhysicalCardDoesNotCallCleanupEvenIfCleanupWouldThrow() {
+    void visitorWithoutPhysicalCardStillSucceedsWhenTemporaryCardNoCleanupIsNotConfirmed() {
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
         when(faceEncoder.toJpegBase64("/uploads/faces/guest.jpg")).thenReturn("photobase64");
         acceptAllCgiCommands();
         when(cgiClient.clearCardNoForUser(anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
-                .thenThrow(new RuntimeException("Firmware: condition.CardNo not supported (400)"));
+                .thenReturn(new IntelbrasCgiClient.CardClearResult(false, "1", "1234567890", "1234567890", true));
 
         var result = provider.syncPerson(new ProviderPerson(
                 PersonType.GUEST, UUID.randomUUID(),
@@ -298,27 +298,23 @@ class IntelbrasRealProviderSyncResultTests {
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
         assertThat(result.successCount()).isEqualTo(1);
         assertThat(result.failedCount()).isZero();
-        verify(cgiClient, never()).clearCardNoForUser(anyString(), anyString(), anyString(), anyString(), anyString(), any(), any());
+        verify(cgiClient).clearCardNoForUser(anyString(), anyString(), anyString(), eq("06331315470"),
+                anyString(), any(), any());
     }
 
     @Test
-    void postInsertVerifyNotFoundIsWarnOnlyAndDeviceCountsAsSuccess() {
-        // verifyAccessUserCreated() is called after upsertAccessUser() in the CARD path.
-        // When findAccessControlCards() returns empty (hardware latency — insert returned 200
-        // but the record is not yet visible), the verify should only log ACCESS_USER_VERIFY_NOT_FOUND
-        // as a warning and NOT fail the device. The sync continues and counts the device as success.
+    void sendOkButVerifyMissingFailsDeviceAndDoesNotCountAsSuccess() {
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
         when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn("OK");
-        // Simulate hardware latency: insert returned 200 but record not yet visible in finder query
-        when(cgiClient.findAccessControlCards(anyString(), anyString(), anyString(), anyString()))
-                .thenReturn(List.of());
+        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(false);
 
         var result = provider.syncPerson(new ProviderPerson(
                 PersonType.EMPLOYEE, UUID.randomUUID(),
                 "12345678901",
-                "8765432109",  // physical card → hasPhysicalCard=true → CARD path → verifyAccessUserCreated called
+                "8765432109",
                 "Colaborador Teste",
                 null,          // no face → CARD_ONLY, face step skipped
                 true,
@@ -326,12 +322,30 @@ class IntelbrasRealProviderSyncResultTests {
                 null, Set.of(allowedAreaId)
         ));
 
-        // Verify returns empty (hardware latency) but must NOT fail the device
-        assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
-        assertThat(result.successCount()).isEqualTo(1);
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
+        assertThat(result.successCount()).isZero();
+        assertThat(result.failedCount()).isEqualTo(1);
         assertThat(result.totalTargets()).isEqualTo(1);
-        // upsertAccessUser succeeded → face step skipped (no face photo) → device counted as synced
         verify(cgiClient, never()).replaceFace(anyString(), anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void sendOkAndVerifyPresentCountsAsSuccess() {
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
+        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn("OK");
+        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(true);
+        when(cgiClient.isCardAssociatedWithUser(anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(true);
+
+        var result = provider.syncPerson(personWithCard(PersonType.EMPLOYEE, Set.of(allowedAreaId), "8765432109"));
+
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
+        assertThat(result.totalTargets()).isEqualTo(1);
+        assertThat(result.successCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isZero();
     }
 
     @Test
@@ -360,15 +374,111 @@ class IntelbrasRealProviderSyncResultTests {
         assertThat(cardNoCaptor.getValue()).isNotEqualTo(userIdCaptor.getValue());
     }
 
+    @Test
+    void cardSyncTimeoutButUserPresentOnControllerCountsAsSynced() {
+        // Falso negativo clássico: o upsert lança timeout, mas a controladora já criou o usuário.
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
+        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenThrow(new RuntimeException("HTTP connect timed out"));
+        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString())).thenReturn(true);
+        when(cgiClient.isCardAssociatedWithUser(anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(true);
+
+        var result = provider.syncPerson(personWithCard(PersonType.EMPLOYEE, Set.of(allowedAreaId), "8765432109"));
+
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
+        assertThat(result.successCount()).isEqualTo(1);
+        assertThat(result.totalTargets()).isEqualTo(1);
+    }
+
+    @Test
+    void cardSyncTimeoutAndVerifyMissingFailsDevice() {
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
+        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenThrow(new RuntimeException("HTTP connect timed out"));
+        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString())).thenReturn(false);
+
+        var result = provider.syncPerson(personWithCard(PersonType.EMPLOYEE, Set.of(allowedAreaId), "8765432109"));
+
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
+        assertThat(result.successCount()).isZero();
+        assertThat(result.failedCount()).isEqualTo(1);
+        assertThat(result.message()).contains("0 de 1");
+    }
+
+    @Test
+    void faceSyncTimeoutButFaceStoredOnControllerCountsAsSynced() {
+        // FACE_ONLY: replaceFace lança, mas usuário e face já estão na controladora.
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
+        acceptAllCgiCommands();
+        when(faceEncoder.toJpegBase64("/faces/guest.jpg")).thenReturn("base64");
+        when(cgiClient.replaceFace(anyString(), anyString(), anyString(), anyString(), eq("base64")))
+                .thenThrow(new RuntimeException("HTTP read timed out"));
+        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString())).thenReturn(true);
+        when(cgiClient.isFacePresent(anyString(), anyString(), anyString(), anyString())).thenReturn(true);
+
+        var result = provider.syncPerson(person(PersonType.GUEST, Set.of(allowedAreaId), "/faces/guest.jpg"));
+
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
+        assertThat(result.successCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isZero();
+    }
+
+    @Test
+    void faceSyncFailsAndFaceNotPresentStaysFailed() {
+        // Falha real: face exigida, usuário até existe, mas a face não está registrada → continua falha.
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
+        acceptAllCgiCommands();
+        when(faceEncoder.toJpegBase64("/faces/guest.jpg")).thenReturn("base64");
+        when(cgiClient.replaceFace(anyString(), anyString(), anyString(), anyString(), eq("base64")))
+                .thenThrow(new RuntimeException("Face add rejected"));
+        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString())).thenReturn(true);
+        when(cgiClient.isFacePresent(anyString(), anyString(), anyString(), anyString())).thenReturn(false);
+
+        var result = provider.syncPerson(person(PersonType.GUEST, Set.of(allowedAreaId), "/faces/guest.jpg"));
+
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.FAILED);
+        assertThat(result.successCount()).isZero();
+        assertThat(result.failedCount()).isEqualTo(1);
+    }
+
+    @Test
+    void oneTimeoutReconciledOneRealFailureReturnsPartial() {
+        // Duas controladoras: uma dá timeout mas tem o usuário (reconcilia), a outra falha de verdade.
+        var allowedAreaId = UUID.randomUUID();
+        when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(2));
+        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenThrow(new RuntimeException("HTTP connect timed out"));
+        // Só a primeira controladora confirma a presença do usuário.
+        when(cgiClient.isAccessUserPresent(eq("192.168.50.101"), anyString(), anyString(), anyString())).thenReturn(true);
+        when(cgiClient.isCardAssociatedWithUser(eq("192.168.50.101"), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(true);
+
+        var result = provider.syncPerson(personWithCard(PersonType.EMPLOYEE, Set.of(allowedAreaId), "8765432109"));
+
+        assertThat(result.status()).isEqualTo(ProviderSyncStatus.PARTIAL_SUCCESS);
+        assertThat(result.totalTargets()).isEqualTo(2);
+        assertThat(result.successCount()).isEqualTo(1);
+        assertThat(result.failedCount()).isEqualTo(1);
+    }
+
     private void acceptAllCgiCommands() {
         when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn("OK");
-        when(cgiClient.findAccessControlCards(anyString(), anyString(), anyString(), anyString()))
-                .thenAnswer(invocation -> List.of(Map.of(
-                        "UserID", invocation.getArgument(3, String.class),
-                        "CardNo", invocation.getArgument(3, String.class).toString().length() == 11
-                                ? invocation.getArgument(3, String.class).substring(0, 10)
-                                : invocation.getArgument(3, String.class))));
+        when(cgiClient.upsertFaceOnlyAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn(new IntelbrasCgiClient.AccessUserUpsertResult("OK", "insert", "1234567890", true));
+        when(cgiClient.clearCardNoForUser(anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn(new IntelbrasCgiClient.CardClearResult(true, "1", "1234567890", "", true));
+        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(true);
+        when(cgiClient.isFacePresent(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(true);
+        when(cgiClient.isCardAssociatedWithUser(anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(true);
     }
 
     private ProviderPerson person(PersonType type, Set<UUID> allowedAreaIds, String facePhotoUrl) {

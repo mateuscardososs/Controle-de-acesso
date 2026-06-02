@@ -42,6 +42,9 @@ public class Employee extends TimestampedEntity {
     @Column(name = "registration_number")
     private String registrationNumber;
 
+    @Column(name = "job_title")
+    private String jobTitle;
+
     @Column(name = "card_no")
     private String cardNo;
 
@@ -89,6 +92,9 @@ public class Employee extends TimestampedEntity {
 
     @Column(name = "sync_skipped_count", nullable = false)
     private int syncSkippedCount;
+
+    @Column(name = "intelbras_card_no", length = 10, unique = true)
+    private String intelbrasCardNo;
 
     @ManyToMany(fetch = FetchType.LAZY)
     @JoinTable(
@@ -173,12 +179,28 @@ public class Employee extends TimestampedEntity {
         this.registrationNumber = registrationNumber;
     }
 
+    public String getJobTitle() {
+        return jobTitle;
+    }
+
+    public void setJobTitle(String jobTitle) {
+        this.jobTitle = jobTitle;
+    }
+
     public String getCardNo() {
         return cardNo;
     }
 
     public void setCardNo(String cardNo) {
         this.cardNo = cardNo;
+    }
+
+    public String getIntelbrasCardNo() {
+        return intelbrasCardNo;
+    }
+
+    public void setIntelbrasCardNo(String intelbrasCardNo) {
+        this.intelbrasCardNo = intelbrasCardNo;
     }
 
     public String getFacePhotoUrl() {

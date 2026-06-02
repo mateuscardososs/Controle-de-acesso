@@ -1,6 +1,7 @@
 package br.com.sport.accesscontrol.integration.sync;
 
 import br.com.sport.accesscontrol.audit.AuditService;
+import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasCardNoGenerator;
 import br.com.sport.accesscontrol.common.PersonType;
 import br.com.sport.accesscontrol.common.messaging.IntegrationEventPublisher;
 import br.com.sport.accesscontrol.config.RabbitMqConfig;
@@ -38,6 +39,7 @@ import java.util.UUID;
 public class IntelbrasSyncWorker {
 
     private static final Logger log = LoggerFactory.getLogger(IntelbrasSyncWorker.class);
+    private static final int PERSON_SYNC_LOCK_STRIPES = 64;
 
     private final EmployeeRepository employeeRepository;
     private final GuestRepository guestRepository;
@@ -51,8 +53,10 @@ public class IntelbrasSyncWorker {
     private final MeterRegistry meterRegistry;
     private final int maxAttempts;
     private final br.com.sport.accesscontrol.areas.LoungeAreaResolver loungeAreaResolver;
+    private final IntelbrasCardNoGenerator cardNoGenerator;
+    private final Object[] personSyncLocks = createPersonSyncLocks();
 
-    /** Legacy / test constructor without LoungeAreaResolver. */
+    /** Legacy / test constructor without LoungeAreaResolver or generator. */
     public IntelbrasSyncWorker(EmployeeRepository employeeRepository, GuestRepository guestRepository,
                                DeviceRepository deviceRepository,
                                AccessControlProvider provider, AuditService auditService,
@@ -63,7 +67,23 @@ public class IntelbrasSyncWorker {
                                MeterRegistry meterRegistry,
                                @Value("${app.integration.intelbras.sync.max-attempts:3}") int maxAttempts) {
         this(employeeRepository, guestRepository, deviceRepository, provider, auditService, eventPublisher,
-                realtimePublisher, systemRealtimePublisher, mailService, meterRegistry, maxAttempts, null);
+                realtimePublisher, systemRealtimePublisher, mailService, meterRegistry, maxAttempts, null, null);
+    }
+
+    /** Constructor with LoungeAreaResolver but without generator (kept for backward compatibility). */
+    public IntelbrasSyncWorker(EmployeeRepository employeeRepository, GuestRepository guestRepository,
+                               DeviceRepository deviceRepository,
+                               AccessControlProvider provider, AuditService auditService,
+                               IntegrationEventPublisher eventPublisher,
+                               IntegrationSyncRealtimePublisher realtimePublisher,
+                               RealtimePublisherService systemRealtimePublisher,
+                               MailService mailService,
+                               MeterRegistry meterRegistry,
+                               @Value("${app.integration.intelbras.sync.max-attempts:3}") int maxAttempts,
+                               br.com.sport.accesscontrol.areas.LoungeAreaResolver loungeAreaResolver) {
+        this(employeeRepository, guestRepository, deviceRepository, provider, auditService, eventPublisher,
+                realtimePublisher, systemRealtimePublisher, mailService, meterRegistry, maxAttempts,
+                loungeAreaResolver, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -76,7 +96,8 @@ public class IntelbrasSyncWorker {
                                MailService mailService,
                                MeterRegistry meterRegistry,
                                @Value("${app.integration.intelbras.sync.max-attempts:3}") int maxAttempts,
-                               br.com.sport.accesscontrol.areas.LoungeAreaResolver loungeAreaResolver) {
+                               br.com.sport.accesscontrol.areas.LoungeAreaResolver loungeAreaResolver,
+                               IntelbrasCardNoGenerator cardNoGenerator) {
         this.employeeRepository = employeeRepository;
         this.guestRepository = guestRepository;
         this.deviceRepository = deviceRepository;
@@ -89,6 +110,7 @@ public class IntelbrasSyncWorker {
         this.meterRegistry = meterRegistry;
         this.maxAttempts = maxAttempts;
         this.loungeAreaResolver = loungeAreaResolver;
+        this.cardNoGenerator = cardNoGenerator;
     }
 
     @RabbitListener(queues = RabbitMqConfig.INTELBRAS_SYNC_QUEUE)
@@ -109,6 +131,12 @@ public class IntelbrasSyncWorker {
             log.warn("intelbras_sync_worker_invalid_message message={}", message);
             return;
         }
+        synchronized (personSyncLock(message)) {
+            processLocked(message);
+        }
+    }
+
+    private void processLocked(IntelbrasSyncMessage message) {
         log.info("SYNC_WORKER_STARTED person_type={} person_id={} attempt={}",
                 message.personType(), message.personId(), message.attempt());
         log.info("intelbras_sync_worker_start person_type={} person_id={} attempt={}",
@@ -124,11 +152,12 @@ public class IntelbrasSyncWorker {
             log.info("GUEST_SYNC_WORKER_FINISHED person_type={} person_id={} attempt={} result={} success={} failed={} total={}",
                     message.personType(), message.personId(), message.attempt(),
                     result.status().name(), result.successCount(), result.failedCount(), result.totalTargets());
-            if (result.successful()) {
+            var finalStatus = finalSyncStatus(result);
+            if (finalStatus == SyncStatus.SYNCED) {
                 meterRegistry.counter("intelbras.sync.success.count", "type", message.personType().name()).increment();
                 return;
             }
-            if (result.status() == ProviderSyncStatus.PARTIAL_SUCCESS) {
+            if (finalStatus == SyncStatus.SYNCED_WITH_WARNINGS) {
                 meterRegistry.counter("intelbras.sync.partial.count", "type", message.personType().name()).increment();
                 return;
             }
@@ -151,6 +180,15 @@ public class IntelbrasSyncWorker {
             log.info("intelbras_sync_employee_retry_skipped_already_synced employee_id={} attempt={}", employeeId, attempt);
             return new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "Employee already synced.", java.time.Duration.ZERO);
         }
+        // Garante que intelbrasCardNo está populado antes de enviar à controladora.
+        // Evita a colisão que ocorria quando cardNoFromDocument(CPF) gerava o mesmo CardNo
+        // para dois colaboradores com os mesmos 10 primeiros dígitos de CPF.
+        if (cardNoGenerator != null && employee.getIntelbrasCardNo() == null) {
+            var cardNo = cardNoGenerator.generateUnique();
+            employee.setIntelbrasCardNo(cardNo);
+            employeeRepository.save(employee);
+            log.info("CARDNO_ASSIGNED person_type=EMPLOYEE person_id={} card_no={}", employeeId, cardNo);
+        }
         employee.markSyncing();
         auditStart(PersonType.EMPLOYEE, employeeId, employee.getSyncAttempts());
         realtimePublisher.publish(PersonType.EMPLOYEE, employeeId, SyncStatus.SYNCING, "Sincronizando Intelbras");
@@ -165,7 +203,7 @@ public class IntelbrasSyncWorker {
                 PersonType.EMPLOYEE,
                 employee.getId(),
                 employee.getCpf(),
-                employee.getCardNo(),
+                employee.getIntelbrasCardNo(),
                 employee.getFullName(),
                 employee.getFacePhotoUrl(),
                 employee.getStatus() == br.com.sport.accesscontrol.employees.EmployeeStatus.ACTIVE,
@@ -281,14 +319,15 @@ public class IntelbrasSyncWorker {
     }
 
     private void finishEmployee(Employee employee, ProviderSyncResult result) {
-        if (result.successful()) {
+        var finalStatus = finalSyncStatus(result);
+        if (finalStatus == SyncStatus.SYNCED) {
             employee.markSynced(result.totalTargets(), result.successCount(), result.failedCount(), result.skippedCount());
             employeeRepository.save(employee);
             log.info("SYNC_STATUS_UPDATED person_type=EMPLOYEE person_id={} sync_status=SYNCED success_count={} total_targets={} failed_count={} skipped_count={}",
                     employee.getId(), result.successCount(), result.totalTargets(), result.failedCount(), result.skippedCount());
             auditSuccess(PersonType.EMPLOYEE, employee.getId(), result);
             realtimePublisher.publish(PersonType.EMPLOYEE, employee.getId(), SyncStatus.SYNCED, result.message());
-        } else if (result.status() == ProviderSyncStatus.PARTIAL_SUCCESS) {
+        } else if (finalStatus == SyncStatus.SYNCED_WITH_WARNINGS) {
             employee.markSyncedWithWarnings(result.message(), result.totalTargets(), result.successCount(),
                     result.failedCount(), result.skippedCount());
             employeeRepository.save(employee);
@@ -307,7 +346,8 @@ public class IntelbrasSyncWorker {
     }
 
     private void finishGuest(Guest guest, ProviderSyncResult result, String target) {
-        if (result.successful()) {
+        var finalStatus = finalSyncStatus(result);
+        if (finalStatus == SyncStatus.SYNCED) {
             guest.markSynced(result.totalTargets(), result.successCount(), result.failedCount(), result.skippedCount());
             guestRepository.save(guest);
             log.info("SYNC_STATUS_UPDATED person_type=GUEST person_id={} cpf={} sync_status=SYNCED sync_attempts={} last_sync_at={} success_count={} total_targets={} failed_count={} skipped_count={}",
@@ -321,7 +361,7 @@ public class IntelbrasSyncWorker {
                     guest.getId(), guest.getCpf(), result.status().name(), target, result.latency().toMillis());
             realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNCED,
                     "Visitante " + guest.getFullName() + ": " + result.message());
-        } else if (result.status() == ProviderSyncStatus.PARTIAL_SUCCESS) {
+        } else if (finalStatus == SyncStatus.SYNCED_WITH_WARNINGS) {
             guest.markSyncedWithWarnings(result.message(), result.totalTargets(), result.successCount(),
                     result.failedCount(), result.skippedCount());
             guestRepository.save(guest);
@@ -349,6 +389,23 @@ public class IntelbrasSyncWorker {
             realtimePublisher.publish(PersonType.GUEST, guest.getId(), SyncStatus.SYNC_FAILED,
                     "Falha ao sincronizar visitante " + guest.getFullName() + " com " + target + ": " + safe(result.message()));
         }
+    }
+
+    private SyncStatus finalSyncStatus(ProviderSyncResult result) {
+        var totalTargets = Math.max(0, result.totalTargets());
+        var successCount = Math.max(0, result.successCount());
+        var failedCount = Math.max(0, result.failedCount());
+        var skippedCount = Math.max(0, result.skippedCount());
+        if (totalTargets > 0 && successCount == totalTargets && failedCount == 0 && skippedCount == 0) {
+            return SyncStatus.SYNCED;
+        }
+        if (totalTargets > 0 && successCount > 0 && successCount < totalTargets) {
+            return SyncStatus.SYNCED_WITH_WARNINGS;
+        }
+        if (totalTargets > 0 && successCount == 0 && failedCount == 0 && skippedCount > 0) {
+            return SyncStatus.SYNCED_WITH_WARNINGS;
+        }
+        return SyncStatus.SYNC_FAILED;
     }
 
     private void auditGuestSyncResult(Guest guest, String target, String result, String error) {
@@ -454,6 +511,19 @@ public class IntelbrasSyncWorker {
 
     private boolean invalid(IntelbrasSyncMessage message) {
         return message == null || message.personType() == null || message.personId() == null || message.attempt() < 1;
+    }
+
+    private static Object[] createPersonSyncLocks() {
+        var locks = new Object[PERSON_SYNC_LOCK_STRIPES];
+        for (int index = 0; index < locks.length; index++) {
+            locks[index] = new Object();
+        }
+        return locks;
+    }
+
+    private Object personSyncLock(IntelbrasSyncMessage message) {
+        var hash = java.util.Objects.hash(message.personType(), message.personId());
+        return personSyncLocks[Math.floorMod(hash, personSyncLocks.length)];
     }
 
     private String intelbrasTarget() {

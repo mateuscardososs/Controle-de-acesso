@@ -7,7 +7,9 @@ export type Employee = {
   email?: string;
   phone?: string;
   registrationNumber?: string;
+  jobTitle?: string;
   cardNo?: string;
+  intelbrasCardNo?: string;
   facePhotoUrl?: string;
   userId?: string;
   role?: "ADMIN" | "HR" | "SECURITY_VIEWER";
@@ -39,6 +41,14 @@ export type EmployeePayload = {
   password?: string;
   role?: Employee["role"];
   status: Employee["status"];
+};
+
+export type EmployeeUpdatePayload = {
+  fullName: string;
+  email: string;
+  phone?: string;
+  jobTitle?: string;
+  allowedAreaIds: string[];
 };
 
 export type PublicEmployeeRegistrationPayload = {
@@ -85,6 +95,10 @@ export const employeeService = {
   },
   async sync(id: string) {
     const { data } = await api.post<Employee>(`/api/employees/${id}/sync`);
+    return data;
+  },
+  async update(id: string, payload: EmployeeUpdatePayload) {
+    const { data } = await api.patch<Employee>(`/api/employees/${id}`, payload);
     return data;
   },
   async deactivate(id: string) {

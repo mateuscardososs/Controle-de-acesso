@@ -1,0 +1,2 @@
+ALTER TABLE employees
+    ADD COLUMN IF NOT EXISTS job_title VARCHAR(120);

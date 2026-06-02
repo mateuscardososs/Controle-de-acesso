@@ -108,134 +108,193 @@ public class IntelbrasRealProvider implements AccessControlProvider {
         }
 
         var errors = new ArrayList<String>();
-        var synced = 0;
         var totalTargets = connections.size();
+        int confirmed = 0;   // VERIFY confirmou a presença -> sucesso real
+        int absent = 0;      // VERIFY rodou e a pessoa NÃO está na controladora -> falha
+        int unverified = 0;  // VERIFY não pôde ser executada -> nunca conta como sucesso
+        boolean hasFace = photoData != null;
+
         for (IntelbrasDeviceConnection connection : connections) {
             var requestStart = Instant.now();
+            var identity = resolveIdentity(person);
+            var deviceId = connection.device().getId();
+            var deviceName = connection.device().getName();
+            var deviceIp = deviceIp(connection);
+
+            var hasPhysicalCard = !digits(person.cardNo()).isBlank();
+            var syncMode = hasPhysicalCard ? (hasFace ? "CARD_AND_FACE" : "CARD_ONLY") : (hasFace ? "FACE_ONLY" : null);
+            log.info("SYNC_DEVICE_BEGIN device_id={} device_name={} device_ip={} area={} mode={} person_type={} person_id={} has_card={} has_face={}",
+                    deviceId, deviceName, deviceIp, deviceArea(connection), syncMode == null ? "INVALID" : syncMode,
+                    person.personType(), person.personId(), hasPhysicalCard, hasFace);
+
+            // ── SEND ────────────────────────────────────────────────────────────────────────
+            boolean sendThrew = false;
+            String sendError = null;
             try {
-                var identity = resolveIdentity(person);
-                var hasPhysicalCard = !digits(person.cardNo()).isBlank();
-                var hasCardNo = identity.cardNo() != null && !identity.cardNo().isBlank();
-                var hasFace = photoData != null;
-                var syncMode = hasCardNo
-                        ? (hasFace ? "CARD_AND_FACE" : "CARD_ONLY")
-                        : (hasFace ? "INVALID_NO_CARDNO" : null);
-
-                log.info("PERSON_SYNC_MODE={} device_id={} person_type={} person_id={} user_id={} has_physical_card={} has_card_no={} has_face={}",
-                        syncMode == null ? "INVALID" : syncMode,
-                        connection.device().getId(), person.personType(), person.personId(),
-                        identity.userId(), hasPhysicalCard, hasCardNo, hasFace);
-                log.info("SYNC_DEVICE_ATTEMPT guest_id={} cpf={} device_id={} device_name={} device_ip={} area={} mode={}",
-                        person.personId(), person.document(), connection.device().getId(),
-                        connection.device().getName(), deviceIp(connection), deviceArea(connection),
-                        syncMode == null ? "INVALID" : syncMode);
-                log.info("intelbras_identity_strategy strategy={} user_id={} card_no={} person_type={} person_id={} document_present={}",
-                        identity.strategy().name().toLowerCase(java.util.Locale.ROOT), identity.userId(), identity.cardNo(),
-                        person.personType(), person.personId(), person.document() != null && !person.document().isBlank());
-                log.info("intelbras_real_sync_person_start protocol=CGI device_id={} host={} person_type={} person_id={} user_id={} card_no={} photo_base64_bytes={}",
-                        connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()), person.personType(),
-                        person.personId(), identity.userId(), identity.cardNo(), photoData == null ? 0 : photoData.length());
-
                 if (syncMode == null) {
-                    throw new IllegalStateException("Sem método de autenticação (sem cartão e sem foto facial) para UserID=" + identity.userId());
+                    throw new IllegalStateException("Sem método de autenticação (sem cartão e sem foto facial).");
                 }
-                if (!hasCardNo) {
-                    throw new IllegalStateException("Sem CardNo valido para UserID=" + identity.userId()
-                            + ". Informe CPF com 11 digitos ou cartao fisico.");
-                }
-
                 var validFrom = localDeviceTime(person.validFrom(), LocalDateTime.now(properties.zoneId()).minusDays(1));
                 var validUntil = localDeviceTime(person.validUntil(), LocalDateTime.of(2037, 12, 31, 23, 59, 59));
-                log.info("intelbras_real_sync_person_validity device_id={} person_type={} person_id={} user_id={} valid_from={} valid_until={} timezone={}",
-                        connection.device().getId(), person.personType(), person.personId(), identity.userId(),
-                        validFrom, validUntil, properties.getTimezone());
 
-                log.info("CARD_SYNC_PREPARED person_type={} person_id={} user_id={} card_no_sent={} has_physical_card={} card_no_source={} device_name={} host={}",
-                        person.personType(), person.personId(), identity.userId(), identity.cardNo(),
-                        hasPhysicalCard, hasPhysicalCard ? "PERSON_CARD" : "DOCUMENT_DERIVED",
-                        connection.device().getName(), IntelbrasHttpSupport.maskHost(connection.host()));
-                log.info("SYNC_DEVICE_ATTEMPT device_id={} name={} ip={} area={} endpoint={} person_type={} person_id={} user_id={}",
-                        connection.device().getId(), connection.device().getName(), deviceIp(connection),
-                        deviceArea(connection), "/cgi-bin/recordUpdater.cgi",
-                        person.personType(), person.personId(), identity.userId());
-                log.info("intelbras_sync_device_attempt device_id={} host={} person_type={} person_id={} user_id={}",
-                        connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
-                        person.personType(), person.personId(), identity.userId());
-                var accessUserResponse = cgiClient.upsertAccessUser(
-                        connection.host(), connection.username(), connection.password(),
-                        identity.userId(), identity.cardNo(), person.fullName(), validFrom, validUntil);
-                log.info("SYNC_DEVICE_RESPONSE device_id={} ip={} area={} endpoint={} status=accepted body={}",
-                        connection.device().getId(), deviceIp(connection), deviceArea(connection),
-                        "/cgi-bin/recordUpdater.cgi", summarize(accessUserResponse));
-                verifyAccessUserCreated(connection, identity.userId(), identity.cardNo());
-
-                if (hasFace) {
-                    log.info("FACE_SYNC_PREPARED person_type={} person_id={} user_id={} device_name={} host={} face_photo_url={} encoded_base64_length={} estimated_jpeg_bytes={}",
-                            person.personType(), person.personId(), identity.userId(),
-                            connection.device().getName(), IntelbrasHttpSupport.maskHost(connection.host()),
-                            person.facePhotoUrl(), photoData.length(), (photoData.length() * 3L / 4));
-                    log.info("SYNC_DEVICE_ATTEMPT device_id={} name={} ip={} area={} endpoint={} person_type={} person_id={} user_id={}",
-                            connection.device().getId(), connection.device().getName(), deviceIp(connection),
-                            deviceArea(connection), "/cgi-bin/FaceInfoManager.cgi?action=add",
-                            person.personType(), person.personId(), identity.userId());
-                    var faceResponse = cgiClient.replaceFace(
-                            connection.host(), connection.username(), connection.password(),
-                            identity.userId(), photoData);
-                    log.info("SYNC_DEVICE_RESPONSE device_id={} ip={} area={} endpoint={} status=accepted body={}",
-                            connection.device().getId(), deviceIp(connection), deviceArea(connection),
-                            "/cgi-bin/FaceInfoManager.cgi?action=add", summarize(faceResponse));
+                if (hasPhysicalCard) {
+                    logStep(connection, "SEND_USER", "/cgi-bin/recordUpdater.cgi", "sending");
+                    var response = cgiClient.upsertAccessUser(connection.host(), connection.username(), connection.password(),
+                            identity.userId(), identity.cardNo(), person.fullName(), validFrom, validUntil);
+                    logStep(connection, "SEND_USER", "/cgi-bin/recordUpdater.cgi", "accepted body=" + summarize(response));
+                } else {
+                    logStep(connection, "SEND_USER", "/cgi-bin/recordUpdater.cgi", "sending(face-only)");
+                    var response = cgiClient.upsertFaceOnlyAccessUser(connection.host(), connection.username(), connection.password(),
+                            identity.userId(), person.fullName(), validFrom, validUntil);
+                    logStep(connection, "SEND_USER", "/cgi-bin/recordUpdater.cgi",
+                            "accepted action=" + response.action() + " body=" + summarize(response.response()));
                 }
 
-                synced++;
-                accessMetricsService.recordControllerRequest(connection.device(), "sync_person", true,
-                        Duration.between(requestStart, Instant.now()));
-                log.info("intelbras_real_sync_person_success protocol=CGI device_id={} person_type={} person_id={} user_id={}",
-                        connection.device().getId(), person.personType(), person.personId(), identity.userId());
-                log.info("SYNC_DEVICE_SUCCESS device_id={} host={} person_type={} person_id={} user_id={}",
-                        connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
-                        person.personType(), person.personId(), identity.userId());
-                log.info("intelbras_sync_device_success device_id={} host={} person_type={} person_id={} user_id={}",
-                        connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
-                        person.personType(), person.personId(), identity.userId());
+                if (hasFace) {
+                    logStep(connection, "SEND_FACE", "/cgi-bin/FaceInfoManager.cgi?action=add", "sending");
+                    var faceResponse = cgiClient.replaceFace(connection.host(), connection.username(), connection.password(),
+                            identity.userId(), photoData);
+                    logStep(connection, "SEND_FACE", "/cgi-bin/FaceInfoManager.cgi?action=add",
+                            "accepted body=" + summarize(faceResponse));
+                }
+                if (!hasPhysicalCard) {
+                    var clearResult = cgiClient.clearCardNoForUser(connection.host(), connection.username(), connection.password(),
+                            identity.userId(), person.fullName(), validFrom, validUntil);
+                    log.info("FACE_ONLY_CARD_CLEANUP_RESULT device_id={} ip={} user_id_present={} cleared={}",
+                            deviceId, deviceIp, identity.userId() != null && !identity.userId().isBlank(), clearResult.cleared());
+                }
             } catch (Exception exception) {
-                accessMetricsService.recordControllerRequest(connection.device(), "sync_person", false,
-                        Duration.between(requestStart, Instant.now()));
-                accessMetricsService.recordControllerCommunicationFailure(connection.device());
-                errors.add("Falha ao sincronizar na controladora " + deviceLabel(connection) + ": " + safe(exception.getMessage()));
-                log.warn("intelbras_real_sync_person_failed device_id={} host={} person_type={} person_id={} error={}",
-                        connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
-                        person.personType(), person.personId(), safe(exception.getMessage()));
-                log.warn("SYNC_DEVICE_FAILED device_id={} name={} ip={} area={} endpoint={} person_type={} person_id={} exception={} error={}",
-                        connection.device().getId(), connection.device().getName(), deviceIp(connection), deviceArea(connection),
-                        "sync_person", person.personType(), person.personId(),
-                        exception.getClass().getSimpleName(), safe(exception.getMessage()), exception);
-                log.warn("intelbras_sync_device_failed device_id={} host={} person_type={} person_id={} error={}",
-                        connection.device().getId(), IntelbrasHttpSupport.maskHost(connection.host()),
-                        person.personType(), person.personId(), safe(exception.getMessage()));
+                sendThrew = true;
+                sendError = safe(exception.getMessage());
+                log.warn("SYNC_DEVICE_SEND_FAILED device_id={} device_name={} device_ip={} exception={} error={}",
+                        deviceId, deviceName, deviceIp,
+                        exception.getClass().getSimpleName(), sendError);
+            }
+
+            // ── VERIFY (obrigatória — única fonte de verdade do sucesso) ──────────────────────
+            VerificationOutcome outcome = verifyOnDevice(connection, identity.userId(),
+                    hasPhysicalCard ? identity.cardNo() : null, hasFace);
+
+            switch (outcome) {
+                case PRESENT -> {
+                    confirmed++;
+                    accessMetricsService.recordControllerRequest(connection.device(), "sync_person", true,
+                            Duration.between(requestStart, Instant.now()));
+                    if (sendThrew) {
+                        log.warn("SYNC_DEVICE_RECONCILED_PRESENT device_id={} device_name={} device_ip={} original_error={} result=reconciled_present",
+                                deviceId, deviceName, deviceIp, sendError);
+                    }
+                    log.info("SYNC_DEVICE_CONFIRMED device_id={} device_name={} device_ip={} reconciled={}",
+                            deviceId, deviceName, deviceIp, sendThrew);
+                }
+                case ABSENT -> {
+                    absent++;
+                    accessMetricsService.recordControllerRequest(connection.device(), "sync_person", false,
+                            Duration.between(requestStart, Instant.now()));
+                    accessMetricsService.recordControllerCommunicationFailure(connection.device());
+                    errors.add("Controladora " + deviceLabel(connection) + ": pessoa não encontrada após o envio.");
+                    log.warn("SYNC_DEVICE_VERIFY_MISSING device_id={} device_name={} device_ip={} send_threw={} send_error={} result=verify_missing",
+                            deviceId, deviceName, deviceIp, sendThrew, sendError);
+                }
+                case UNAVAILABLE -> {
+                    unverified++;
+                    accessMetricsService.recordControllerRequest(connection.device(), "sync_person", false,
+                            Duration.between(requestStart, Instant.now()));
+                    accessMetricsService.recordControllerCommunicationFailure(connection.device());
+                    errors.add("Controladora " + deviceLabel(connection) + ": não foi possível verificar a sincronização.");
+                    log.warn("SYNC_DEVICE_VERIFY_UNAVAILABLE device_id={} device_name={} device_ip={} send_threw={} send_error={} result=verify_unavailable",
+                            deviceId, deviceName, deviceIp, sendThrew, sendError);
+                }
             }
         }
-        var failed = totalTargets - synced;
+
+        // ── Resumo: successCount = controladoras CONFIRMADAS (não requisições enviadas) ──────
         if (totalTargets == 0) {
-            return result(start, ProviderSyncStatus.FAILED,
-                    "Falha: 0 de 0 controladoras selecionadas.", 0, 0, 0, 0);
+            return result(start, ProviderSyncStatus.FAILED, "Falha: 0 de 0 controladoras selecionadas.", 0, 0, 0, 0);
         }
-        if (synced == totalTargets) {
+        if (confirmed == totalTargets) {
             return result(start, ProviderSyncStatus.SUCCESS,
-                    "Sincronizado em " + synced + " de " + totalTargets + " controladora(s).",
-                    totalTargets, synced, 0, 0);
+                    "Confirmado em " + confirmed + " de " + totalTargets + " controladora(s).",
+                    totalTargets, confirmed, 0, 0);
         }
-        if (synced > 0) {
+        if (confirmed > 0) {
             return result(start, ProviderSyncStatus.PARTIAL_SUCCESS,
-                    "Parcial: " + synced + " de " + totalTargets + " controladora(s). "
+                    "Parcial: confirmado em " + confirmed + " de " + totalTargets + " controladora(s). "
                             + String.join("; ", errors),
-                    totalTargets, synced, failed, 0);
+                    totalTargets, confirmed, absent, unverified);
+        }
+        if (absent == 0 && unverified > 0) {
+            return result(start, ProviderSyncStatus.PARTIAL_SUCCESS,
+                    "Necessita verificação: 0 de " + totalTargets + " controladora(s) confirmada(s). "
+                            + String.join("; ", errors),
+                    totalTargets, 0, 0, unverified);
         }
         return result(start, ProviderSyncStatus.FAILED,
-                "Falha: 0 de " + totalTargets + " controladora(s). "
-                        + (errors.isEmpty()
-                        ? "Falha ao sincronizar nas controladoras permitidas."
-                        : String.join("; ", errors)),
-                totalTargets, 0, failed, 0);
+                "Falha: 0 de " + totalTargets + " controladora(s) confirmada(s). "
+                        + (errors.isEmpty() ? "Não foi possível confirmar a sincronização." : String.join("; ", errors)),
+                totalTargets, 0, absent, unverified);
+    }
+
+    private enum VerificationOutcome { PRESENT, ABSENT, UNAVAILABLE }
+
+    /**
+     * Mandatory post-send verification — the single source of truth for "synced". Queries the device
+     * for the access user (and the face when a photo was sent). Distinguishes ABSENT (query ran, not
+     * found) from UNAVAILABLE (query could not run, e.g. comm error / HTML web page), so a device is
+     * only counted as success when the person is genuinely confirmed present.
+     */
+    private VerificationOutcome verifyOnDevice(IntelbrasDeviceConnection connection, String userId,
+                                               String requiredCardNo, boolean faceRequired) {
+        try {
+            logStep(connection, "VERIFY_USER",
+                    "/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.UserID=<redacted>",
+                    "querying");
+            boolean userPresent = cgiClient.isAccessUserPresent(connection.host(), connection.username(),
+                    connection.password(), userId);
+            logStep(connection, "VERIFY_USER",
+                    "/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.UserID=<redacted>",
+                    userPresent ? "present" : "absent");
+            if (!userPresent) {
+                return VerificationOutcome.ABSENT;
+            }
+            if (requiredCardNo != null && !requiredCardNo.isBlank()) {
+                logStep(connection, "VERIFY_CARD",
+                        "/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.CardNo=<redacted>",
+                        "querying");
+                boolean cardPresent = cgiClient.isCardAssociatedWithUser(connection.host(), connection.username(),
+                        connection.password(), userId, requiredCardNo);
+                logStep(connection, "VERIFY_CARD",
+                        "/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.CardNo=<redacted>",
+                        cardPresent ? "present" : "absent");
+                if (!cardPresent) {
+                    return VerificationOutcome.ABSENT;
+                }
+            }
+            if (faceRequired) {
+                logStep(connection, "VERIFY_FACE",
+                        "/cgi-bin/FaceInfoManager.cgi?action=getInfo&UserID=<redacted>", "querying");
+                boolean facePresent = cgiClient.isFacePresent(connection.host(), connection.username(),
+                        connection.password(), userId);
+                logStep(connection, "VERIFY_FACE",
+                        "/cgi-bin/FaceInfoManager.cgi?action=getInfo&UserID=<redacted>",
+                        facePresent ? "present" : "absent");
+                if (!facePresent) {
+                    return VerificationOutcome.ABSENT;
+                }
+            }
+            return VerificationOutcome.PRESENT;
+        } catch (Exception exception) {
+            log.warn("SYNC_DEVICE_VERIFY_ERROR device_id={} device_name={} device_ip={} error={}",
+                    connection.device().getId(), connection.device().getName(), deviceIp(connection),
+                    safe(exception.getMessage()));
+            return VerificationOutcome.UNAVAILABLE;
+        }
+    }
+
+    private void logStep(IntelbrasDeviceConnection connection, String step, String endpoint, String result) {
+        log.info("SYNC_DEVICE_STEP etapa={} deviceId={} deviceName={} deviceIp={} endpointCgi={} httpStatus={} resultado={}",
+                step, connection.device().getId(), connection.device().getName(), deviceIp(connection),
+                endpoint, "n/a", result);
     }
 
     @Override
@@ -251,8 +310,10 @@ public class IntelbrasRealProvider implements AccessControlProvider {
             var requestStart = Instant.now();
             try {
                 var identity = resolveIdentity(person);
-                log.info("intelbras_identity_strategy strategy={} user_id={} card_no={} person_type={} person_id={} document_present={} operation=remove",
-                        identity.strategy().name().toLowerCase(java.util.Locale.ROOT), identity.userId(), identity.cardNo(),
+                log.info("intelbras_identity_strategy strategy={} user_id_present={} card_no_present={} person_type={} person_id={} document_present={} operation=remove",
+                        identity.strategy().name().toLowerCase(java.util.Locale.ROOT),
+                        identity.userId() != null && !identity.userId().isBlank(),
+                        identity.cardNo() != null && !identity.cardNo().isBlank(),
                         person.personType(), person.personId(), person.document() != null && !person.document().isBlank());
                 cgiClient.removeFace(connection.host(), connection.username(), connection.password(), identity.userId());
                 cgiClient.removeAccessUser(connection.host(), connection.username(), connection.password(), identity.userId());
@@ -322,18 +383,11 @@ public class IntelbrasRealProvider implements AccessControlProvider {
         var identity = IntelbrasIdentityCodec.resolve(properties.getIdentityStrategy(), person.personType(),
                 person.personId(), person.document());
         var physicalCardNo = digits(person.cardNo());
-        var finalCardNo = physicalCardNo.isBlank() ? identity.cardNo() : physicalCardNo;
-        var cardSource = physicalCardNo.isBlank()
-                ? (finalCardNo.isBlank() ? "NONE" : "UUID_DERIVED")
-                : "PERSON_CARD";
-        if (physicalCardNo.isBlank() && !finalCardNo.isBlank()
-                && identity.strategy() == IntelbrasIdentityCodec.Strategy.DOCUMENT) {
-            log.info("CARDNO_DERIVED_FROM_DOCUMENT user_id={} card_no={}", identity.userId(), finalCardNo);
-        }
-        log.info("IDENTITY_RESOLVED person_type={} person_id={} user_id={} card_no={} card_source={}",
-                person.personType(), person.personId(), identity.userId(),
-                finalCardNo.isBlank() ? "null" : finalCardNo, cardSource);
-        return new IntelbrasIdentityCodec.IntelbrasIdentity(identity.strategy(), identity.userId(), finalCardNo);
+        var cardSource = physicalCardNo.isBlank() ? "NONE" : "PERSON_CARD";
+        log.info("IDENTITY_RESOLVED person_type={} person_id={} strategy={} document_present={} card_source={}",
+                person.personType(), person.personId(), identity.strategy().name(), 
+                person.document() != null && !person.document().isBlank(), cardSource);
+        return new IntelbrasIdentityCodec.IntelbrasIdentity(identity.strategy(), identity.userId(), physicalCardNo);
     }
 
     private LocalDateTime localDeviceTime(Instant instant, LocalDateTime fallback) {
@@ -368,43 +422,6 @@ public class IntelbrasRealProvider implements AccessControlProvider {
             return device.getName() + " (" + deviceIp(connection) + ")";
         }
         return device.getId() == null ? "desconhecida" : device.getId().toString();
-    }
-
-    private void verifyAccessUserCreated(IntelbrasDeviceConnection connection, String userId, String cardNo) {
-        var records = cgiClient.findAccessControlCards(connection.host(), connection.username(), connection.password(), userId);
-        var storedCardNo = "";
-        var found = false;
-        if (records != null) {
-            for (var record : records) {
-                var rid = text(record, "UserID");
-                var rcard = text(record, "CardNo");
-                if (userId.equalsIgnoreCase(rid) || (!digits(cardNo).isBlank() && digits(cardNo).equals(digits(rcard)))) {
-                    found = true;
-                    storedCardNo = rcard == null ? "" : rcard;
-                    break;
-                }
-            }
-            if (!found && !records.isEmpty()) {
-                storedCardNo = text(records.getFirst(), "CardNo");
-                found = true;
-            }
-        }
-        log.info("CARD_VERIFY_STORED device_id={} ip={} area={} user_id={} card_no_sent={} card_no_stored_in_intelbras={} card_no_match={} record_count={}",
-                connection.device().getId(), deviceIp(connection), deviceArea(connection),
-                userId, cardNo, storedCardNo,
-                !cardNo.isBlank() && cardNo.equals(storedCardNo),
-                records == null ? 0 : records.size());
-        log.info("SYNC_DEVICE_RESPONSE device_id={} ip={} area={} endpoint={} status={} body={}",
-                connection.device().getId(), deviceIp(connection), deviceArea(connection),
-                "/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard", found ? "verified" : "not_found",
-                "records=" + (records == null ? 0 : records.size()));
-        if (!found) {
-            // Hardware latency: the insert returned 200 but the record is not yet visible
-            // via the finder query. Treat as a non-fatal warning — the sync is counted as
-            // successful because upsertAccessUser() already confirmed HTTP 200.
-            log.warn("ACCESS_USER_VERIFY_NOT_FOUND device_id={} device_ip={} user_id={} message=\"Usuário não encontrado na verificação pós-insert — pode ser latência de hardware\"",
-                    connection.device().getId(), deviceIp(connection), userId);
-        }
     }
 
     private Map<String, Object> selectedDeviceLog(IntelbrasDeviceConnection connection) {

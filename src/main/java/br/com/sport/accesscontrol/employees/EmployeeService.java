@@ -7,6 +7,7 @@ import br.com.sport.accesscontrol.common.ResourceNotFoundException;
 import br.com.sport.accesscontrol.common.events.EmployeeCreatedEvent;
 import br.com.sport.accesscontrol.common.events.EmployeeDeactivatedEvent;
 import br.com.sport.accesscontrol.common.events.EmployeeUpdatedEvent;
+import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasCardNoGenerator;
 import br.com.sport.accesscontrol.integration.sync.EmployeeReadyForSyncEvent;
 import br.com.sport.accesscontrol.guests.FaceStorageService;
 import br.com.sport.accesscontrol.users.User;
@@ -22,9 +23,11 @@ import org.springframework.web.multipart.MultipartFile;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 @Service
@@ -39,15 +42,26 @@ public class EmployeeService {
     private final ApplicationEventPublisher eventPublisher;
     private final AuditService auditService;
     private final LoungeAreaResolver loungeAreaResolver;
+    private final IntelbrasCardNoGenerator cardNoGenerator;
     private static final Duration DEFAULT_EMPLOYEE_VALIDITY = Duration.ofDays(45);
 
-    /** Backward-compatible constructor (testes legados sem LoungeAreaResolver). */
+    /** Backward-compatible constructor (testes legados sem LoungeAreaResolver nem generator). */
     public EmployeeService(EmployeeRepository employeeRepository, UserRepository userRepository,
                            PasswordEncoder passwordEncoder, FaceStorageService faceStorageService,
                            ApplicationEventPublisher eventPublisher,
                            AuditService auditService) {
         this(employeeRepository, userRepository, passwordEncoder, faceStorageService, eventPublisher,
-                auditService, null);
+                auditService, null, null);
+    }
+
+    /** Backward-compatible constructor (testes com LoungeAreaResolver mas sem generator). */
+    public EmployeeService(EmployeeRepository employeeRepository, UserRepository userRepository,
+                           PasswordEncoder passwordEncoder, FaceStorageService faceStorageService,
+                           ApplicationEventPublisher eventPublisher,
+                           AuditService auditService,
+                           LoungeAreaResolver loungeAreaResolver) {
+        this(employeeRepository, userRepository, passwordEncoder, faceStorageService, eventPublisher,
+                auditService, loungeAreaResolver, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -55,7 +69,8 @@ public class EmployeeService {
                            PasswordEncoder passwordEncoder, FaceStorageService faceStorageService,
                            ApplicationEventPublisher eventPublisher,
                            AuditService auditService,
-                           LoungeAreaResolver loungeAreaResolver) {
+                           LoungeAreaResolver loungeAreaResolver,
+                           IntelbrasCardNoGenerator cardNoGenerator) {
         this.employeeRepository = employeeRepository;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
@@ -63,6 +78,7 @@ public class EmployeeService {
         this.eventPublisher = eventPublisher;
         this.auditService = auditService;
         this.loungeAreaResolver = loungeAreaResolver;
+        this.cardNoGenerator = cardNoGenerator;
     }
 
     private void applyFullAccessAreas(Employee employee) {
@@ -112,6 +128,12 @@ public class EmployeeService {
             saved = employeeRepository.save(saved);
         }
         applyFullAccessAreas(saved);
+        if (cardNoGenerator != null && saved.getIntelbrasCardNo() == null) {
+            var cardNo = cardNoGenerator.generateUnique();
+            saved.setIntelbrasCardNo(cardNo);
+            saved = employeeRepository.save(saved);
+            log.info("CARDNO_ASSIGNED person_type=EMPLOYEE person_id={} card_no={}", saved.getId(), cardNo);
+        }
         auditService.record("EMPLOYEE_CREATED", "Employee", saved.getId(), Map.of("cpf", saved.getCpf(), "role", saved.getRole()),
                 Map.of(), employeeSnapshot(saved));
         eventPublisher.publishEvent(new EmployeeCreatedEvent(saved.getId()));
@@ -152,6 +174,12 @@ public class EmployeeService {
         var saved = employeeRepository.save(employee);
         saved.setFacePhotoUrl(storePublicEmployeeFace(facePhoto, facePhotoBase64, saved.getId()));
         saved = employeeRepository.save(saved);
+        if (cardNoGenerator != null && saved.getIntelbrasCardNo() == null) {
+            var cardNo = cardNoGenerator.generateUnique();
+            saved.setIntelbrasCardNo(cardNo);
+            saved = employeeRepository.save(saved);
+            log.info("CARDNO_ASSIGNED person_type=EMPLOYEE person_id={} card_no={}", saved.getId(), cardNo);
+        }
         auditService.record("PUBLIC_EMPLOYEE_REGISTERED", "Employee", saved.getId(),
                 Map.of(
                         "cpf", saved.getCpf(),
@@ -212,6 +240,28 @@ public class EmployeeService {
     }
 
     @Transactional
+    public EmployeeResponse patch(UUID id, EmployeePatchRequest request) {
+        var employee = employeeRepository.findByIdWithAllowedAreas(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Employee not found: " + id));
+        var oldData = employeeSnapshot(employee);
+        var email = normalizeEmail(request.email());
+        updateLinkedUserForPatch(employee, request.fullName().trim(), email);
+        employee.setFullName(request.fullName().trim());
+        employee.setEmail(email);
+        employee.setPhone(normalize(request.phone()));
+        employee.setJobTitle(normalize(request.jobTitle()));
+        if (request.allowedAreaIds() != null) {
+            employee.replaceAllowedAreas(resolvePatchAreas(request.allowedAreaIds()));
+        }
+        employeeRepository.save(employee);
+        auditService.record("EMPLOYEE_PATCHED", "Employee", employee.getId(),
+                Map.of("cpf", employee.getCpf()),
+                oldData,
+                employeeSnapshot(employee));
+        return EmployeeResponse.from(employee);
+    }
+
+    @Transactional
     public EmployeeResponse requestSync(UUID id) {
         var employee = getEmployee(id);
         validateSyncEligibility(employee);
@@ -224,13 +274,24 @@ public class EmployeeService {
         if (employee.getStatus() != EmployeeStatus.ACTIVE) {
             throw new IllegalArgumentException("Colaborador precisa estar ativo para sincronizar.");
         }
-        if (!hasText(employee.getFacePhotoUrl()) && !hasText(employee.getCardNo())) {
-            throw new IllegalArgumentException("Informe foto facial ou tag/cartão antes da sincronização.");
+        // Aceita: foto facial, cartão RFID físico OU intelbrasCardNo (gerado automaticamente)
+        if (!hasText(employee.getFacePhotoUrl())
+                && !hasText(employee.getCardNo())
+                && !hasText(employee.getIntelbrasCardNo())) {
+            throw new IllegalArgumentException(
+                    "Informe foto facial ou tag/cartão antes da sincronização.");
         }
     }
 
     private void queueEmployeeSync(Employee employee, Map<String, Object> oldData) {
-        applyFullAccessAreas(employee);
+        if (employee.getAllowedAreas() == null || employee.getAllowedAreas().isEmpty()) {
+            applyFullAccessAreas(employee);
+        }
+        if (cardNoGenerator != null && employee.getIntelbrasCardNo() == null) {
+            var cardNo = cardNoGenerator.generateUnique();
+            employee.setIntelbrasCardNo(cardNo);
+            log.info("CARDNO_ASSIGNED person_type=EMPLOYEE person_id={} card_no={}", employee.getId(), cardNo);
+        }
         employee.markPendingSync();
         employeeRepository.save(employee);
         auditService.record("EMPLOYEE_SYNC_REQUESTED", "Employee", employee.getId(),
@@ -371,12 +432,65 @@ public class EmployeeService {
         employee.setUserId(user.getId());
     }
 
+    private void updateLinkedUserForPatch(Employee employee, String fullName, String email) {
+        if (!hasText(email)) {
+            throw new IllegalArgumentException("Employee email is required.");
+        }
+        if (employee.getUserId() == null) {
+            userRepository.findByEmailIgnoreCase(email)
+                    .ifPresent(existing -> {
+                        throw new IllegalArgumentException("Email already registered");
+                    });
+            return;
+        }
+        var user = userRepository.findById(employee.getUserId()).orElse(null);
+        if (user == null) {
+            employee.setUserId(null);
+            return;
+        }
+        var currentUser = user;
+        userRepository.findByEmailIgnoreCase(email)
+                .filter(existing -> !existing.getId().equals(currentUser.getId()))
+                .ifPresent(existing -> {
+                    throw new IllegalArgumentException("Email already registered");
+                });
+        user.setName(fullName);
+        user.setEmail(email);
+        employee.setUserId(user.getId());
+    }
+
+    private LinkedHashSet<br.com.sport.accesscontrol.areas.Area> resolvePatchAreas(List<UUID> allowedAreaIds) {
+        if (loungeAreaResolver == null) {
+            throw new IllegalArgumentException("Áreas de acesso não estão disponíveis.");
+        }
+        var requestedIds = allowedAreaIds.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (requestedIds.isEmpty()) {
+            throw new IllegalArgumentException("Selecione pelo menos uma área de acesso.");
+        }
+        var activeAreasById = loungeAreaResolver.findAllByIds(requestedIds).stream()
+                .filter(br.com.sport.accesscontrol.areas.Area::isActive)
+                .collect(java.util.stream.Collectors.toMap(
+                        br.com.sport.accesscontrol.areas.Area::getId,
+                        area -> area
+                ));
+        if (activeAreasById.size() != requestedIds.size()) {
+            throw new IllegalArgumentException("Selecione apenas áreas de acesso ativas.");
+        }
+        return requestedIds.stream()
+                .map(activeAreasById::get)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+    }
+
     private Map<String, Object> employeeSnapshot(Employee employee) {
         var snapshot = new LinkedHashMap<String, Object>();
         snapshot.put("id", employee.getId());
         snapshot.put("fullName", employee.getFullName());
         snapshot.put("cpf", employee.getCpf());
         snapshot.put("email", employee.getEmail() == null ? "" : employee.getEmail());
+        snapshot.put("jobTitle", employee.getJobTitle() == null ? "" : employee.getJobTitle());
         snapshot.put("cardNo", employee.getCardNo() == null ? "" : employee.getCardNo());
         snapshot.put("role", employee.getRole() == null ? "" : employee.getRole());
         snapshot.put("userId", employee.getUserId() == null ? "" : employee.getUserId());

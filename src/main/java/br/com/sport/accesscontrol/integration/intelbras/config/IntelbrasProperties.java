@@ -161,6 +161,94 @@ public class IntelbrasProperties {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    public SyncReaper getSyncReaper() {
+        return syncReaper;
+    }
+
+    private final SyncReaper syncReaper = new SyncReaper();
+
+    /**
+     * Configuration for the background reaper that re-enqueues people stuck in PENDING_SYNC,
+     * SYNCING or recoverable SYNC_FAILED so they are never lost after crashes / lost messages.
+     */
+    public static class SyncReaper {
+        private boolean enabled = true;
+        private Duration fixedDelay = Duration.ofMinutes(5);
+        private Duration pendingThreshold = Duration.ofMinutes(5);
+        private Duration syncingThreshold = Duration.ofMinutes(10);
+        private Duration failedThreshold = Duration.ofMinutes(10);
+        private int batchSize = 100;
+        private int maxFailedRequeues = 5;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public Duration getFixedDelay() {
+            return fixedDelay;
+        }
+
+        public void setFixedDelay(Duration fixedDelay) {
+            if (fixedDelay != null && !fixedDelay.isNegative() && !fixedDelay.isZero()) {
+                this.fixedDelay = fixedDelay;
+            }
+        }
+
+        public Duration getPendingThreshold() {
+            return pendingThreshold;
+        }
+
+        public void setPendingThreshold(Duration pendingThreshold) {
+            if (pendingThreshold != null && !pendingThreshold.isNegative()) {
+                this.pendingThreshold = pendingThreshold;
+            }
+        }
+
+        public Duration getSyncingThreshold() {
+            return syncingThreshold;
+        }
+
+        public void setSyncingThreshold(Duration syncingThreshold) {
+            if (syncingThreshold != null && !syncingThreshold.isNegative()) {
+                this.syncingThreshold = syncingThreshold;
+            }
+        }
+
+        public Duration getFailedThreshold() {
+            return failedThreshold;
+        }
+
+        public void setFailedThreshold(Duration failedThreshold) {
+            if (failedThreshold != null && !failedThreshold.isNegative()) {
+                this.failedThreshold = failedThreshold;
+            }
+        }
+
+        public int getBatchSize() {
+            return batchSize;
+        }
+
+        public void setBatchSize(int batchSize) {
+            if (batchSize > 0) {
+                this.batchSize = batchSize;
+            }
+        }
+
+        public int getMaxFailedRequeues() {
+            return maxFailedRequeues;
+        }
+
+        public void setMaxFailedRequeues(int maxFailedRequeues) {
+            if (maxFailedRequeues >= 0) {
+                this.maxFailedRequeues = maxFailedRequeues;
+            }
+        }
+    }
+
     public enum Mode {
         FAKE,
         REAL

@@ -51,11 +51,12 @@ const labels: Record<string, string> = {
 export function humanizeStatus(value?: string | boolean | null) {
   if (typeof value === "boolean") return value ? "Ativo" : "Inativo";
   if (!value) return "Não informado";
-  return labels[value] ?? value.replace(/_/g, " ").toLowerCase().replace(/^\w/, (letter) => letter.toUpperCase());
+  const normalized = value.toUpperCase();
+  return labels[normalized] ?? normalized.replace(/_/g, " ").toLowerCase().replace(/^\w/, (letter) => letter.toUpperCase());
 }
 
 export function StatusBadge({ value }: { value?: string | boolean | null }) {
-  const normalized = typeof value === "boolean" ? (value ? "ACTIVE" : "INACTIVE") : value;
+  const normalized = typeof value === "boolean" ? (value ? "ACTIVE" : "INACTIVE") : value?.toUpperCase();
   const tone =
     normalized === "ACTIVE" || normalized === "ONLINE" || normalized === "ALLOWED" || normalized === "SENT" || normalized === "SYNCED" || normalized === "RECOGNIZED" || normalized === "PASSED"
       ? "green"

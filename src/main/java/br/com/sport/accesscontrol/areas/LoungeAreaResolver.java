@@ -34,6 +34,16 @@ public class LoungeAreaResolver {
             "Institucional Vereadores", List.of("Institucional Vereadores", "Instrucional Vereadores")
     );
 
+    /**
+     * Lounges que compartilham as mesmas catracas físicas e, portanto, devem receber
+     * acesso a TODAS as áreas do grupo. Ex.: quem entra por Institucional 1 também
+     * deve passar pelas catracas de Institucional Vereadores e vice-versa.
+     */
+    private static final Map<String, List<String>> LINKED_LOUNGES = Map.of(
+            "Institucional 1", List.of("Institucional Vereadores"),
+            "Institucional Vereadores", List.of("Institucional 1")
+    );
+
     private final AreaRepository areaRepository;
     private final DeviceRepository deviceRepository;
 
@@ -83,6 +93,10 @@ public class LoungeAreaResolver {
         } else {
             log.warn("lounge_area_not_active_or_not_found lounge={} normalized={} accepted_aliases=[{}] fallback=portaria_only",
                     invitedLounge, nullToBlank(normalized), String.join(",", acceptedAliases));
+        }
+        // Lounges com catracas compartilhadas recebem as áreas de todos os lounges do grupo.
+        for (var linked : LINKED_LOUNGES.getOrDefault(LoungeConfig.canonicalLoungeName(invitedLounge), List.of())) {
+            activeAreaForLounge(linked).ifPresent(result::add);
         }
         logResolutionResult(invitedLounge, result);
         return result;

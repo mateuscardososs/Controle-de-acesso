@@ -16,7 +16,9 @@ public record EmployeeResponse(
         String email,
         String phone,
         String registrationNumber,
+        String jobTitle,
         String cardNo,
+        String intelbrasCardNo,
         String facePhotoUrl,
         UUID userId,
         UserRole role,
@@ -44,9 +46,14 @@ public record EmployeeResponse(
                 : employee.getAllowedAreas().stream().toList();
         List<UUID> allowedIds = allowed.stream().map(Area::getId).toList();
         List<String> allowedNames = allowed.stream().map(Area::getName).toList();
-        // Colaboradores sempre recebem TODAS as áreas — sinalizamos "Acesso Total".
-        boolean fullAccess = !allowed.isEmpty();
-        String display = fullAccess ? "Acesso Total" : null;
+        String display = allowed.isEmpty()
+                ? null
+                : allowed.stream()
+                        .map(Area::getName)
+                        .filter(name -> name != null && !name.isBlank())
+                        .sorted(String.CASE_INSENSITIVE_ORDER)
+                        .reduce((first, second) -> first + ", " + second)
+                        .orElse(null);
         return new EmployeeResponse(
                 employee.getId(),
                 employee.getFullName(),
@@ -54,7 +61,9 @@ public record EmployeeResponse(
                 employee.getEmail(),
                 employee.getPhone(),
                 employee.getRegistrationNumber(),
+                employee.getJobTitle(),
                 employee.getCardNo(),
+                employee.getIntelbrasCardNo(),
                 employee.getFacePhotoUrl(),
                 employee.getUserId(),
                 employee.getRole(),
@@ -74,7 +83,7 @@ public record EmployeeResponse(
                 allowedIds,
                 allowedNames,
                 display,
-                fullAccess
+                false
         );
     }
 }

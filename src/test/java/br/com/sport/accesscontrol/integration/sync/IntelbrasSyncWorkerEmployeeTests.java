@@ -115,6 +115,52 @@ class IntelbrasSyncWorkerEmployeeTests {
         assertThat(employee.getLastSyncError()).contains("1 de 10");
     }
 
+    @Test
+    void employeeFinalStatusIsDerivedFromCountsEvenWhenProviderStatusIsFailed() {
+        var employee = employee();
+        employee.replaceAllowedAreas(new LinkedHashSet<>(List.of(area("Portaria", true))));
+        when(employeeRepository.findByIdWithAllowedAreas(employee.getId())).thenReturn(Optional.of(employee));
+        when(provider.syncPerson(any())).thenReturn(new ProviderSyncResult(
+                ProviderSyncStatus.FAILED,
+                "CardNo rejeitado em uma controladora.",
+                Duration.ofMillis(10),
+                10,
+                9,
+                1,
+                0
+        ));
+
+        worker.process(new IntelbrasSyncMessage(PersonType.EMPLOYEE, employee.getId(), 1));
+
+        assertThat(employee.getSyncStatus()).isEqualTo(SyncStatus.SYNCED_WITH_WARNINGS);
+        assertThat(employee.getSyncTargetCount()).isEqualTo(10);
+        assertThat(employee.getSyncSuccessCount()).isEqualTo(9);
+        assertThat(employee.getSyncFailedCount()).isEqualTo(1);
+    }
+
+    @Test
+    void employeePartialProviderResultWithZeroSuccessesIsSyncFailed() {
+        var employee = employee();
+        employee.replaceAllowedAreas(new LinkedHashSet<>(List.of(area("Portaria", true))));
+        when(employeeRepository.findByIdWithAllowedAreas(employee.getId())).thenReturn(Optional.of(employee));
+        when(provider.syncPerson(any())).thenReturn(new ProviderSyncResult(
+                ProviderSyncStatus.PARTIAL_SUCCESS,
+                "Falha em todas as controladoras.",
+                Duration.ofMillis(10),
+                10,
+                0,
+                10,
+                0
+        ));
+
+        worker.process(new IntelbrasSyncMessage(PersonType.EMPLOYEE, employee.getId(), 1));
+
+        assertThat(employee.getSyncStatus()).isEqualTo(SyncStatus.SYNC_FAILED);
+        assertThat(employee.getSyncTargetCount()).isEqualTo(10);
+        assertThat(employee.getSyncSuccessCount()).isZero();
+        assertThat(employee.getSyncFailedCount()).isEqualTo(10);
+    }
+
     private Employee employee() {
         var employee = new Employee("Colaborador Teste", "12345678901", "colaborador@example.com",
                 null, "REG-1", "12345", "/uploads/faces/employee.jpg", null,

@@ -8,6 +8,19 @@ spring:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/access_control}
     username: ${SPRING_DATASOURCE_USERNAME:access_user}
     password: ${SPRING_DATASOURCE_PASSWORD:access_pass}
+    hikari:
+      pool-name: AccessControlPool
+      # 20 conexões suportam: ~10 workers Intelbras simultâneos + ~5 requests HTTP + 5 de folga
+      maximum-pool-size: ${HIKARI_MAX_POOL_SIZE:20}
+      minimum-idle: ${HIKARI_MIN_IDLE:5}
+      # Quanto tempo aguardar por uma conexão livre antes de lançar SQLException (30 s)
+      connection-timeout: ${HIKARI_CONNECTION_TIMEOUT:30000}
+      # Conexão ociosa por mais de 10 min é devolvida ao pool
+      idle-timeout: ${HIKARI_IDLE_TIMEOUT:600000}
+      # Vida máxima de uma conexão: 30 min (abaixo do default de 8 h do PostgreSQL)
+      max-lifetime: ${HIKARI_MAX_LIFETIME:1800000}
+      # Loga WARNING se uma conexão ficar aberta por mais de 60 s sem ser fechada
+      leak-detection-threshold: ${HIKARI_LEAK_DETECTION:60000}
   rabbitmq:
     host: ${SPRING_RABBITMQ_HOST:localhost}
     port: ${SPRING_RABBITMQ_PORT:5672}
@@ -71,6 +84,19 @@ app:
     events-polling-enabled: ${APP_INTELBRAS_EVENTS_POLLING_ENABLED:true}
     events-polling-interval: ${INTELBRAS_IMPORT_INTERVAL_SECONDS:${APP_INTELBRAS_EVENTS_POLLING_INTERVAL:5s}}
     dedup-window: ${INTELBRAS_DEDUP_WINDOW_SECONDS:300s}
+    face:
+      max-bytes: ${INTELBRAS_FACE_MAX_BYTES:97280}
+      validation:
+        enabled: ${INTELBRAS_FACE_VALIDATION_ENABLED:true}
+    sync-reaper:
+      # Reenfileira pessoas presas em PENDING_SYNC / SYNCING / SYNC_FAILED recuperável.
+      enabled: ${INTELBRAS_SYNC_REAPER_ENABLED:true}
+      fixed-delay: ${INTELBRAS_SYNC_REAPER_FIXED_DELAY:5m}
+      pending-threshold: ${INTELBRAS_SYNC_REAPER_PENDING_THRESHOLD:5m}
+      syncing-threshold: ${INTELBRAS_SYNC_REAPER_SYNCING_THRESHOLD:10m}
+      failed-threshold: ${INTELBRAS_SYNC_REAPER_FAILED_THRESHOLD:10m}
+      batch-size: ${INTELBRAS_SYNC_REAPER_BATCH_SIZE:100}
+      max-failed-requeues: ${INTELBRAS_SYNC_REAPER_MAX_FAILED_REQUEUES:5}
   frontend:
     public-base-url: ${FRONTEND_PUBLIC_BASE_URL:http://localhost:3000}
   mail:
@@ -78,6 +104,24 @@ app:
     from: ${APP_MAIL_FROM:no-reply@empresa.local}
   uploads:
     faces-dir: ${FACE_UPLOAD_DIR:uploads/faces}
+    # Final file budget for facial controllers (SS 5531 etc.): hard limit ~100 KB, safe target 97 KB.
+    faces-max-bytes: ${FACE_UPLOAD_MAX_BYTES:99328}
+    faces-max-width: ${FACE_UPLOAD_MAX_WIDTH:640}
+    faces-max-height: ${FACE_UPLOAD_MAX_HEIGHT:480}
+    faces:
+      # Local pre-save face validation (Viola-Jones + quality gate).
+      face-margin-ratio: ${FACE_UPLOAD_MARGIN_RATIO:0.6}
+      min-face-ratio: ${FACE_UPLOAD_MIN_FACE_RATIO:0.12}
+      max-center-offset-ratio: ${FACE_UPLOAD_MAX_CENTER_OFFSET_RATIO:0.34}
+      min-brightness: ${FACE_UPLOAD_MIN_BRIGHTNESS:50}
+      max-brightness: ${FACE_UPLOAD_MAX_BRIGHTNESS:235}
+      min-sharpness: ${FACE_UPLOAD_MIN_SHARPNESS:55}
+      min-contrast: ${FACE_UPLOAD_MIN_CONTRAST:20}
+      # Heurística conservadora de oclusão da face inferior (mão/objeto cobrindo boca/queixo).
+      # Só sinaliza casos grosseiros; a rejeição confiável de oclusão é da controladora Intelbras.
+      occlusion-check-enabled: ${FACE_UPLOAD_OCCLUSION_CHECK_ENABLED:true}
+      occlusion-min-lower-texture: ${FACE_UPLOAD_OCCLUSION_MIN_LOWER_TEXTURE:12}
+      occlusion-lower-upper-ratio: ${FACE_UPLOAD_OCCLUSION_LOWER_UPPER_RATIO:0.25}
   lounges: ${APP_LOUNGES:Front 1,Front 2,Institucional 1,Institucional Vereadores}
   guests:
     invite-expiration-hours: ${GUEST_INVITE_EXPIRATION_HOURS:72}

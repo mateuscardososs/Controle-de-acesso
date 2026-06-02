@@ -61,11 +61,15 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/public/guests/complete-registration").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/public/employees/register", "/public/employees/register").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/public/employees/check-cpf", "/public/employees/check-cpf").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/public/face/validate", "/public/face/validate").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/config/lounges").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/guests/*/complete-registration").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/auth/register").hasRole("ADMIN")
                         .requestMatchers("/api/health", "/actuator/health", "/actuator/prometheus").permitAll()
+                        // Face photos are rendered by the browser as <img> tags, which cannot attach the
+                        // Bearer JWT. They live at unguessable random-UUID paths, so GET is public.
+                        .requestMatchers(HttpMethod.GET, "/uploads/faces/**").permitAll()
                         .requestMatchers("/ws/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/dashboard/**").hasAnyRole("ADMIN", "HR", "SECURITY_VIEWER")
                         .requestMatchers(HttpMethod.GET, "/api/devices/**").hasAnyRole("ADMIN", "HR", "SECURITY_VIEWER")

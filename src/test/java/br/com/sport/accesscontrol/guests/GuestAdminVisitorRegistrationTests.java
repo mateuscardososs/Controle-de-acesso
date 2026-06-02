@@ -52,7 +52,8 @@ class GuestAdminVisitorRegistrationTests {
     void adminRegistrationMapsOfficialLoungesToPortariaAndSelectedLounge() {
         var service = serviceWithAreas("Portaria", "Front 1", "Front 2", "Institucional 1", "Institucional Vereadores");
 
-        for (var lounge : List.of("Front 1", "Front 2", "Institucional 1", "Institucional Vereadores")) {
+        // Lounges sem catracas compartilhadas: apenas Portaria + área própria
+        for (var lounge : List.of("Front 1", "Front 2")) {
             var response = service.adminVisitorRegistration(
                     "Visitante " + lounge,
                     "11144477735",
@@ -64,6 +65,23 @@ class GuestAdminVisitorRegistrationTests {
             );
 
             assertThat(response.allowedAreaNames()).containsExactly("Portaria", lounge);
+        }
+
+        // Institucional 1 e Institucional Vereadores compartilham catracas físicas:
+        // ambos recebem Portaria + as DUAS áreas institucionais.
+        for (var lounge : List.of("Institucional 1", "Institucional Vereadores")) {
+            var response = service.adminVisitorRegistration(
+                    "Visitante " + lounge,
+                    "11144477735",
+                    "visitante@empresa.local",
+                    "81999990000",
+                    LocalDate.of(2026, 6, 10),
+                    lounge,
+                    photo()
+            );
+
+            assertThat(response.allowedAreaNames())
+                    .containsExactlyInAnyOrder("Portaria", "Institucional 1", "Institucional Vereadores");
         }
     }
 
