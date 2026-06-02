@@ -4,6 +4,7 @@ import br.com.sport.accesscontrol.devices.DeviceStatus;
 import br.com.sport.accesscontrol.common.PersonType;
 import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasCgiClient;
 import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasHttpSupport;
+import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasRpc2Client;
 import br.com.sport.accesscontrol.integration.intelbras.config.IntelbrasProperties;
 import br.com.sport.accesscontrol.integration.intelbras.mapper.IntelbrasEventMapper;
 import br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasDeviceConnection;
@@ -39,18 +40,21 @@ public class IntelbrasRealProvider implements AccessControlProvider {
 
     private final IntelbrasDeviceConnectionService connectionService;
     private final IntelbrasCgiClient cgiClient;
+    private final IntelbrasRpc2Client rpc2Client;
     private final IntelbrasFaceEncoder faceEncoder;
     private final IntelbrasEventMapper eventMapper;
     private final IntelbrasProperties properties;
     private final AccessMetricsService accessMetricsService;
 
     public IntelbrasRealProvider(IntelbrasDeviceConnectionService connectionService, IntelbrasCgiClient cgiClient,
+                                 IntelbrasRpc2Client rpc2Client,
                                  IntelbrasFaceEncoder faceEncoder,
                                  IntelbrasEventMapper eventMapper,
                                  IntelbrasProperties properties,
                                  AccessMetricsService accessMetricsService) {
         this.connectionService = connectionService;
         this.cgiClient = cgiClient;
+        this.rpc2Client = rpc2Client;
         this.faceEncoder = faceEncoder;
         this.eventMapper = eventMapper;
         this.properties = properties;
@@ -128,82 +132,116 @@ public class IntelbrasRealProvider implements AccessControlProvider {
                     person.personType(), person.personId(), hasPhysicalCard, hasFace);
 
             // ── SEND ────────────────────────────────────────────────────────────────────────
-            boolean sendThrew = false;
+            boolean userSendOk = false;
+            String sendFailedStage = null;
             String sendError = null;
+            IntelbrasRpc2Client.Session rpcSession = null;
+            var validFrom = localDeviceTime(person.validFrom(), LocalDateTime.now(properties.zoneId()).minusDays(1));
+            var validUntil = localDeviceTime(person.validUntil(), LocalDateTime.of(2037, 12, 31, 23, 59, 59));
             try {
                 if (syncMode == null) {
                     throw new IllegalStateException("Sem método de autenticação (sem cartão e sem foto facial).");
                 }
-                var validFrom = localDeviceTime(person.validFrom(), LocalDateTime.now(properties.zoneId()).minusDays(1));
-                var validUntil = localDeviceTime(person.validUntil(), LocalDateTime.of(2037, 12, 31, 23, 59, 59));
-
-                if (hasPhysicalCard) {
-                    logStep(connection, "SEND_USER", "/cgi-bin/recordUpdater.cgi", "sending");
-                    var response = cgiClient.upsertAccessUser(connection.host(), connection.username(), connection.password(),
-                            identity.userId(), identity.cardNo(), person.fullName(), validFrom, validUntil);
-                    logStep(connection, "SEND_USER", "/cgi-bin/recordUpdater.cgi", "accepted body=" + summarize(response));
-                } else {
-                    logStep(connection, "SEND_USER", "/cgi-bin/recordUpdater.cgi", "sending(face-only)");
-                    var response = cgiClient.upsertFaceOnlyAccessUser(connection.host(), connection.username(), connection.password(),
-                            identity.userId(), person.fullName(), validFrom, validUntil);
-                    logStep(connection, "SEND_USER", "/cgi-bin/recordUpdater.cgi",
-                            "accepted action=" + response.action() + " body=" + summarize(response.response()));
-                }
-
-                if (hasFace) {
-                    logStep(connection, "SEND_FACE", "/cgi-bin/FaceInfoManager.cgi?action=add", "sending");
-                    var faceResponse = cgiClient.replaceFace(connection.host(), connection.username(), connection.password(),
-                            identity.userId(), photoData);
-                    logStep(connection, "SEND_FACE", "/cgi-bin/FaceInfoManager.cgi?action=add",
-                            "accepted body=" + summarize(faceResponse));
-                }
-                if (!hasPhysicalCard) {
-                    var clearResult = cgiClient.clearCardNoForUser(connection.host(), connection.username(), connection.password(),
-                            identity.userId(), person.fullName(), validFrom, validUntil);
-                    log.info("FACE_ONLY_CARD_CLEANUP_RESULT device_id={} ip={} user_id_present={} cleared={}",
-                            deviceId, deviceIp, identity.userId() != null && !identity.userId().isBlank(), clearResult.cleared());
-                }
+                rpcSession = rpc2Client.login(connection.host(), connection.username(), connection.password());
+                log.info("SYNC_DEVICE_SEND_USER_STARTED device_id={} device_name={} device_ip={} user_id_masked={} mode={} endpoint=/RPC2 method=AccessUser",
+                        deviceId, deviceName, deviceIp, mask(identity.userId()), syncMode);
+                var response = rpc2Client.upsertUser(rpcSession, identity.userId(),
+                        hasPhysicalCard ? identity.cardNo() : null, person.fullName(), validFrom, validUntil);
+                userSendOk = true;
+                log.info("SYNC_DEVICE_SEND_USER_OK device_id={} device_name={} device_ip={} user_id_masked={} rpc_method={} action={} response={}",
+                        deviceId, deviceName, deviceIp, mask(identity.userId()), response.method(), response.action(),
+                        summarize(response.responseSummary()));
             } catch (Exception exception) {
-                sendThrew = true;
+                sendFailedStage = "usuario";
                 sendError = safe(exception.getMessage());
-                log.warn("SYNC_DEVICE_SEND_FAILED device_id={} device_name={} device_ip={} exception={} error={}",
-                        deviceId, deviceName, deviceIp,
+                log.warn("SYNC_DEVICE_RESULT_FAILED device_id={} device_name={} device_ip={} stage={} exception={} error={}",
+                        deviceId, deviceName, deviceIp, sendFailedStage,
                         exception.getClass().getSimpleName(), sendError);
             }
 
             // ── VERIFY (obrigatória — única fonte de verdade do sucesso) ──────────────────────
-            VerificationOutcome outcome = verifyOnDevice(connection, identity.userId(),
-                    hasPhysicalCard ? identity.cardNo() : null, hasFace);
+            if (rpcSession != null && userSendOk && hasPhysicalCard) {
+                try {
+                    log.info("SYNC_DEVICE_SEND_CARD_STARTED device_id={} device_name={} device_ip={} user_id_masked={} card_no_masked={} endpoint=/RPC2 method=AccessCard.insertMulti",
+                            deviceId, deviceName, deviceIp, mask(identity.userId()), mask(identity.cardNo()));
+                    var cardResponse = rpc2Client.sendCard(rpcSession, identity.userId(), identity.cardNo());
+                    log.info("SYNC_DEVICE_SEND_CARD_OK device_id={} device_name={} device_ip={} user_id_masked={} card_no_masked={} rpc_method={} response={}",
+                            deviceId, deviceName, deviceIp, mask(identity.userId()), mask(identity.cardNo()),
+                            cardResponse.method(), summarize(cardResponse.responseSummary()));
+                } catch (Exception exception) {
+                    if (sendFailedStage == null) {
+                        sendFailedStage = "cartao";
+                        sendError = safe(exception.getMessage());
+                    }
+                    log.warn("SYNC_DEVICE_RESULT_FAILED device_id={} device_name={} device_ip={} stage=cartao exception={} error={}",
+                            deviceId, deviceName, deviceIp, exception.getClass().getSimpleName(), safe(exception.getMessage()));
+                }
+            }
 
-            switch (outcome) {
+            if (rpcSession != null && userSendOk && hasFace) {
+                try {
+                    log.info("SYNC_DEVICE_SEND_FACE_STARTED device_id={} device_name={} device_ip={} user_id_masked={} endpoint=/RPC2 method=AccessFace.insertMulti photo_present={}",
+                            deviceId, deviceName, deviceIp, mask(identity.userId()), photoData != null && !photoData.isBlank());
+                    var faceResponse = rpc2Client.sendFace(rpcSession, identity.userId(), photoData);
+                    log.info("SYNC_DEVICE_SEND_FACE_OK device_id={} device_name={} device_ip={} user_id_masked={} rpc_method={} response={}",
+                            deviceId, deviceName, deviceIp, mask(identity.userId()), faceResponse.method(),
+                            summarize(faceResponse.responseSummary()));
+                } catch (Exception exception) {
+                    if (sendFailedStage == null) {
+                        sendFailedStage = "face";
+                        sendError = safe(exception.getMessage());
+                    }
+                    log.warn("SYNC_DEVICE_RESULT_FAILED device_id={} device_name={} device_ip={} stage=face exception={} error={}",
+                            deviceId, deviceName, deviceIp, exception.getClass().getSimpleName(), safe(exception.getMessage()));
+                }
+            }
+
+            var verification = rpcSession == null
+                    ? new VerificationResult(VerificationOutcome.UNAVAILABLE, "verificacao", "sessao RPC2 indisponivel",
+                    IntelbrasRpc2Client.FacePresence.UNSUPPORTED)
+                    : verifyOnDevice(rpcSession, connection, identity.userId(),
+                    hasPhysicalCard ? identity.cardNo() : null, hasFace);
+            var effectiveOutcome = verification.outcome();
+            var effectiveFailedStage = verification.failedStage();
+            var effectiveDetail = verification.detail();
+            if (effectiveOutcome == VerificationOutcome.PRESENT
+                    && "face".equals(sendFailedStage)
+                    && verification.facePresence() != IntelbrasRpc2Client.FacePresence.PRESENT) {
+                effectiveOutcome = VerificationOutcome.ABSENT;
+                effectiveFailedStage = "face";
+                effectiveDetail = "envio da face falhou e a face nao foi confirmada";
+            }
+
+            switch (effectiveOutcome) {
                 case PRESENT -> {
                     confirmed++;
                     accessMetricsService.recordControllerRequest(connection.device(), "sync_person", true,
                             Duration.between(requestStart, Instant.now()));
-                    if (sendThrew) {
-                        log.warn("SYNC_DEVICE_RECONCILED_PRESENT device_id={} device_name={} device_ip={} original_error={} result=reconciled_present",
-                                deviceId, deviceName, deviceIp, sendError);
+                    if (sendFailedStage != null) {
+                        log.warn("SYNC_DEVICE_RECONCILED_PRESENT device_id={} device_name={} device_ip={} original_stage={} original_error={} result=reconciled_present",
+                                deviceId, deviceName, deviceIp, sendFailedStage, sendError);
                     }
-                    log.info("SYNC_DEVICE_CONFIRMED device_id={} device_name={} device_ip={} reconciled={}",
-                            deviceId, deviceName, deviceIp, sendThrew);
+                    log.info("SYNC_DEVICE_RESULT_CONFIRMED device_id={} device_name={} device_ip={} user_id_masked={} reconciled={}",
+                            deviceId, deviceName, deviceIp, mask(identity.userId()), sendFailedStage != null);
                 }
                 case ABSENT -> {
                     absent++;
                     accessMetricsService.recordControllerRequest(connection.device(), "sync_person", false,
                             Duration.between(requestStart, Instant.now()));
                     accessMetricsService.recordControllerCommunicationFailure(connection.device());
-                    errors.add("Controladora " + deviceLabel(connection) + ": pessoa não encontrada após o envio.");
-                    log.warn("SYNC_DEVICE_VERIFY_MISSING device_id={} device_name={} device_ip={} send_threw={} send_error={} result=verify_missing",
-                            deviceId, deviceName, deviceIp, sendThrew, sendError);
+                    var stage = effectiveFailedStage == null || effectiveFailedStage.isBlank() ? sendFailedStage : effectiveFailedStage;
+                    errors.add(failureMessage(connection, stage, effectiveDetail));
+                    log.warn("SYNC_DEVICE_RESULT_FAILED device_id={} device_name={} device_ip={} stage={} send_error={} verify_detail={} result=verify_missing",
+                            deviceId, deviceName, deviceIp, stage, sendError, effectiveDetail);
                 }
                 case UNAVAILABLE -> {
                     unverified++;
                     accessMetricsService.recordControllerRequest(connection.device(), "sync_person", false,
                             Duration.between(requestStart, Instant.now()));
                     accessMetricsService.recordControllerCommunicationFailure(connection.device());
-                    errors.add("Controladora " + deviceLabel(connection) + ": não foi possível verificar a sincronização.");
-                    log.warn("SYNC_DEVICE_VERIFY_UNAVAILABLE device_id={} device_name={} device_ip={} send_threw={} send_error={} result=verify_unavailable",
-                            deviceId, deviceName, deviceIp, sendThrew, sendError);
+                    errors.add(failureMessage(connection, "verificacao", effectiveDetail));
+                    log.warn("SYNC_DEVICE_RESULT_FAILED device_id={} device_name={} device_ip={} stage=verificacao send_stage={} send_error={} result=verify_unavailable detail={}",
+                            deviceId, deviceName, deviceIp, sendFailedStage, sendError, effectiveDetail);
                 }
             }
         }
@@ -236,6 +274,55 @@ public class IntelbrasRealProvider implements AccessControlProvider {
     }
 
     private enum VerificationOutcome { PRESENT, ABSENT, UNAVAILABLE }
+
+    private VerificationResult verifyOnDevice(IntelbrasRpc2Client.Session session, IntelbrasDeviceConnection connection,
+                                              String userId, String requiredCardNo, boolean faceRequired) {
+        try {
+            log.info("SYNC_DEVICE_VERIFY_USER_STARTED device_id={} device_name={} device_ip={} user_id_masked={} endpoint=/RPC2 method=AccessUser.startFind",
+                    connection.device().getId(), connection.device().getName(), deviceIp(connection), mask(userId));
+            boolean userPresent = rpc2Client.isUserPresent(session, userId);
+            if (!userPresent) {
+                log.warn("SYNC_DEVICE_VERIFY_USER_MISSING device_id={} device_name={} device_ip={} user_id_masked={}",
+                        connection.device().getId(), connection.device().getName(), deviceIp(connection), mask(userId));
+                return new VerificationResult(VerificationOutcome.ABSENT, "usuario",
+                        "usuario nao encontrado apos o envio", IntelbrasRpc2Client.FacePresence.UNSUPPORTED);
+            }
+            log.info("SYNC_DEVICE_VERIFY_USER_PRESENT device_id={} device_name={} device_ip={} user_id_masked={}",
+                    connection.device().getId(), connection.device().getName(), deviceIp(connection), mask(userId));
+
+            if (requiredCardNo != null && !requiredCardNo.isBlank()) {
+                boolean cardPresent = rpc2Client.isCardAssociatedWithUser(session, userId, requiredCardNo);
+                if (!cardPresent) {
+                    return new VerificationResult(VerificationOutcome.ABSENT, "cartao",
+                            "cartao nao confirmado apos o envio", IntelbrasRpc2Client.FacePresence.UNSUPPORTED);
+                }
+            }
+
+            var facePresence = IntelbrasRpc2Client.FacePresence.UNSUPPORTED;
+            if (faceRequired) {
+                facePresence = rpc2Client.verifyFace(session, userId);
+                if (facePresence == IntelbrasRpc2Client.FacePresence.ABSENT) {
+                    return new VerificationResult(VerificationOutcome.ABSENT, "face",
+                            "face nao confirmada apos o envio", facePresence);
+                }
+            }
+            return new VerificationResult(VerificationOutcome.PRESENT, "", "", facePresence);
+        } catch (Exception exception) {
+            log.warn("SYNC_DEVICE_VERIFY_ERROR device_id={} device_name={} device_ip={} error={}",
+                    connection.device().getId(), connection.device().getName(), deviceIp(connection),
+                    safe(exception.getMessage()));
+            return new VerificationResult(VerificationOutcome.UNAVAILABLE, "verificacao",
+                    safe(exception.getMessage()), IntelbrasRpc2Client.FacePresence.UNSUPPORTED);
+        }
+    }
+
+    private record VerificationResult(
+            VerificationOutcome outcome,
+            String failedStage,
+            String detail,
+            IntelbrasRpc2Client.FacePresence facePresence
+    ) {
+    }
 
     /**
      * Mandatory post-send verification — the single source of truth for "synced". Queries the device
@@ -424,6 +511,15 @@ public class IntelbrasRealProvider implements AccessControlProvider {
         return device.getId() == null ? "desconhecida" : device.getId().toString();
     }
 
+    private String failureMessage(IntelbrasDeviceConnection connection, String stage, String detail) {
+        var normalizedStage = stage == null || stage.isBlank() ? "verificacao" : stage;
+        var normalizedDetail = detail == null || detail.isBlank()
+                ? "nao foi possivel confirmar a sincronizacao"
+                : detail;
+        return "Controladora " + deviceLabel(connection) + ": falha na etapa "
+                + normalizedStage + ": " + normalizedDetail + ".";
+    }
+
     private Map<String, Object> selectedDeviceLog(IntelbrasDeviceConnection connection) {
         var device = connection.device();
         return Map.of(
@@ -470,6 +566,20 @@ public class IntelbrasRealProvider implements AccessControlProvider {
         }
         return value.replaceAll("(\\d{1,3}\\.\\d{1,3})\\.\\d{1,3}\\.\\d{1,3}", "$1.*.*")
                 .replaceAll("(?i)(password|senha)=([^\\s,;]+)", "$1=***");
+    }
+
+    private String mask(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        var raw = digits(value);
+        if (raw.isBlank()) {
+            raw = value.trim();
+        }
+        if (raw.length() <= 4) {
+            return "****";
+        }
+        return raw.substring(0, 2) + "****" + raw.substring(raw.length() - 2);
     }
 
     private String nullToBlank(String value) {

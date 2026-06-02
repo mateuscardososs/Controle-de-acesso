@@ -6,6 +6,7 @@ import br.com.sport.accesscontrol.devices.Device;
 import br.com.sport.accesscontrol.devices.DeviceOperationType;
 import br.com.sport.accesscontrol.devices.DeviceStatus;
 import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasCgiClient;
+import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasRpc2Client;
 import br.com.sport.accesscontrol.integration.intelbras.config.IntelbrasProperties;
 import br.com.sport.accesscontrol.integration.intelbras.mapper.IntelbrasEventMapper;
 import br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasDeviceConnection;
@@ -44,11 +45,13 @@ class IntelbrasRealProviderValidityTests {
         var connection = new IntelbrasDeviceConnection(device, "192.168.15.5", "admin", "secret");
         var connectionService = mock(IntelbrasDeviceConnectionService.class);
         var cgiClient = mock(IntelbrasCgiClient.class);
+        var rpc2Client = mock(IntelbrasRpc2Client.class);
         when(connectionService.selectOnlineConfiguredDevice(any())).thenReturn(Optional.of(connection));
-        acceptVerification(cgiClient);
+        acceptVerification(rpc2Client);
         var provider = new IntelbrasRealProvider(
                 connectionService,
                 cgiClient,
+                rpc2Client,
                 mock(IntelbrasFaceEncoder.class),
                 new IntelbrasEventMapper(properties),
                 properties,
@@ -64,10 +67,8 @@ class IntelbrasRealProviderValidityTests {
 
         provider.syncPerson(person);
 
-        verify(cgiClient).upsertAccessUser(
-                eq("192.168.15.5"),
-                eq("admin"),
-                eq("secret"),
+        verify(rpc2Client).upsertUser(
+                any(IntelbrasRpc2Client.Session.class),
                 anyString(),
                 anyString(),
                 eq("Visitante"),
@@ -86,11 +87,13 @@ class IntelbrasRealProviderValidityTests {
         var connection = new IntelbrasDeviceConnection(device, "192.168.15.5", "admin", "secret");
         var connectionService = mock(IntelbrasDeviceConnectionService.class);
         var cgiClient = mock(IntelbrasCgiClient.class);
+        var rpc2Client = mock(IntelbrasRpc2Client.class);
         when(connectionService.selectOnlineConfiguredDevicesForAreas(any())).thenReturn(List.of(connection));
-        acceptVerification(cgiClient);
+        acceptVerification(rpc2Client);
         var provider = new IntelbrasRealProvider(
                 connectionService,
                 cgiClient,
+                rpc2Client,
                 mock(IntelbrasFaceEncoder.class),
                 new IntelbrasEventMapper(properties),
                 properties,
@@ -105,10 +108,8 @@ class IntelbrasRealProviderValidityTests {
 
         provider.syncPerson(person);
 
-        verify(cgiClient).upsertAccessUser(
-                eq("192.168.15.5"),
-                eq("admin"),
-                eq("secret"),
+        verify(rpc2Client).upsertUser(
+                any(IntelbrasRpc2Client.Session.class),
                 anyString(),
                 anyString(),
                 eq("Colaborador"),
@@ -119,10 +120,17 @@ class IntelbrasRealProviderValidityTests {
         assertThat(untilCaptor.getValue()).isEqualTo(LocalDateTime.of(2026, 7, 16, 9, 30));
     }
 
-    private void acceptVerification(IntelbrasCgiClient cgiClient) {
-        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString()))
+    private void acceptVerification(IntelbrasRpc2Client rpc2Client) {
+        when(rpc2Client.login(anyString(), anyString(), anyString()))
+                .thenAnswer(invocation -> new IntelbrasRpc2Client.Session(invocation.getArgument(0),
+                        "123", "WebClientHttpSessionID=abc", invocation.getArgument(1), Instant.now()));
+        when(rpc2Client.upsertUser(any(IntelbrasRpc2Client.Session.class), anyString(), any(), anyString(), any(), any()))
+                .thenReturn(new IntelbrasRpc2Client.AccessUserUpsertResult("insert", "AccessUser.insertMulti", "OK"));
+        when(rpc2Client.sendCard(any(IntelbrasRpc2Client.Session.class), anyString(), anyString()))
+                .thenReturn(new IntelbrasRpc2Client.Rpc2CallResult("AccessCard.insertMulti", "OK"));
+        when(rpc2Client.isUserPresent(any(IntelbrasRpc2Client.Session.class), anyString()))
                 .thenReturn(true);
-        when(cgiClient.isCardAssociatedWithUser(anyString(), anyString(), anyString(), anyString(), anyString()))
+        when(rpc2Client.isCardAssociatedWithUser(any(IntelbrasRpc2Client.Session.class), anyString(), anyString()))
                 .thenReturn(true);
     }
 

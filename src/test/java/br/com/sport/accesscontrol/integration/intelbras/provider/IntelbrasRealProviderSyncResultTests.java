@@ -6,6 +6,7 @@ import br.com.sport.accesscontrol.devices.Device;
 import br.com.sport.accesscontrol.devices.DeviceOperationType;
 import br.com.sport.accesscontrol.devices.DeviceStatus;
 import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasCgiClient;
+import br.com.sport.accesscontrol.integration.intelbras.client.IntelbrasRpc2Client;
 import br.com.sport.accesscontrol.integration.intelbras.config.IntelbrasProperties;
 import br.com.sport.accesscontrol.integration.intelbras.mapper.IntelbrasEventMapper;
 import br.com.sport.accesscontrol.integration.intelbras.model.IntelbrasDeviceConnection;
@@ -31,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -41,6 +43,7 @@ class IntelbrasRealProviderSyncResultTests {
 
     private IntelbrasDeviceConnectionService connectionService;
     private IntelbrasCgiClient cgiClient;
+    private IntelbrasRpc2Client rpc2Client;
     private IntelbrasFaceEncoder faceEncoder;
     private IntelbrasRealProvider provider;
 
@@ -48,15 +51,18 @@ class IntelbrasRealProviderSyncResultTests {
     void setUp() {
         connectionService = mock(IntelbrasDeviceConnectionService.class);
         cgiClient = mock(IntelbrasCgiClient.class);
+        rpc2Client = mock(IntelbrasRpc2Client.class);
         faceEncoder = mock(IntelbrasFaceEncoder.class);
         provider = new IntelbrasRealProvider(
                 connectionService,
                 cgiClient,
+                rpc2Client,
                 faceEncoder,
                 new IntelbrasEventMapper(),
                 new IntelbrasProperties(),
                 new AccessMetricsService(new SimpleMeterRegistry())
         );
+        acceptAllCgiCommands();
     }
 
     @Test
@@ -71,26 +77,24 @@ class IntelbrasRealProviderSyncResultTests {
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
         assertThat(result.totalTargets()).isEqualTo(10);
         assertThat(result.successCount()).isEqualTo(10);
-        verify(cgiClient, times(10)).upsertAccessUser(anyString(), anyString(), anyString(), anyString(),
-                anyString(), anyString(), any(), any());
+        verify(rpc2Client, times(10)).upsertUser(any(IntelbrasRpc2Client.Session.class), anyString(),
+                any(), anyString(), any(), any());
     }
 
     @Test
     void oneOfTenSuccessesReturnsPartialInsteadOfFullSuccess() {
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(10));
-        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+        when(rpc2Client.upsertUser(any(IntelbrasRpc2Client.Session.class), anyString(), any(), anyString(), any(), any()))
                 .thenAnswer(invocation -> {
-                    var host = invocation.getArgument(0, String.class);
+                    var host = invocation.getArgument(0, IntelbrasRpc2Client.Session.class).host();
                     if ("192.168.50.101".equals(host)) {
-                        return "OK";
+                        return new IntelbrasRpc2Client.AccessUserUpsertResult("insert", "AccessUser.insertMulti", "OK");
                     }
-                    throw new RuntimeException("CGI error");
+                    throw new RuntimeException("RPC2 error");
                 });
-        when(cgiClient.isAccessUserPresent(eq("192.168.50.101"), anyString(), anyString(), anyString()))
-                .thenReturn(true);
-        when(cgiClient.isCardAssociatedWithUser(eq("192.168.50.101"), anyString(), anyString(), anyString(), anyString()))
-                .thenReturn(true);
+        when(rpc2Client.isUserPresent(any(IntelbrasRpc2Client.Session.class), anyString()))
+                .thenAnswer(invocation -> "192.168.50.101".equals(invocation.getArgument(0, IntelbrasRpc2Client.Session.class).host()));
 
         // CARD_ONLY employee: upsertAccessUser fails on 9 devices
         var result = provider.syncPerson(personWithCard(PersonType.EMPLOYEE, Set.of(allowedAreaId), "8765432109"));
@@ -105,8 +109,10 @@ class IntelbrasRealProviderSyncResultTests {
     void zeroSuccessesReturnsFailed() {
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(3));
-        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
-                .thenThrow(new RuntimeException("CGI error"));
+        when(rpc2Client.upsertUser(any(IntelbrasRpc2Client.Session.class), anyString(), any(), anyString(), any(), any()))
+                .thenThrow(new RuntimeException("RPC2 error"));
+        when(rpc2Client.isUserPresent(any(IntelbrasRpc2Client.Session.class), anyString()))
+                .thenReturn(false);
 
         // CARD_ONLY employee: all 3 AccessControlCard calls fail
         var result = provider.syncPerson(personWithCard(PersonType.GUEST, Set.of(allowedAreaId), "8765432109"));
@@ -134,8 +140,10 @@ class IntelbrasRealProviderSyncResultTests {
     void cgiErrorDoesNotBecomeSuccess() {
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
-        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+        when(rpc2Client.upsertUser(any(IntelbrasRpc2Client.Session.class), anyString(), any(), anyString(), any(), any()))
                 .thenThrow(new RuntimeException("Error: rejected"));
+        when(rpc2Client.isUserPresent(any(IntelbrasRpc2Client.Session.class), anyString()))
+                .thenReturn(false);
 
         // CARD path: AccessControlCard error must not become success
         var result = provider.syncPerson(personWithCard(PersonType.GUEST, Set.of(allowedAreaId), "8765432109"));
@@ -181,9 +189,10 @@ class IntelbrasRealProviderSyncResultTests {
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
         acceptAllCgiCommands();
         when(faceEncoder.toJpegBase64("/faces/guest.jpg")).thenReturn("base64");
-        when(cgiClient.replaceFace(anyString(), anyString(), anyString(), anyString(), eq("base64")))
+        when(rpc2Client.sendFace(any(IntelbrasRpc2Client.Session.class), anyString(), eq("base64")))
                 .thenThrow(new RuntimeException("Face add rejected"));
-        when(cgiClient.isFacePresent(anyString(), anyString(), anyString(), anyString())).thenReturn(false);
+        when(rpc2Client.verifyFace(any(IntelbrasRpc2Client.Session.class), anyString()))
+                .thenReturn(IntelbrasRpc2Client.FacePresence.ABSENT);
 
         // Visitor without a physical card uses the FACE_ONLY path and fails if face sync fails.
         var result = provider.syncPerson(person(PersonType.GUEST, Set.of(allowedAreaId), "/faces/guest.jpg"));
@@ -214,13 +223,10 @@ class IntelbrasRealProviderSyncResultTests {
         ));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
-        verify(cgiClient).upsertFaceOnlyAccessUser(anyString(), anyString(), anyString(),
-                eq("06331315470"), anyString(), any(), any());
-        verify(cgiClient, never()).upsertAccessUser(anyString(), anyString(), anyString(),
-                anyString(), anyString(), anyString(), any(), any());
-        verify(cgiClient).replaceFace(anyString(), anyString(), anyString(), eq("06331315470"), eq("photobase64"));
-        verify(cgiClient).clearCardNoForUser(anyString(), anyString(), anyString(),
-                eq("06331315470"), anyString(), any(), any());
+        verify(rpc2Client).upsertUser(any(IntelbrasRpc2Client.Session.class),
+                eq("06331315470"), isNull(), anyString(), any(), any());
+        verify(rpc2Client, never()).sendCard(any(IntelbrasRpc2Client.Session.class), anyString(), anyString());
+        verify(rpc2Client).sendFace(any(IntelbrasRpc2Client.Session.class), eq("06331315470"), eq("photobase64"));
     }
 
     @Test
@@ -243,13 +249,10 @@ class IntelbrasRealProviderSyncResultTests {
         ));
 
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
-        verify(cgiClient).upsertFaceOnlyAccessUser(anyString(), anyString(), anyString(),
-                eq("12345678901"), anyString(), any(), any());
-        verify(cgiClient, never()).upsertAccessUser(anyString(), anyString(), anyString(),
-                anyString(), anyString(), anyString(), any(), any());
-        verify(cgiClient).replaceFace(anyString(), anyString(), anyString(), eq("12345678901"), eq("empbase64"));
-        verify(cgiClient).clearCardNoForUser(anyString(), anyString(), anyString(),
-                eq("12345678901"), anyString(), any(), any());
+        verify(rpc2Client).upsertUser(any(IntelbrasRpc2Client.Session.class),
+                eq("12345678901"), isNull(), anyString(), any(), any());
+        verify(rpc2Client, never()).sendCard(any(IntelbrasRpc2Client.Session.class), anyString(), anyString());
+        verify(rpc2Client).sendFace(any(IntelbrasRpc2Client.Session.class), eq("12345678901"), eq("empbase64"));
     }
 
     @Test
@@ -271,11 +274,9 @@ class IntelbrasRealProviderSyncResultTests {
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
         assertThat(result.successCount()).isEqualTo(1);
         assertThat(result.failedCount()).isZero();
-        verify(cgiClient).upsertFaceOnlyAccessUser(anyString(), anyString(), anyString(),
-                eq("06331315470"), anyString(), any(), any());
-        verify(cgiClient).replaceFace(anyString(), anyString(), anyString(), eq("06331315470"), eq("photobase64"));
-        verify(cgiClient).clearCardNoForUser(anyString(), anyString(), anyString(), eq("06331315470"),
-                anyString(), any(), any());
+        verify(rpc2Client).upsertUser(any(IntelbrasRpc2Client.Session.class),
+                eq("06331315470"), isNull(), anyString(), any(), any());
+        verify(rpc2Client).sendFace(any(IntelbrasRpc2Client.Session.class), eq("06331315470"), eq("photobase64"));
     }
 
     @Test
@@ -284,9 +285,6 @@ class IntelbrasRealProviderSyncResultTests {
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
         when(faceEncoder.toJpegBase64("/uploads/faces/guest.jpg")).thenReturn("photobase64");
         acceptAllCgiCommands();
-        when(cgiClient.clearCardNoForUser(anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
-                .thenReturn(new IntelbrasCgiClient.CardClearResult(false, "1", "1234567890", "1234567890", true));
-
         var result = provider.syncPerson(new ProviderPerson(
                 PersonType.GUEST, UUID.randomUUID(),
                 "06331315470", null, "Visitante Real",
@@ -298,17 +296,14 @@ class IntelbrasRealProviderSyncResultTests {
         assertThat(result.status()).isEqualTo(ProviderSyncStatus.SUCCESS);
         assertThat(result.successCount()).isEqualTo(1);
         assertThat(result.failedCount()).isZero();
-        verify(cgiClient).clearCardNoForUser(anyString(), anyString(), anyString(), eq("06331315470"),
-                anyString(), any(), any());
+        verify(rpc2Client, never()).sendCard(any(IntelbrasRpc2Client.Session.class), anyString(), anyString());
     }
 
     @Test
     void sendOkButVerifyMissingFailsDeviceAndDoesNotCountAsSuccess() {
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
-        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
-                .thenReturn("OK");
-        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString()))
+        when(rpc2Client.isUserPresent(any(IntelbrasRpc2Client.Session.class), anyString()))
                 .thenReturn(false);
 
         var result = provider.syncPerson(new ProviderPerson(
@@ -326,7 +321,7 @@ class IntelbrasRealProviderSyncResultTests {
         assertThat(result.successCount()).isZero();
         assertThat(result.failedCount()).isEqualTo(1);
         assertThat(result.totalTargets()).isEqualTo(1);
-        verify(cgiClient, never()).replaceFace(anyString(), anyString(), anyString(), anyString(), anyString());
+        verify(rpc2Client, never()).sendFace(any(IntelbrasRpc2Client.Session.class), anyString(), anyString());
     }
 
     @Test
@@ -366,9 +361,10 @@ class IntelbrasRealProviderSyncResultTests {
 
         var userIdCaptor = ArgumentCaptor.forClass(String.class);
         var cardNoCaptor = ArgumentCaptor.forClass(String.class);
-        verify(cgiClient).upsertAccessUser(
-                anyString(), anyString(), anyString(),
+        verify(rpc2Client).upsertUser(
+                any(IntelbrasRpc2Client.Session.class),
                 userIdCaptor.capture(), cardNoCaptor.capture(), anyString(), any(), any());
+        verify(rpc2Client).sendCard(any(IntelbrasRpc2Client.Session.class), eq("12345678901"), eq("8765432109"));
         assertThat(userIdCaptor.getValue()).isEqualTo("12345678901");
         assertThat(cardNoCaptor.getValue()).isEqualTo("8765432109");
         assertThat(cardNoCaptor.getValue()).isNotEqualTo(userIdCaptor.getValue());
@@ -379,10 +375,10 @@ class IntelbrasRealProviderSyncResultTests {
         // Falso negativo clássico: o upsert lança timeout, mas a controladora já criou o usuário.
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
-        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+        when(rpc2Client.upsertUser(any(IntelbrasRpc2Client.Session.class), anyString(), any(), anyString(), any(), any()))
                 .thenThrow(new RuntimeException("HTTP connect timed out"));
-        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString())).thenReturn(true);
-        when(cgiClient.isCardAssociatedWithUser(anyString(), anyString(), anyString(), anyString(), anyString()))
+        when(rpc2Client.isUserPresent(any(IntelbrasRpc2Client.Session.class), anyString())).thenReturn(true);
+        when(rpc2Client.isCardAssociatedWithUser(any(IntelbrasRpc2Client.Session.class), anyString(), anyString()))
                 .thenReturn(true);
 
         var result = provider.syncPerson(personWithCard(PersonType.EMPLOYEE, Set.of(allowedAreaId), "8765432109"));
@@ -396,9 +392,9 @@ class IntelbrasRealProviderSyncResultTests {
     void cardSyncTimeoutAndVerifyMissingFailsDevice() {
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
-        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+        when(rpc2Client.upsertUser(any(IntelbrasRpc2Client.Session.class), anyString(), any(), anyString(), any(), any()))
                 .thenThrow(new RuntimeException("HTTP connect timed out"));
-        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString())).thenReturn(false);
+        when(rpc2Client.isUserPresent(any(IntelbrasRpc2Client.Session.class), anyString())).thenReturn(false);
 
         var result = provider.syncPerson(personWithCard(PersonType.EMPLOYEE, Set.of(allowedAreaId), "8765432109"));
 
@@ -415,10 +411,11 @@ class IntelbrasRealProviderSyncResultTests {
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
         acceptAllCgiCommands();
         when(faceEncoder.toJpegBase64("/faces/guest.jpg")).thenReturn("base64");
-        when(cgiClient.replaceFace(anyString(), anyString(), anyString(), anyString(), eq("base64")))
+        when(rpc2Client.sendFace(any(IntelbrasRpc2Client.Session.class), anyString(), eq("base64")))
                 .thenThrow(new RuntimeException("HTTP read timed out"));
-        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString())).thenReturn(true);
-        when(cgiClient.isFacePresent(anyString(), anyString(), anyString(), anyString())).thenReturn(true);
+        when(rpc2Client.isUserPresent(any(IntelbrasRpc2Client.Session.class), anyString())).thenReturn(true);
+        when(rpc2Client.verifyFace(any(IntelbrasRpc2Client.Session.class), anyString()))
+                .thenReturn(IntelbrasRpc2Client.FacePresence.PRESENT);
 
         var result = provider.syncPerson(person(PersonType.GUEST, Set.of(allowedAreaId), "/faces/guest.jpg"));
 
@@ -434,10 +431,11 @@ class IntelbrasRealProviderSyncResultTests {
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(1));
         acceptAllCgiCommands();
         when(faceEncoder.toJpegBase64("/faces/guest.jpg")).thenReturn("base64");
-        when(cgiClient.replaceFace(anyString(), anyString(), anyString(), anyString(), eq("base64")))
+        when(rpc2Client.sendFace(any(IntelbrasRpc2Client.Session.class), anyString(), eq("base64")))
                 .thenThrow(new RuntimeException("Face add rejected"));
-        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString())).thenReturn(true);
-        when(cgiClient.isFacePresent(anyString(), anyString(), anyString(), anyString())).thenReturn(false);
+        when(rpc2Client.isUserPresent(any(IntelbrasRpc2Client.Session.class), anyString())).thenReturn(true);
+        when(rpc2Client.verifyFace(any(IntelbrasRpc2Client.Session.class), anyString()))
+                .thenReturn(IntelbrasRpc2Client.FacePresence.ABSENT);
 
         var result = provider.syncPerson(person(PersonType.GUEST, Set.of(allowedAreaId), "/faces/guest.jpg"));
 
@@ -451,12 +449,11 @@ class IntelbrasRealProviderSyncResultTests {
         // Duas controladoras: uma dá timeout mas tem o usuário (reconcilia), a outra falha de verdade.
         var allowedAreaId = UUID.randomUUID();
         when(connectionService.selectOnlineConfiguredDevicesForAreas(Set.of(allowedAreaId))).thenReturn(connections(2));
-        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+        when(rpc2Client.upsertUser(any(IntelbrasRpc2Client.Session.class), anyString(), any(), anyString(), any(), any()))
                 .thenThrow(new RuntimeException("HTTP connect timed out"));
         // Só a primeira controladora confirma a presença do usuário.
-        when(cgiClient.isAccessUserPresent(eq("192.168.50.101"), anyString(), anyString(), anyString())).thenReturn(true);
-        when(cgiClient.isCardAssociatedWithUser(eq("192.168.50.101"), anyString(), anyString(), anyString(), anyString()))
-                .thenReturn(true);
+        when(rpc2Client.isUserPresent(any(IntelbrasRpc2Client.Session.class), anyString()))
+                .thenAnswer(invocation -> "192.168.50.101".equals(invocation.getArgument(0, IntelbrasRpc2Client.Session.class).host()));
 
         var result = provider.syncPerson(personWithCard(PersonType.EMPLOYEE, Set.of(allowedAreaId), "8765432109"));
 
@@ -467,6 +464,21 @@ class IntelbrasRealProviderSyncResultTests {
     }
 
     private void acceptAllCgiCommands() {
+        when(rpc2Client.login(anyString(), anyString(), anyString()))
+                .thenAnswer(invocation -> new IntelbrasRpc2Client.Session(invocation.getArgument(0),
+                        "123", "WebClientHttpSessionID=abc", invocation.getArgument(1), Instant.now()));
+        when(rpc2Client.upsertUser(any(IntelbrasRpc2Client.Session.class), anyString(), any(), anyString(), any(), any()))
+                .thenReturn(new IntelbrasRpc2Client.AccessUserUpsertResult("insert", "AccessUser.insertMulti", "OK"));
+        when(rpc2Client.sendCard(any(IntelbrasRpc2Client.Session.class), anyString(), anyString()))
+                .thenReturn(new IntelbrasRpc2Client.Rpc2CallResult("AccessCard.insertMulti", "OK"));
+        when(rpc2Client.sendFace(any(IntelbrasRpc2Client.Session.class), anyString(), anyString()))
+                .thenReturn(new IntelbrasRpc2Client.Rpc2CallResult("AccessFace.insertMulti", "OK"));
+        when(rpc2Client.isUserPresent(any(IntelbrasRpc2Client.Session.class), anyString()))
+                .thenReturn(true);
+        when(rpc2Client.verifyFace(any(IntelbrasRpc2Client.Session.class), anyString()))
+                .thenReturn(IntelbrasRpc2Client.FacePresence.PRESENT);
+        when(rpc2Client.isCardAssociatedWithUser(any(IntelbrasRpc2Client.Session.class), anyString(), anyString()))
+                .thenReturn(true);
         when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn("OK");
         when(cgiClient.upsertFaceOnlyAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
