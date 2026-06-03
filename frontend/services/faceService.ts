@@ -3,12 +3,15 @@ import { api } from "@/lib/api";
 export type FaceValidationChecks = {
   faceDetected: boolean;
   singleFace: boolean;
+  secondaryFaceDetected: boolean;
   brightnessOk: boolean;
   sharpnessOk: boolean;
   contrastOk: boolean;
   centeredOk: boolean;
+  faceSizeOk: boolean;
   sizeOk: boolean;
   faceFullyVisibleOk: boolean;
+  finalCompressedSizeOk: boolean;
   compressedSizeBytes: number;
   maxAllowedBytes: number;
 };

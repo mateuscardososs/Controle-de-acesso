@@ -12,6 +12,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import java.awt.image.BufferedImage;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -30,11 +31,15 @@ public class HaarFaceDetector implements FaceDetector {
     /** Down-scale the analysed image so detection cost is bounded regardless of upload resolution. */
     private static final int MAX_DETECTION_DIMENSION = 640;
     /** Pyramid step between successive window sizes. */
-    private static final double SCALE_FACTOR = 1.1;
+    private static final double SCALE_FACTOR = 1.08;
     /** Sliding-window shift, in base-window pixels, scaled with the window. */
     private static final int SHIFT = 2;
-    /** Minimum overlapping detections required to keep a face (suppresses spurious hits). */
-    private static final int MIN_NEIGHBORS = 3;
+    /**
+     * Minimum overlapping detections required to keep a face. A lower threshold is intentional here:
+     * enrolment validation must not discard a smaller/background face and then approve a group photo.
+     * The processor decides whether secondary detections are relevant enough to reject.
+     */
+    private static final int MIN_NEIGHBORS = 2;
 
     private final Cascade cascade;
 
@@ -77,7 +82,9 @@ public class HaarFaceDetector implements FaceDetector {
             scale *= SCALE_FACTOR;
         }
 
-        List<FaceBox> grouped = groupRectangles(candidates, MIN_NEIGHBORS);
+        List<FaceBox> grouped = groupRectangles(candidates, MIN_NEIGHBORS).stream()
+                .sorted(Comparator.comparingInt(FaceBox::area).reversed())
+                .toList();
         if (downscale >= 1.0) {
             return grouped;
         }
@@ -91,7 +98,9 @@ public class HaarFaceDetector implements FaceDetector {
                     (int) Math.round(box.width() * inv),
                     (int) Math.round(box.height() * inv)));
         }
-        return result;
+        return result.stream()
+                .sorted(Comparator.comparingInt(FaceBox::area).reversed())
+                .toList();
     }
 
     private boolean passesCascade(long[][] sum, long[][] sqSum, int x, int y, int winW, int winH,

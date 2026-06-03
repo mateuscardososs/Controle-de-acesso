@@ -30,13 +30,29 @@ class FacePhotoProcessorTests {
 
     @Test
     void rejectsWhenMoreThanOneFaceDetected() throws IOException {
-        FaceDetector twoFaces = image -> List.of(
+        FaceDetector twoFrontalFaces = image -> List.of(
                 new FaceDetector.FaceBox(80, 120, 160, 160),
                 new FaceDetector.FaceBox(360, 120, 160, 160));
-        var processor = new FacePhotoProcessor(MAX_BYTES, 640, 480, twoFaces);
+        var processor = new FacePhotoProcessor(MAX_BYTES, 640, 480, twoFrontalFaces);
         assertThatThrownBy(() -> processor.process(noise(600, 600)))
                 .isInstanceOf(FacePhotoRejectedException.class)
                 .hasMessage(FacePhotoRejectedException.MULTIPLE_FACES);
+    }
+
+    @Test
+    void rejectsWhenSecondarySmallerFaceIsRelevant() throws IOException {
+        FaceDetector mainFaceWithSmallerSecondary = image -> List.of(
+                new FaceDetector.FaceBox(250, 230, 280, 280),
+                new FaceDetector.FaceBox(80, 150, 80, 80));
+        var processor = new FacePhotoProcessor(MAX_BYTES, 640, 480, mainFaceWithSmallerSecondary);
+
+        var v = processor.evaluate(noise(800, 800));
+
+        assertThat(v.approved()).isFalse();
+        assertThat(v.faceDetected()).isTrue();
+        assertThat(v.singleFace()).isFalse();
+        assertThat(v.secondaryFaceDetected()).isTrue();
+        assertThat(v.message()).isEqualTo(FacePhotoRejectedException.MULTIPLE_FACES);
     }
 
     @Test
@@ -121,11 +137,14 @@ class FacePhotoProcessorTests {
         assertThat(v.message()).isEqualTo(FacePhotoProcessor.APPROVED_MESSAGE);
         assertThat(v.faceDetected()).isTrue();
         assertThat(v.singleFace()).isTrue();
+        assertThat(v.secondaryFaceDetected()).isFalse();
         assertThat(v.brightnessOk()).isTrue();
         assertThat(v.sharpnessOk()).isTrue();
         assertThat(v.contrastOk()).isTrue();
         assertThat(v.centeredOk()).isTrue();
+        assertThat(v.faceSizeOk()).isTrue();
         assertThat(v.sizeOk()).isTrue();
+        assertThat(v.finalCompressedSizeOk()).isTrue();
         assertThat(v.compressedSizeBytes()).isLessThanOrEqualTo(MAX_BYTES);
         assertThat(v.maxAllowedBytes()).isEqualTo(MAX_BYTES);
     }
@@ -152,6 +171,7 @@ class FacePhotoProcessorTests {
 
         assertThat(v.approved()).isFalse();
         assertThat(v.singleFace()).isFalse();
+        assertThat(v.secondaryFaceDetected()).isTrue();
         assertThat(v.message()).isEqualTo(FacePhotoRejectedException.MULTIPLE_FACES);
     }
 
@@ -172,7 +192,8 @@ class FacePhotoProcessorTests {
         var env = new MockEnvironment();
         env.setActiveProfiles("prod");
         assertThatThrownBy(() -> new FacePhotoProcessor(
-                204800, 640, 480, 0.6, 0.12, 0.34, 50, 235, 55, 20, true, 12, 0.25, image -> List.of(), env))
+                204800, 640, 480, 0.6, 0.18, 0.25, 50, 235, 55, 20,
+                0.065, 0.12, true, 12, 0.25, image -> List.of(), env))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("99328");
     }
@@ -182,7 +203,8 @@ class FacePhotoProcessorTests {
         var env = new MockEnvironment();
         env.setActiveProfiles("prod");
         assertThatCode(() -> new FacePhotoProcessor(
-                99328, 640, 480, 0.6, 0.12, 0.34, 50, 235, 55, 20, true, 12, 0.25, image -> List.of(), env))
+                99328, 640, 480, 0.6, 0.18, 0.25, 50, 235, 55, 20,
+                0.065, 0.12, true, 12, 0.25, image -> List.of(), env))
                 .doesNotThrowAnyException();
     }
 
@@ -190,7 +212,8 @@ class FacePhotoProcessorTests {
     void bootDoesNotGuardOutsideProd() {
         var env = new MockEnvironment(); // no "prod" profile
         assertThatCode(() -> new FacePhotoProcessor(
-                204800, 640, 480, 0.6, 0.12, 0.34, 50, 235, 55, 20, true, 12, 0.25, image -> List.of(), env))
+                204800, 640, 480, 0.6, 0.18, 0.25, 50, 235, 55, 20,
+                0.065, 0.12, true, 12, 0.25, image -> List.of(), env))
                 .doesNotThrowAnyException();
     }
 

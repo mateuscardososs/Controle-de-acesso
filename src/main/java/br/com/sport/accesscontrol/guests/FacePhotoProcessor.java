@@ -18,6 +18,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -54,6 +55,8 @@ public class FacePhotoProcessor {
     private final int maxBrightness;
     private final double minSharpness;
     private final double minContrast;
+    private final double secondaryFaceMinRatio;
+    private final double secondaryFaceMinAreaRatio;
     private final boolean occlusionCheckEnabled;
     private final double occlusionMinLowerTexture;
     private final double occlusionLowerUpperRatio;
@@ -65,12 +68,14 @@ public class FacePhotoProcessor {
             @Value("${app.uploads.faces-max-width:640}") int maxWidth,
             @Value("${app.uploads.faces-max-height:480}") int maxHeight,
             @Value("${app.uploads.faces.face-margin-ratio:0.6}") double faceMarginRatio,
-            @Value("${app.uploads.faces.min-face-ratio:0.12}") double minFaceRatio,
-            @Value("${app.uploads.faces.max-center-offset-ratio:0.34}") double maxCenterOffsetRatio,
+            @Value("${app.uploads.faces.min-face-ratio:0.18}") double minFaceRatio,
+            @Value("${app.uploads.faces.max-center-offset-ratio:0.25}") double maxCenterOffsetRatio,
             @Value("${app.uploads.faces.min-brightness:50}") int minBrightness,
             @Value("${app.uploads.faces.max-brightness:235}") int maxBrightness,
             @Value("${app.uploads.faces.min-sharpness:55}") double minSharpness,
             @Value("${app.uploads.faces.min-contrast:20}") double minContrast,
+            @Value("${app.uploads.faces.secondary-face-min-ratio:0.065}") double secondaryFaceMinRatio,
+            @Value("${app.uploads.faces.secondary-face-min-area-ratio:0.12}") double secondaryFaceMinAreaRatio,
             @Value("${app.uploads.faces.occlusion-check-enabled:true}") boolean occlusionCheckEnabled,
             @Value("${app.uploads.faces.occlusion-min-lower-texture:12}") double occlusionMinLowerTexture,
             @Value("${app.uploads.faces.occlusion-lower-upper-ratio:0.25}") double occlusionLowerUpperRatio,
@@ -86,14 +91,16 @@ public class FacePhotoProcessor {
         this.maxBrightness = maxBrightness;
         this.minSharpness = minSharpness;
         this.minContrast = minContrast;
+        this.secondaryFaceMinRatio = secondaryFaceMinRatio;
+        this.secondaryFaceMinAreaRatio = secondaryFaceMinAreaRatio;
         this.occlusionCheckEnabled = occlusionCheckEnabled;
         this.occlusionMinLowerTexture = occlusionMinLowerTexture;
         this.occlusionLowerUpperRatio = occlusionLowerUpperRatio;
         this.faceDetector = faceDetector;
 
-        log.info("FACE_UPLOAD_CONFIG maxBytes={} maxWidth={} maxHeight={} minBrightness={} maxBrightness={} minSharpness={} minContrast={} minFaceRatio={} maxCenterOffsetRatio={} faceMarginRatio={}",
+        log.info("FACE_UPLOAD_CONFIG maxBytes={} maxWidth={} maxHeight={} minBrightness={} maxBrightness={} minSharpness={} minContrast={} minFaceRatio={} maxCenterOffsetRatio={} faceMarginRatio={} secondaryFaceMinRatio={} secondaryFaceMinAreaRatio={}",
                 maxBytes, maxWidth, maxHeight, minBrightness, maxBrightness, minSharpness, minContrast,
-                minFaceRatio, maxCenterOffsetRatio, faceMarginRatio);
+                minFaceRatio, maxCenterOffsetRatio, faceMarginRatio, secondaryFaceMinRatio, secondaryFaceMinAreaRatio);
 
         boolean prod = environment != null && Arrays.asList(environment.getActiveProfiles()).contains("prod");
         if (prod && maxBytes > INTELBRAS_HARD_LIMIT_BYTES) {
@@ -108,7 +115,8 @@ public class FacePhotoProcessor {
      * Package-private so it is used only by tests / same-package helpers and never picked by Spring.
      */
     FacePhotoProcessor(int maxBytes, int maxWidth, int maxHeight) {
-        this(maxBytes, maxWidth, maxHeight, 0.6, 0.12, 0.34, 50, 235, 55, 20, true, 12, 0.25, null, null);
+        this(maxBytes, maxWidth, maxHeight, 0.6, 0.18, 0.25, 50, 235, 55, 20,
+                0.065, 0.12, true, 12, 0.25, null, null);
     }
 
     /**
@@ -116,7 +124,8 @@ public class FacePhotoProcessor {
      * Package-private so Spring sees a single autowirable (annotated) constructor.
      */
     FacePhotoProcessor(int maxBytes, int maxWidth, int maxHeight, FaceDetector faceDetector) {
-        this(maxBytes, maxWidth, maxHeight, 0.6, 0.12, 0.34, 50, 235, 55, 20, true, 12, 0.25, faceDetector, null);
+        this(maxBytes, maxWidth, maxHeight, 0.6, 0.18, 0.25, 50, 235, 55, 20,
+                0.065, 0.12, true, 12, 0.25, faceDetector, null);
     }
 
     /** Final upload path: validate and return the processed photo, throwing 422 when not approved. */
@@ -155,7 +164,7 @@ public class FacePhotoProcessor {
                     || source.getWidth() != normalized.getWidth()
                     || source.getHeight() != normalized.getHeight();
             return new FacePhotoValidation(true, APPROVED_MESSAGE,
-                    true, true, true, true, true, true, true, true,
+                    true, true, false, true, true, true, true, true, true,
                     compressed, "jpg", "image/jpeg", normalized.getWidth(), normalized.getHeight(),
                     originalBytes.length, compressed.length, maxBytes, changed);
         }
@@ -168,30 +177,36 @@ public class FacePhotoProcessor {
         boolean sharpnessOk = sharpness >= minSharpness;
         boolean contrastOk = contrast >= minContrast;
 
-        List<FaceDetector.FaceBox> faces = faceDetector.detect(rgb);
+        List<FaceDetector.FaceBox> faces = faceDetector.detect(rgb).stream()
+                .filter(face -> face != null && face.width() > 0 && face.height() > 0)
+                .sorted(Comparator.comparingInt(FaceDetector.FaceBox::area).reversed())
+                .toList();
         boolean faceDetected = !faces.isEmpty();
-        boolean singleFace = faces.size() == 1;
 
         int imgW = rgb.getWidth();
         int imgH = rgb.getHeight();
         boolean sizeOk = false;
         boolean centeredOk = false;
         boolean faceFullyVisibleOk = true; // assume visible unless the conservative heuristic flags it
+        boolean secondaryFaceDetected = false;
         BufferedImage toCompress = rgb;
-        if (singleFace) {
+        if (faceDetected) {
             var face = faces.get(0);
+            secondaryFaceDetected = hasRelevantSecondaryFace(faces, face, imgW, imgH);
+            boolean singleFace = !secondaryFaceDetected;
             double faceRatio = Math.min(face.width() / (double) imgW, face.height() / (double) imgH);
             double offsetX = Math.abs(face.centerX() - imgW / 2.0) / imgW;
             double offsetY = Math.abs(face.centerY() - imgH / 2.0) / imgH;
             sizeOk = faceRatio >= minFaceRatio;
             centeredOk = offsetX <= maxCenterOffsetRatio && offsetY <= maxCenterOffsetRatio;
-            if (sizeOk && centeredOk) {
+            if (singleFace && sizeOk && centeredOk) {
                 if (occlusionCheckEnabled) {
                     faceFullyVisibleOk = !lowerFaceLooksOccluded(rgb, face);
                 }
                 toCompress = cropAroundFace(rgb, face);
             }
         }
+        boolean singleFace = faceDetected && !secondaryFaceDetected;
 
         var normalized = resizeWithinBox(toCompress);
         var compressed = compress(normalized);
@@ -204,20 +219,53 @@ public class FacePhotoProcessor {
                         sizeOk, centeredOk, faceFullyVisibleOk, sizeBytesOk);
 
         if (!approved) {
-            log.info("FACE_VALIDATION_REJECTED brightness={} sharpness={} contrast={} brightness_ok={} sharpness_ok={} contrast_ok={} faces={} single={} size_ok={} centered_ok={} face_visible_ok={} bytes={} max_bytes={}",
+            log.info("FACE_VALIDATION_REJECTED brightness={} sharpness={} contrast={} brightness_ok={} sharpness_ok={} contrast_ok={} faces={} single={} secondary_face_detected={} size_ok={} centered_ok={} face_visible_ok={} bytes={} max_bytes={} final_size_ok={}",
                     Math.round(brightness), Math.round(sharpness), Math.round(contrast),
-                    brightnessOk, sharpnessOk, contrastOk, faces.size(), singleFace, sizeOk, centeredOk,
-                    faceFullyVisibleOk, compressed.length, maxBytes);
+                    brightnessOk, sharpnessOk, contrastOk, faces.size(), singleFace, secondaryFaceDetected,
+                    sizeOk, centeredOk, faceFullyVisibleOk, compressed.length, maxBytes, sizeBytesOk);
         }
 
         boolean changed = compressed.length != originalBytes.length
                 || source.getWidth() != normalized.getWidth()
                 || source.getHeight() != normalized.getHeight();
         return new FacePhotoValidation(approved, message,
-                faceDetected, singleFace, brightnessOk, sharpnessOk, contrastOk, centeredOk, sizeOk,
+                faceDetected, singleFace, secondaryFaceDetected, brightnessOk, sharpnessOk, contrastOk, centeredOk, sizeOk,
                 faceFullyVisibleOk,
                 compressed, "jpg", "image/jpeg", normalized.getWidth(), normalized.getHeight(),
                 originalBytes.length, compressed.length, maxBytes, changed);
+    }
+
+    private boolean hasRelevantSecondaryFace(List<FaceDetector.FaceBox> faces, FaceDetector.FaceBox primary,
+                                             int imgW, int imgH) {
+        for (int i = 1; i < faces.size(); i++) {
+            var candidate = faces.get(i);
+            if (intersectionOverUnion(primary, candidate) > 0.35) {
+                continue;
+            }
+            double ratio = Math.min(candidate.width() / (double) imgW, candidate.height() / (double) imgH);
+            double areaRatio = candidate.area() / (double) Math.max(1, primary.area());
+            boolean relevant = ratio >= secondaryFaceMinRatio || areaRatio >= secondaryFaceMinAreaRatio;
+            if (relevant) {
+                log.info("FACE_SECONDARY_DETECTED primary={}x{} secondary={}x{} secondary_ratio={} secondary_area_ratio={}",
+                        primary.width(), primary.height(), candidate.width(), candidate.height(),
+                        String.format(java.util.Locale.ROOT, "%.3f", ratio),
+                        String.format(java.util.Locale.ROOT, "%.3f", areaRatio));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private double intersectionOverUnion(FaceDetector.FaceBox a, FaceDetector.FaceBox b) {
+        int left = Math.max(a.x(), b.x());
+        int top = Math.max(a.y(), b.y());
+        int right = Math.min(a.x() + a.width(), b.x() + b.width());
+        int bottom = Math.min(a.y() + a.height(), b.y() + b.height());
+        int intersectionW = Math.max(0, right - left);
+        int intersectionH = Math.max(0, bottom - top);
+        double intersection = (double) intersectionW * intersectionH;
+        double union = (double) a.area() + b.area() - intersection;
+        return union <= 0 ? 0 : intersection / union;
     }
 
     /**
@@ -508,6 +556,7 @@ public class FacePhotoProcessor {
             String message,
             boolean faceDetected,
             boolean singleFace,
+            boolean secondaryFaceDetected,
             boolean brightnessOk,
             boolean sharpnessOk,
             boolean contrastOk,
@@ -524,5 +573,12 @@ public class FacePhotoProcessor {
             long maxAllowedBytes,
             boolean compressed
     ) {
+        public boolean faceSizeOk() {
+            return sizeOk;
+        }
+
+        public boolean finalCompressedSizeOk() {
+            return compressedSizeBytes <= maxAllowedBytes;
+        }
     }
 }

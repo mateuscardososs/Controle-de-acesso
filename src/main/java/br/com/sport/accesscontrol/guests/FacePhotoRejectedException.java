@@ -11,7 +11,7 @@ public class FacePhotoRejectedException extends UnprocessableEntityException {
     public static final String NO_FACE =
             "Não detectamos um rosto. Envie uma foto frontal.";
     public static final String MULTIPLE_FACES =
-            "Detectamos mais de um rosto. Envie uma foto com apenas uma pessoa.";
+            "Detectamos mais de uma pessoa na imagem. Tire uma foto individual, com apenas o rosto da pessoa cadastrada.";
     public static final String LOW_QUALITY =
             "A foto está escura ou com baixa nitidez.";
     public static final String FACE_TOO_SMALL_OR_OFFSET =

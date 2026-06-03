@@ -26,17 +26,19 @@ const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
 const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB — alinhado com FaceStorageService
 const VALIDATING_MESSAGE = "Validando a foto no servidor...";
 const BACKEND_ERROR_MESSAGE = "Não foi possível validar a foto agora. Tente novamente.";
+const MULTIPLE_PEOPLE_MESSAGE = "Detectamos mais de uma pessoa na imagem. Tire uma foto individual, com apenas o rosto da pessoa cadastrada.";
 
 // Rótulos das checagens reais retornadas pelo backend (sem decisão no client).
 const CHECK_LABELS: { key: keyof FaceValidationChecks; label: string }[] = [
   { key: "faceDetected", label: "Rosto detectado" },
-  { key: "singleFace", label: "Apenas um rosto" },
+  { key: "singleFace", label: "Apenas uma pessoa" },
   { key: "brightnessOk", label: "Iluminação" },
   { key: "sharpnessOk", label: "Nitidez" },
   { key: "contrastOk", label: "Contraste" },
   { key: "centeredOk", label: "Centralização" },
-  { key: "sizeOk", label: "Tamanho do rosto" },
-  { key: "faceFullyVisibleOk", label: "Rosto descoberto" }
+  { key: "faceSizeOk", label: "Tamanho do rosto" },
+  { key: "faceFullyVisibleOk", label: "Rosto descoberto" },
+  { key: "finalCompressedSizeOk", label: "Arquivo final" }
 ];
 
 function isCameraAvailable(): boolean {
@@ -178,14 +180,19 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
       const result = await faceService.validate(file);
       if (validationRunRef.current !== runId) return;
 
-      if (result.approved) {
+      const multiplePeopleDetected = result.checks.secondaryFaceDetected || !result.checks.singleFace;
+      if (result.approved && !multiplePeopleDetected) {
         setQuality({ status: "approved", message: result.message, checks: result.checks });
         setCandidateFile(null);
         onChange(file);
         return;
       }
       // Reprovado pelo backend — mostra o motivo real e NÃO aceita a foto.
-      setQuality({ status: "rejected", message: result.message, checks: result.checks });
+      setQuality({
+        status: "rejected",
+        message: multiplePeopleDetected ? MULTIPLE_PEOPLE_MESSAGE : result.message,
+        checks: result.checks
+      });
       onChange(null);
     } catch (validationError) {
       if (validationRunRef.current !== runId) return;
