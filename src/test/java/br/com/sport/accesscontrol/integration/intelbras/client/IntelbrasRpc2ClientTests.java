@@ -38,13 +38,19 @@ class IntelbrasRpc2ClientTests {
     @Test
     void rpc2LoginUsesChallengeDigestCookieAndReturnsSession() throws Exception {
         var httpClient = mock(HttpClient.class);
+        var bootstrap = stringResponse(200, """
+                <!doctype html><html><title>WEB</title></html>
+                """, Map.of("Set-Cookie", List.of("BootCookie=boot; Path=/")));
+        // Realistic firmware challenge: HTTP 200 with result:false + error JUNTO com realm/random.
+        // O login deve tolerar isso (não tratar como falha) e seguir para o commit.
         var challenge = stringResponse(200, """
-                {"id":1,"session":12345,"params":{"realm":"Login to Intelbras","random":"abcdef"}}
+                {"id":1,"session":12345,"result":false,"error":{"code":268632079,"message":"Need challenge"},"params":{"realm":"Login to Intelbras","random":"abcdef","encryption":"Default"}}
                 """, Map.of("Set-Cookie", List.of("WebClientHttpSessionID=challenge-cookie; Path=/")));
         var success = stringResponse(200, """
                 {"id":2,"result":true,"session":12345,"params":{"keepAliveInterval":20}}
                 """, Map.of("Set-Cookie", List.of("WebClientHttpSessionID=final-cookie; Path=/")));
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(bootstrap)
                 .thenReturn(challenge)
                 .thenReturn(success);
 
@@ -52,21 +58,32 @@ class IntelbrasRpc2ClientTests {
         var session = client.login("192.168.15.5", "admin", "secret");
 
         assertThat(session.sessionId()).isEqualTo("12345");
-        assertThat(session.cookie()).isEqualTo("WebClientHttpSessionID=final-cookie");
+        assertThat(session.cookie()).isEqualTo("BootCookie=boot; WebClientHttpSessionID=final-cookie");
 
         var requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
-        verify(httpClient, times(2)).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        verify(httpClient, times(3)).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
         var requests = requestCaptor.getAllValues();
-        assertThat(requests).allSatisfy(request -> assertThat(request.uri().getPath()).isEqualTo("/RPC2"));
+        assertThat(requests.get(0).method()).isEqualTo("GET");
+        assertThat(requests.get(0).uri().getPath()).isEqualTo("/");
+        assertThat(requests.get(1).uri().getPath()).isEqualTo("/RPC2_Login");
+        assertThat(requests.get(2).uri().getPath()).isEqualTo("/RPC2_Login");
         assertThat(requests.get(1).headers().firstValue("Cookie"))
-                .hasValue("WebClientHttpSessionID=challenge-cookie");
+                .hasValue("BootCookie=boot");
+        assertThat(requests.get(2).headers().firstValue("Cookie"))
+                .hasValue("BootCookie=boot; WebClientHttpSessionID=challenge-cookie");
+        assertThat(requests.get(1).headers().firstValue("Accept"))
+                .hasValue("application/json, text/plain, */*");
+        assertThat(requests.get(1).headers().firstValue("Origin"))
+                .hasValue("http://192.168.15.5");
+        assertThat(requests.get(1).headers().firstValue("Referer"))
+                .hasValue("http://192.168.15.5/");
 
-        var challengeBody = jsonBody(requests.get(0));
+        var challengeBody = jsonBody(requests.get(1));
         assertThat(challengeBody.get("method").asText()).isEqualTo("global.login");
         assertThat(challengeBody.at("/params/userName").asText()).isEqualTo("admin");
         assertThat(challengeBody.at("/params/password").asText()).isBlank();
 
-        var loginBody = jsonBody(requests.get(1));
+        var loginBody = jsonBody(requests.get(2));
         assertThat(loginBody.get("session").asLong()).isEqualTo(12345L);
         assertThat(loginBody.at("/params/password").asText())
                 .isEqualTo(IntelbrasRpc2Client.challengePassword("admin", "Login to Intelbras", "secret", "abcdef"))
@@ -88,6 +105,9 @@ class IntelbrasRpc2ClientTests {
                 .isInstanceOf(IntelbrasIntegrationException.class)
                 .hasMessageContaining("internal error")
                 .hasMessageContaining("AccessUser.insertMulti");
+        var requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(httpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        assertThat(requestCaptor.getValue().uri().getPath()).isEqualTo("/RPC2");
     }
 
     @Test
@@ -189,6 +209,51 @@ class IntelbrasRpc2ClientTests {
         assertThat(bodies.get(4).at("/params/Condition/UserID").asText()).isEqualTo(userId);
         assertThat(bodies.get(5).at("/params/Condition/UserID").asText()).isEqualTo(userId);
         assertThat(bodies.get(6).at("/params/Condition/UserID").asText()).isEqualTo(userId);
+    }
+
+    @Test
+    void rpc2LoginChallengeWithoutRealmOrRandomFailsWithDetail() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        var bootstrap = stringResponse(200, """
+                <!doctype html><html><title>WEB</title></html>
+                """);
+        var challenge = stringResponse(200, """
+                {"id":1,"result":false,"error":{"code":268632079,"message":"Need challenge"},"params":{"encryption":"Default"}}
+                """);
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(bootstrap)
+                .thenReturn(challenge);
+        var client = client(httpClient);
+
+        assertThatThrownBy(() -> client.login("192.168.15.5", "admin", "secret"))
+                .isInstanceOf(IntelbrasIntegrationException.class)
+                .hasMessageContaining("LOGIN_CHALLENGE")
+                .hasMessageContaining("realm/random");
+        // Bootstrap + challenge; não avança para o commit.
+        verify(httpClient, times(2)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+    }
+
+    @Test
+    void rpc2LoginCommitWithoutSessionFailsWithDetail() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        var bootstrap = stringResponse(200, """
+                <!doctype html><html><title>WEB</title></html>
+                """);
+        var challenge = stringResponse(200, """
+                {"id":1,"result":false,"error":{"code":268632079,"message":"Need challenge"},"params":{"realm":"Login to Intelbras","random":"abcdef"}}
+                """, Map.of("Set-Cookie", List.of("WebClientHttpSessionID=challenge-cookie; Path=/")));
+        var rejected = stringResponse(200, """
+                {"id":2,"result":false,"error":{"code":268632085,"message":"Password error"}}
+                """);
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(bootstrap)
+                .thenReturn(challenge)
+                .thenReturn(rejected);
+        var client = client(httpClient);
+
+        assertThatThrownBy(() -> client.login("192.168.15.5", "admin", "wrong"))
+                .isInstanceOf(IntelbrasIntegrationException.class)
+                .hasMessageContaining("LOGIN_COMMIT");
     }
 
     private IntelbrasRpc2Client client(HttpClient httpClient) {

@@ -116,6 +116,25 @@ class IntelbrasSyncWorkerEmployeeTests {
     }
 
     @Test
+    void zeroConfirmedOnlyUnverifiedIsSyncFailedNotWarnings() {
+        // 0 confirmadas, 0 falhas explícitas, apenas "não verificadas" (sessão RPC2 indisponível):
+        // deve ser SYNC_FAILED — nunca SYNCED_WITH_WARNINGS (warnings só com >=1 confirmada).
+        var employee = employee();
+        employee.replaceAllowedAreas(new LinkedHashSet<>(List.of(area("Portaria", true))));
+        when(employeeRepository.findByIdWithAllowedAreas(employee.getId())).thenReturn(Optional.of(employee));
+        when(provider.syncPerson(any())).thenReturn(new ProviderSyncResult(
+                ProviderSyncStatus.FAILED,
+                "Necessita verificação: 0 de 5 controladora(s) confirmada(s).",
+                Duration.ofMillis(10),
+                5, 0, 0, 5));
+
+        worker.process(new IntelbrasSyncMessage(PersonType.EMPLOYEE, employee.getId(), 1));
+
+        assertThat(employee.getSyncStatus()).isEqualTo(SyncStatus.SYNC_FAILED);
+        assertThat(employee.getSyncSuccessCount()).isZero();
+    }
+
+    @Test
     void employeeFinalStatusIsDerivedFromCountsEvenWhenProviderStatusIsFailed() {
         var employee = employee();
         employee.replaceAllowedAreas(new LinkedHashSet<>(List.of(area("Portaria", true))));

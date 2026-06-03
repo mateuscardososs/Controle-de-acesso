@@ -386,6 +386,25 @@ public class IntelbrasCgiClient {
     }
 
     /**
+     * Verifies an AccessControlCard registration exists by the RecNo returned by recordUpdater — last
+     * fallback for verification when UserID/CardNo lookups come back empty on quirky firmware.
+     */
+    public boolean isAccessRecordPresentByRecNo(String host, String username, String password, String recNo) {
+        if (recNo == null || recNo.isBlank()) {
+            return false;
+        }
+        var path = "/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.RecNo=" + encode(recNo);
+        var body = getText(host, username, password, path);
+        var records = IntelbrasRecordFinderParser.parseRecords(body);
+        if (!records.isEmpty()) {
+            return true;
+        }
+        var values = IntelbrasRecordFinderParser.parseKeyValues(body);
+        var found = longValue(values, "found", "Found");
+        return found != null && found > 0;
+    }
+
+    /**
      * Strict face verification. A 2xx HTML web page is rejected by {@link #getText} before this parser
      * runs, so "true" here means the CGI endpoint responded with a non-empty, non-zero face payload.
      */
@@ -799,7 +818,7 @@ public class IntelbrasCgiClient {
                                                                      String cardName, LocalDateTime validFrom,
                                                                      LocalDateTime validUntil) {
         var payloads = new ArrayList<AccessUserPayload>();
-        payloads.add(accessUserPayload("face_only_minimal_document_card", "insert", null, userId, cardNo,
+        payloads.add(accessUserPayload("legacy_face_document_card_no_dates", "insert", null, userId, cardNo,
                 cardName, false));
         payloads.add(accessUserPayload("face_only_card_status_card_type", "insert", null, userId, cardNo,
                 cardName, false));

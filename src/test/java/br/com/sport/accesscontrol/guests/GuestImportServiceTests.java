@@ -127,6 +127,56 @@ class GuestImportServiceTests {
                 .hasMessageContaining("1000 linhas");
     }
 
+    @Test
+    void rowPersistenceFailureBecomesRowErrorNotException() throws Exception {
+        var guestRepository = mock(GuestRepository.class);
+        when(guestRepository.findFirstByCpfOrderByVisitStartDesc(anyString())).thenReturn(Optional.empty());
+        when(guestRepository.save(any(Guest.class)))
+                .thenThrow(new RuntimeException("duplicate key value violates unique constraint"));
+        var service = service(guestRepository);
+        var file = csv("""
+                Nome Completo,CPF,Telefone,Camarote
+                Visitante Novo,52998224725,81999990000,Front 1
+                """);
+
+        var report = service.importFile(file); // não pode lançar 500
+
+        assertThat(report.created()).isZero();
+        assertThat(report.errors()).hasSize(1);
+        assertThat(report.errors().get(0).reason()).contains("Erro ao processar");
+    }
+
+    @Test
+    void invalidLoungeBecomesRowError() throws Exception {
+        var service = service(mock(GuestRepository.class));
+        var file = csv("""
+                Nome Completo,CPF,Telefone,Camarote
+                Visitante,52998224725,81999990000,Camarote Inexistente
+                """);
+
+        var report = service.importFile(file);
+
+        assertThat(report.errors()).hasSize(1);
+        assertThat(report.errors().get(0).reason()).contains("Camarote inválido");
+    }
+
+    @Test
+    void emptyPhoneStillImports() throws Exception {
+        var guestRepository = mock(GuestRepository.class);
+        when(guestRepository.findFirstByCpfOrderByVisitStartDesc(anyString())).thenReturn(Optional.empty());
+        when(guestRepository.save(any(Guest.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        var service = service(guestRepository);
+        var file = csv("""
+                Nome Completo,CPF,Telefone,Camarote
+                Visitante Sem Fone,52998224725,,Front 1
+                """);
+
+        var report = service.importFile(file);
+
+        assertThat(report.created()).isEqualTo(1);
+        assertThat(report.errors()).isEmpty();
+    }
+
     private GuestImportService service(GuestRepository guestRepository) {
         return new GuestImportService(
                 guestRepository,

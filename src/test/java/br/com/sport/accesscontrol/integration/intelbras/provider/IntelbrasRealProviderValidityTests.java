@@ -47,7 +47,7 @@ class IntelbrasRealProviderValidityTests {
         var cgiClient = mock(IntelbrasCgiClient.class);
         var rpc2Client = mock(IntelbrasRpc2Client.class);
         when(connectionService.selectOnlineConfiguredDevice(any())).thenReturn(Optional.of(connection));
-        acceptVerification(rpc2Client);
+        acceptVerification(cgiClient);
         var provider = new IntelbrasRealProvider(
                 connectionService,
                 cgiClient,
@@ -67,11 +67,9 @@ class IntelbrasRealProviderValidityTests {
 
         provider.syncPerson(person);
 
-        verify(rpc2Client).upsertUser(
-                any(IntelbrasRpc2Client.Session.class),
-                anyString(),
-                anyString(),
-                eq("Visitante"),
+        verify(cgiClient).upsertAccessUser(
+                anyString(), anyString(), anyString(),
+                anyString(), anyString(), eq("Visitante"),
                 fromCaptor.capture(),
                 untilCaptor.capture()
         );
@@ -89,7 +87,7 @@ class IntelbrasRealProviderValidityTests {
         var cgiClient = mock(IntelbrasCgiClient.class);
         var rpc2Client = mock(IntelbrasRpc2Client.class);
         when(connectionService.selectOnlineConfiguredDevicesForAreas(any())).thenReturn(List.of(connection));
-        acceptVerification(rpc2Client);
+        acceptVerification(cgiClient);
         var provider = new IntelbrasRealProvider(
                 connectionService,
                 cgiClient,
@@ -108,11 +106,9 @@ class IntelbrasRealProviderValidityTests {
 
         provider.syncPerson(person);
 
-        verify(rpc2Client).upsertUser(
-                any(IntelbrasRpc2Client.Session.class),
-                anyString(),
-                anyString(),
-                eq("Colaborador"),
+        verify(cgiClient).upsertAccessUser(
+                anyString(), anyString(), anyString(),
+                anyString(), anyString(), eq("Colaborador"),
                 fromCaptor.capture(),
                 untilCaptor.capture()
         );
@@ -120,17 +116,12 @@ class IntelbrasRealProviderValidityTests {
         assertThat(untilCaptor.getValue()).isEqualTo(LocalDateTime.of(2026, 7, 16, 9, 30));
     }
 
-    private void acceptVerification(IntelbrasRpc2Client rpc2Client) {
-        when(rpc2Client.login(anyString(), anyString(), anyString()))
-                .thenAnswer(invocation -> new IntelbrasRpc2Client.Session(invocation.getArgument(0),
-                        "123", "WebClientHttpSessionID=abc", invocation.getArgument(1), Instant.now()));
-        when(rpc2Client.upsertUser(any(IntelbrasRpc2Client.Session.class), anyString(), any(), anyString(), any(), any()))
-                .thenReturn(new IntelbrasRpc2Client.AccessUserUpsertResult("insert", "AccessUser.insertMulti", "OK"));
-        when(rpc2Client.sendCard(any(IntelbrasRpc2Client.Session.class), anyString(), anyString()))
-                .thenReturn(new IntelbrasRpc2Client.Rpc2CallResult("AccessCard.insertMulti", "OK"));
-        when(rpc2Client.isUserPresent(any(IntelbrasRpc2Client.Session.class), anyString()))
+    private void acceptVerification(IntelbrasCgiClient cgiClient) {
+        when(cgiClient.upsertAccessUser(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn("OK");
+        when(cgiClient.isAccessUserPresent(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(true);
-        when(rpc2Client.isCardAssociatedWithUser(any(IntelbrasRpc2Client.Session.class), anyString(), anyString()))
+        when(cgiClient.isFacePresent(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(true);
     }
 

@@ -68,7 +68,7 @@ public class Employee extends TimestampedEntity {
     @Column(name = "access_valid_until")
     private Instant accessValidUntil;
 
-    @Enumerated(EnumType.STRING)
+    @jakarta.persistence.Convert(converter = br.com.sport.accesscontrol.integration.sync.SyncStatusConverter.class)
     @Column(name = "sync_status", nullable = false)
     private SyncStatus syncStatus = SyncStatus.PENDING_SYNC;
 

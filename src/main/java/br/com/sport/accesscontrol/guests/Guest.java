@@ -60,7 +60,7 @@ public class Guest extends TimestampedEntity {
     @Column(name = "completed_at")
     private Instant completedAt;
 
-    @Enumerated(EnumType.STRING)
+    @jakarta.persistence.Convert(converter = br.com.sport.accesscontrol.integration.sync.SyncStatusConverter.class)
     @Column(name = "sync_status", nullable = false)
     private SyncStatus syncStatus = SyncStatus.NOT_REQUIRED;
 

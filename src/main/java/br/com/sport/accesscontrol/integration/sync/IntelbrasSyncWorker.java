@@ -399,10 +399,9 @@ public class IntelbrasSyncWorker {
         if (totalTargets > 0 && successCount == totalTargets && failedCount == 0 && skippedCount == 0) {
             return SyncStatus.SYNCED;
         }
+        // SYNCED_WITH_WARNINGS só é válido quando PELO MENOS uma controladora confirmou.
+        // 0 confirmadas (mesmo que apenas "não verificadas") é sempre SYNC_FAILED — nunca warnings.
         if (totalTargets > 0 && successCount > 0 && successCount < totalTargets) {
-            return SyncStatus.SYNCED_WITH_WARNINGS;
-        }
-        if (totalTargets > 0 && successCount == 0 && failedCount == 0 && skippedCount > 0) {
             return SyncStatus.SYNCED_WITH_WARNINGS;
         }
         return SyncStatus.SYNC_FAILED;

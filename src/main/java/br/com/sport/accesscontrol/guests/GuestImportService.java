@@ -153,11 +153,20 @@ public class GuestImportService {
 
         int created = 0, updated = 0, skipped = 0;
         var errors = new ArrayList<ImportRowError>();
+        log.info("GUEST_IMPORT_STARTED file={} data_rows={}", safeFileName(file), dataRows.size());
 
         for (int i = 0; i < dataRows.size(); i++) {
             int line = dataStart + i + 1;
-            var values = mapRow(dataRows.get(i), colMapping);
-            var result = processRow(line, values);
+            RowResult result;
+            try {
+                var values = mapRow(dataRows.get(i), colMapping);
+                result = processRow(line, values);
+            } catch (Exception exception) {
+                // Uma linha problemática (ex.: constraint, dado inesperado) NUNCA pode derrubar a
+                // importação inteira com 500 — vira um erro de linha no relatório.
+                log.warn("GUEST_IMPORT_FAILED line={} error={}", line, exception.getMessage());
+                result = RowResult.error("", "Erro ao processar a linha: " + exception.getMessage());
+            }
             switch (result.outcome()) {
                 case CREATED -> created++;
                 case UPDATED -> updated++;
@@ -166,8 +175,8 @@ public class GuestImportService {
             }
         }
         int total = created + updated + skipped + errors.size();
-        log.info("GUEST_IMPORT_DONE file={} total={} created={} updated={} skipped={} errors={}",
-                file.getOriginalFilename(), total, created, updated, skipped, errors.size());
+        log.info("GUEST_IMPORT_FINISHED file={} total={} created={} updated={} skipped={} errors={}",
+                safeFileName(file), total, created, updated, skipped, errors.size());
         auditService.record("GUEST_BULK_IMPORT", "Guest", null,
                 java.util.Map.of(
                         "file", Objects.requireNonNullElse(file.getOriginalFilename(), ""),
@@ -389,14 +398,17 @@ public class GuestImportService {
         Instant visitStart = day.atTime(ACCESS_START).atZone(EVENT_ZONE).toInstant();
         Instant visitEnd   = day.plusDays(1).atTime(ACCESS_END).atZone(EVENT_ZONE).toInstant();
 
+        log.info("GUEST_IMPORT_ROW_VALIDATED line={} cpf={} lounge={}", lineNumber, maskCpf(cpfDigits), canonicalLounge);
         var existing = guestRepository.findFirstByCpfOrderByVisitStartDesc(cpfDigits);
         if (existing.isPresent()) {
             var guest = existing.get();
             var status = guest.getStatus();
+            log.info("GUEST_IMPORT_DUPLICATE_FOUND line={} guest_id={} cpf={} status={} sync_status={}",
+                    lineNumber, guest.getId(), maskCpf(cpfDigits), status, guest.getSyncStatus());
             if (status == GuestStatus.COMPLETED
                     || guest.getSyncStatus() == SyncStatus.SYNCED
                     || guest.getSyncStatus() == SyncStatus.SYNCED_WITH_WARNINGS) {
-                return RowResult.skip("já possui cadastro " + status.name().toLowerCase());
+                return RowResult.skip("CPF já cadastrado (" + status.name().toLowerCase() + ")");
             }
             if (status == GuestStatus.PENDING_REGISTRATION || status == GuestStatus.INVITED) {
                 guest.update(fullName, cpfDigits, guest.getEmail(),
@@ -404,10 +416,10 @@ public class GuestImportService {
                         guest.getVisitReason(), guest.getHostName(),
                         visitStart, visitEnd, invitedDay, canonicalLounge, null);
                 guestRepository.save(guest);
-                log.info("GUEST_IMPORT_UPDATED guest_id={} cpf={}", guest.getId(), cpfDigits);
+                log.info("GUEST_IMPORT_ROW_UPDATED line={} guest_id={} cpf={}", lineNumber, guest.getId(), maskCpf(cpfDigits));
                 return RowResult.updated(cpfDigits);
             }
-            return RowResult.skip("cadastro não atualizável: " + status.name().toLowerCase());
+            return RowResult.skip("CPF já cadastrado, não atualizável (" + status.name().toLowerCase() + ")");
         }
 
         var guest = new Guest(fullName, cpfDigits,
@@ -415,7 +427,7 @@ public class GuestImportService {
                 "Credenciamento", "Organizador",
                 visitStart, visitEnd, invitedDay, canonicalLounge);
         guestRepository.save(guest);
-        log.info("GUEST_IMPORT_CREATED guest_id={} cpf={} lounge={}", guest.getId(), cpfDigits, canonicalLounge);
+        log.info("GUEST_IMPORT_ROW_CREATED line={} guest_id={} cpf={} lounge={}", lineNumber, guest.getId(), maskCpf(cpfDigits), canonicalLounge);
         return RowResult.created(cpfDigits);
     }
 
@@ -428,6 +440,18 @@ public class GuestImportService {
             catch (DateTimeParseException ignored) { }
         }
         return null;
+    }
+
+    private String maskCpf(String cpf) {
+        var digits = CpfValidator.onlyDigits(cpf == null ? "" : cpf);
+        if (digits.length() < 4) {
+            return "***";
+        }
+        return "***.***." + digits.substring(digits.length() - 5, digits.length() - 2) + "-" + digits.substring(digits.length() - 2);
+    }
+
+    private String safeFileName(MultipartFile file) {
+        return Objects.requireNonNullElse(file.getOriginalFilename(), "");
     }
 
     private String normalizePhone(String phone) {

@@ -25,7 +25,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
@@ -35,8 +34,12 @@ public class IntelbrasRpc2Client {
 
     private static final Logger log = LoggerFactory.getLogger(IntelbrasRpc2Client.class);
     private static final String RPC_PATH = "/RPC2";
+    private static final String RPC_LOGIN_PATH = "/RPC2_Login";
+    private static final String WEB_ROOT_PATH = "/";
+    private static final String BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
     private static final DateTimeFormatter DEVICE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static final Pattern COOKIE_PAIR = Pattern.compile("(?i)(WebClientHttpSessionID=[^;]+)");
+    private static final Pattern COOKIE_NAME = Pattern.compile("^\\s*([^=;\\s]+)=");
 
     private final HttpClient httpClient;
     private final IntelbrasProperties properties;
@@ -60,36 +63,72 @@ public class IntelbrasRpc2Client {
         if (username == null || username.isBlank() || password == null || password.isBlank()) {
             throw new IntelbrasIntegrationException("Credenciais Intelbras nao configuradas para este dispositivo.");
         }
-        log.info("RPC2_LOGIN_STARTED ip={} user_configured={}", IntelbrasHttpSupport.maskHost(host), true);
+        var maskedHost = IntelbrasHttpSupport.maskHost(host);
+        var bootstrap = bootstrapWeb(host);
+        log.info("RPC2_LOGIN_STARTED ip={} user_configured={}", maskedHost, true);
 
-        var challenge = postRaw(host, null, null, "global.login", Map.of(
-                "userName", username,
-                "password", "",
-                "clientType", "Web3.0"
-        ));
-        var realm = requiredText(challenge.body().at("/params/realm"), "realm", host);
-        var random = requiredText(challenge.body().at("/params/random"), "random", host);
+        // ── ETAPA 1: challenge (global.login com password vazio) ─────────────────────────────
+        // O firmware responde HTTP 200 com result:false + error JUNTO com realm/random — isso é
+        // esperado e NÃO é falha. Por isso o challenge não pode passar por ensureRpcSuccess.
+        RawRpcResponse challenge;
+        try {
+            challenge = postRaw(host, RPC_LOGIN_PATH, null, bootstrap.cookie(), "global.login", Map.of(
+                    "userName", username,
+                    "password", "",
+                    "clientType", "Web3.0"
+            ), false);
+        } catch (IntelbrasIntegrationException exception) {
+            log.warn("RPC2_LOGIN_FAILED ip={} stage=LOGIN_CHALLENGE http_status=n/a body= error={}",
+                    maskedHost, safe(exception.getMessage()));
+            throw new IntelbrasIntegrationException("Falha no login RPC2 (etapa LOGIN_CHALLENGE) em " + maskedHost
+                    + ": " + safe(exception.getMessage()), exception);
+        }
+        var realm = text(challenge.body().at("/params/realm"));
+        var random = text(challenge.body().at("/params/random"));
         var challengeSession = text(challenge.body().get("session"));
-        var cookie = challenge.cookie();
+        log.info("RPC2_LOGIN_CHALLENGE_RESPONSE ip={} http_status={} realm_present={} random_present={} session_present={}",
+                maskedHost, challenge.httpStatus(), hasText(realm), hasText(random), hasText(challengeSession));
+        if (!hasText(realm) || !hasText(random)) {
+            log.warn("RPC2_LOGIN_FAILED ip={} stage=LOGIN_CHALLENGE http_status={} reason=missing_realm_or_random body={}",
+                    maskedHost, challenge.httpStatus(), summary(challenge.body()));
+            throw new IntelbrasIntegrationException("Falha no login RPC2 (etapa LOGIN_CHALLENGE) em " + maskedHost
+                    + ": resposta sem realm/random. http_status=" + challenge.httpStatus() + " body=" + summary(challenge.body()));
+        }
         var digestPassword = challengePassword(username, realm, password, random);
 
-        var login = postRaw(host, challengeSession, cookie, "global.login", Map.of(
-                "userName", username,
-                "password", digestPassword,
-                "clientType", "Web3.0",
-                "authorityType", "Default"
-        ));
+        // ── ETAPA 2: commit (global.login com senha digest) ──────────────────────────────────
+        RawRpcResponse login;
+        try {
+            login = postRaw(host, RPC_LOGIN_PATH, challengeSession, challenge.cookie(), "global.login", Map.of(
+                    "userName", username,
+                    "password", digestPassword,
+                    "clientType", "Web3.0",
+                    "authorityType", "Default"
+            ), false);
+        } catch (IntelbrasIntegrationException exception) {
+            log.warn("RPC2_LOGIN_FAILED ip={} stage=LOGIN_COMMIT http_status=n/a body= error={}",
+                    maskedHost, safe(exception.getMessage()));
+            throw new IntelbrasIntegrationException("Falha no login RPC2 (etapa LOGIN_COMMIT) em " + maskedHost
+                    + ": " + safe(exception.getMessage()), exception);
+        }
+        var resultNode = login.body().get("result");
+        var commitRejected = (resultNode != null && resultNode.isBoolean() && !resultNode.asBoolean())
+                || (login.body().has("error") && !login.body().get("error").isNull());
         var sessionId = text(login.body().get("session"));
-        if (sessionId == null || sessionId.isBlank()) {
+        if (!hasText(sessionId)) {
             sessionId = challengeSession;
         }
-        if (sessionId == null || sessionId.isBlank()) {
-            throw new IntelbrasIntegrationException("Intelbras RPC2 login did not return a session for host "
-                    + IntelbrasHttpSupport.maskHost(host) + ".");
+        var finalCookie = hasText(login.cookie()) ? login.cookie() : challenge.cookie();
+        if (commitRejected || !hasText(sessionId)) {
+            log.warn("RPC2_LOGIN_FAILED ip={} stage=LOGIN_COMMIT http_status={} reason={} session_present={} cookie_present={} body={}",
+                    maskedHost, login.httpStatus(), commitRejected ? "credenciais_rejeitadas" : "sem_session",
+                    hasText(sessionId), hasText(finalCookie), summary(login.body()));
+            throw new IntelbrasIntegrationException("Falha no login RPC2 (etapa LOGIN_COMMIT) em " + maskedHost
+                    + ": " + (commitRejected ? "credenciais rejeitadas" : "resposta sem session")
+                    + ". http_status=" + login.httpStatus() + " body=" + summary(login.body()));
         }
-        var finalCookie = hasText(login.cookie()) ? login.cookie() : cookie;
         log.info("RPC2_LOGIN_SUCCESS ip={} session_present={} cookie_present={}",
-                IntelbrasHttpSupport.maskHost(host), true, hasText(finalCookie));
+                maskedHost, true, hasText(finalCookie));
         return new Session(host, sessionId, finalCookie, username, Instant.now());
     }
 
@@ -234,7 +273,7 @@ public class IntelbrasRpc2Client {
     }
 
     public JsonNode postRpc(Session session, String method, Object params) {
-        return postRaw(session.host(), session.sessionId(), session.cookie(), method, params).body();
+        return postRaw(session.host(), RPC_PATH, session.sessionId(), session.cookie(), method, params, true).body();
     }
 
     private UserFindResult doFind(Session session, String token, String userId) {
@@ -261,31 +300,71 @@ public class IntelbrasRpc2Client {
         }
     }
 
-    private RawRpcResponse postRaw(String host, String sessionId, String cookie, String method, Object params) {
-        var uri = IntelbrasHttpSupport.uri(host, RPC_PATH);
+    /**
+     * @param enforceRpcSuccess when {@code false}, the JSON-level {@code result:false}/{@code error}
+     *        checks are skipped. The first {@code global.login} (challenge) intentionally returns
+     *        {@code result:false} + an {@code error} node alongside realm/random, so the challenge
+     *        must NOT be treated as a failure — otherwise login never reaches the commit step.
+     */
+    private RawRpcResponse postRaw(String host, String endpoint, String sessionId, String cookie, String method,
+                                   Object params, boolean enforceRpcSuccess) {
+        var uri = IntelbrasHttpSupport.uri(host, endpoint);
         var requestBody = requestBody(sessionId, method, params);
         var builder = HttpRequest.newBuilder(uri)
                 .timeout(properties.getReadTimeout())
                 .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
+                .header("Accept", "application/json, text/plain, */*")
+                .header("Origin", IntelbrasHttpSupport.normalizeHost(host))
+                .header("Referer", IntelbrasHttpSupport.normalizeHost(host) + "/")
+                .header("User-Agent", BROWSER_USER_AGENT)
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8));
         if (hasText(cookie)) {
             builder.header("Cookie", cookie);
         }
         var request = builder.build();
         log.info("RPC2_REQUEST ip={} method={} endpoint={} request_id={} cookie_present={} body={}",
-                IntelbrasHttpSupport.maskHost(host), method, RPC_PATH, currentRequestId(requestBody),
+                IntelbrasHttpSupport.maskHost(host), method, endpoint, currentRequestId(requestBody),
                 hasText(cookie), sanitizeJson(requestBody));
         var response = send(request, host);
         var responseBody = response.body() == null ? "" : response.body();
         log.info("RPC2_RESPONSE ip={} method={} endpoint={} status={} body={}",
-                IntelbrasHttpSupport.maskHost(host), method, RPC_PATH, response.statusCode(),
+                IntelbrasHttpSupport.maskHost(host), method, endpoint, response.statusCode(),
                 summarize(sanitizeJson(responseBody)));
         ensureHttpSuccess(response.statusCode(), host, method, responseBody);
         rejectIfHtml(host, method, response);
         var parsed = parseJson(host, method, responseBody);
-        ensureRpcSuccess(host, method, parsed);
-        return new RawRpcResponse(parsed, cookieFrom(response).orElse(cookie));
+        if (enforceRpcSuccess) {
+            ensureRpcSuccess(host, method, parsed);
+        }
+        return new RawRpcResponse(parsed, mergeCookies(cookie, cookiesFrom(response)), response.statusCode());
+    }
+
+    private WebBootstrap bootstrapWeb(String host) {
+        var maskedHost = IntelbrasHttpSupport.maskHost(host);
+        log.info("RPC2_BOOTSTRAP_STARTED ip={} endpoint={}", maskedHost, WEB_ROOT_PATH);
+        var uri = IntelbrasHttpSupport.uri(host, WEB_ROOT_PATH);
+        var request = HttpRequest.newBuilder(uri)
+                .timeout(properties.getReadTimeout())
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .header("Cache-Control", "no-cache")
+                .header("Pragma", "no-cache")
+                .header("User-Agent", BROWSER_USER_AGENT)
+                .GET()
+                .build();
+        try {
+            var response = send(request, host);
+            var responseBody = response.body() == null ? "" : response.body();
+            ensureHttpSuccess(response.statusCode(), host, "WEB_BOOTSTRAP", responseBody);
+            var cookie = mergeCookies(null, cookiesFrom(response));
+            log.info("RPC2_BOOTSTRAP_SUCCESS ip={} endpoint={} http_status={} cookie_present={}",
+                    maskedHost, WEB_ROOT_PATH, response.statusCode(), hasText(cookie));
+            return new WebBootstrap(cookie);
+        } catch (IntelbrasIntegrationException exception) {
+            log.warn("RPC2_LOGIN_FAILED ip={} stage=BOOTSTRAP http_status=n/a body= error={}",
+                    maskedHost, safe(exception.getMessage()));
+            throw new IntelbrasIntegrationException("Falha no bootstrap web Intelbras em " + maskedHost
+                    + ": " + safe(exception.getMessage()), exception);
+        }
     }
 
     private HttpResponse<String> send(HttpRequest request, String host) {
@@ -544,23 +623,36 @@ public class IntelbrasRpc2Client {
         return null;
     }
 
-    private Optional<String> cookieFrom(HttpResponse<String> response) {
+    private List<String> cookiesFrom(HttpResponse<String> response) {
         return response.headers().allValues("Set-Cookie").stream()
-                .map(value -> {
-                    var matcher = COOKIE_PAIR.matcher(value);
-                    return matcher.find() ? matcher.group(1) : "";
-                })
+                .map(value -> value == null ? "" : value.split(";", 2)[0].trim())
                 .filter(this::hasText)
-                .findFirst();
+                .toList();
     }
 
-    private String requiredText(JsonNode node, String field, String host) {
-        var value = text(node);
-        if (!hasText(value)) {
-            throw new IntelbrasIntegrationException("Intelbras RPC2 login challenge missing " + field
-                    + " for host " + IntelbrasHttpSupport.maskHost(host) + ".");
+    private String mergeCookies(String existingCookieHeader, List<String> newCookies) {
+        var cookies = new LinkedHashMap<String, String>();
+        addCookiePairs(cookies, existingCookieHeader);
+        for (String cookie : newCookies) {
+            addCookiePairs(cookies, cookie);
         }
-        return value;
+        return String.join("; ", cookies.values());
+    }
+
+    private void addCookiePairs(Map<String, String> cookies, String cookieHeader) {
+        if (!hasText(cookieHeader)) {
+            return;
+        }
+        for (String part : cookieHeader.split(";")) {
+            var cookie = part.trim();
+            if (cookie.isBlank()) {
+                continue;
+            }
+            var matcher = COOKIE_NAME.matcher(cookie);
+            if (matcher.find()) {
+                cookies.put(matcher.group(1), cookie);
+            }
+        }
     }
 
     private String format(LocalDateTime value) {
@@ -676,7 +768,10 @@ public class IntelbrasRpc2Client {
     public record Rpc2CallResult(String method, String responseSummary) {
     }
 
-    private record RawRpcResponse(JsonNode body, String cookie) {
+    private record RawRpcResponse(JsonNode body, String cookie, int httpStatus) {
+    }
+
+    private record WebBootstrap(String cookie) {
     }
 
     private record RpcAttempt(String method, Object params) {
