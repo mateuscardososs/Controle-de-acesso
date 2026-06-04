@@ -117,7 +117,7 @@ export type PublicVisitorRegistrationPayload = {
   email?: string;
   invitedDay: string;
   invitedLounge: string;
-  facePhoto: File;
+  facePhoto?: File | null;
 };
 
 export type AdminVisitorRegistrationPayload = PublicVisitorRegistrationPayload;
@@ -151,7 +151,7 @@ export const guestService = {
     if (payload.email) formData.append("email", payload.email);
     formData.append("invitedDay", payload.invitedDay);
     formData.append("invitedLounge", payload.invitedLounge);
-    formData.append("facePhoto", payload.facePhoto);
+    if (payload.facePhoto) formData.append("facePhoto", payload.facePhoto);
     const { data } = await api.post<Guest>("/api/guests/visitor-registration", formData);
     return data;
   },
@@ -199,11 +199,11 @@ export const guestService = {
     const { data } = await api.get<PublicGuestRegistration>(`/api/guest-registration/${token}`);
     return data;
   },
-  async completeRegistration(token: string, payload: { phone?: string; company?: string; facePhoto: File }) {
+  async completeRegistration(token: string, payload: { phone?: string; company?: string; facePhoto?: File | null }) {
     const formData = new FormData();
     if (payload.phone) formData.append("phone", payload.phone);
     if (payload.company) formData.append("company", payload.company);
-    formData.append("facePhoto", payload.facePhoto);
+    if (payload.facePhoto) formData.append("facePhoto", payload.facePhoto);
     const { data } = await api.post<Guest>(`/api/guest-registration/${token}/complete`, formData);
     return data;
   },
@@ -215,7 +215,7 @@ export const guestService = {
     if (payload.email) formData.append("email", payload.email);
     formData.append("invitedDay", payload.invitedDay);
     formData.append("invitedLounge", payload.invitedLounge);
-    formData.append("facePhoto", payload.facePhoto);
+    if (payload.facePhoto) formData.append("facePhoto", payload.facePhoto);
     const { data } = await api.post<PublicVisitorRegistrationResponse>("/api/public/visitor-registration", formData);
     return data;
   }

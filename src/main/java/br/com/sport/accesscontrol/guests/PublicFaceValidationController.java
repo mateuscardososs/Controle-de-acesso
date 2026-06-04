@@ -29,9 +29,9 @@ public class PublicFaceValidationController {
     @PostMapping(value = "/validate", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     FaceValidationResponse validate(@RequestPart("file") MultipartFile file) {
         var result = faceStorageService.validate(file);
-        log.info("FACE_PREVIEW_VALIDATED approved={} face_detected={} single_face={} secondary_face_detected={} face_size_ok={} centered_ok={} face_visible_ok={} brightness_ok={} sharpness_ok={} contrast_ok={} bytes={} max_bytes={} final_size_ok={}",
+        log.info("FACE_PREVIEW_VALIDATED approved={} face_detected={} single_face={} secondary_face_detected={} face_size_ok={} centered_ok={} face_visible_ok={} eyes_visible_ok={} brightness_ok={} sharpness_ok={} contrast_ok={} bytes={} max_bytes={} final_size_ok={}",
                 result.approved(), result.faceDetected(), result.singleFace(), result.secondaryFaceDetected(), result.faceSizeOk(),
-                result.centeredOk(), result.faceFullyVisibleOk(), result.brightnessOk(), result.sharpnessOk(),
+                result.centeredOk(), result.faceFullyVisibleOk(), result.eyesVisibleOk(), result.brightnessOk(), result.sharpnessOk(),
                 result.contrastOk(), result.compressedSizeBytes(), result.maxAllowedBytes(), result.finalCompressedSizeOk());
         return FaceValidationResponse.from(result);
     }
@@ -41,6 +41,7 @@ public class PublicFaceValidationController {
             return new FaceValidationResponse(v.approved(), v.message(), new Checks(
                     v.faceDetected(), v.singleFace(), v.secondaryFaceDetected(), v.brightnessOk(), v.sharpnessOk(),
                     v.contrastOk(), v.centeredOk(), v.faceSizeOk(), v.sizeOk(), v.faceFullyVisibleOk(),
+                    v.eyesVisibleOk(),
                     v.finalCompressedSizeOk(),
                     v.compressedSizeBytes(), v.maxAllowedBytes()));
         }
@@ -57,6 +58,7 @@ public class PublicFaceValidationController {
             boolean faceSizeOk,
             boolean sizeOk,
             boolean faceFullyVisibleOk,
+            boolean eyesVisibleOk,
             boolean finalCompressedSizeOk,
             long compressedSizeBytes,
             long maxAllowedBytes

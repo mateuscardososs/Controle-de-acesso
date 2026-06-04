@@ -40,6 +40,10 @@ public class IntegrationEventPublisher {
             rabbitTemplate.convertAndSend(RabbitMqConfig.INTEGRATION_EVENTS_EXCHANGE, "intelbras.sync.requested", event);
             log.info("rabbit_intelbras_sync_published person_type={} person_id={} attempt={}",
                     event.personType(), event.personId(), event.attempt());
+            if (event.personType() == PersonType.GUEST) {
+                log.info("GUEST_SYNC_EVENT_PUBLISHED person_type=GUEST person_id={} attempt={}",
+                        event.personId(), event.attempt());
+            }
         } catch (AmqpException exception) {
             var errorMessage = "Falha ao publicar na fila: " + exception.getMessage();
             log.warn("rabbit_event_publish_skipped exchange={} routing_key={} person_type={} person_id={} reason={}",

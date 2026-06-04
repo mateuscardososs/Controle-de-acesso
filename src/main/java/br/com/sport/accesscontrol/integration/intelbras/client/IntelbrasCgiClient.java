@@ -128,7 +128,7 @@ public class IntelbrasCgiClient {
                     IntelbrasHttpSupport.maskHost(host), hasText(userId), maskCardNo(finalCardNo),
                     physicalCardProvided, safe(exception.getMessage()));
             // Attempt to resolve CardNo conflict: another UserID may own this CardNo from an old sync
-            // (e.g. old CPF[0:10] records still registered in the controller)
+            // (e.g. old document-derived records still registered in the controller)
             if (tryResolveCardNoConflict(host, username, password, finalCardNo, userId)) {
                 log.info("ACCESS_USER_INSERT_RETRY_AFTER_CONFLICT_RESOLUTION host={} user_id_present={} card_no_masked={}",
                         IntelbrasHttpSupport.maskHost(host), hasText(userId), maskCardNo(finalCardNo));
@@ -431,18 +431,27 @@ public class IntelbrasCgiClient {
         var body = getText(host, username, password, path);
         var records = IntelbrasRecordFinderParser.parseRecords(body);
         var values = IntelbrasRecordFinderParser.parseKeyValues(body);
-        var associated = records.stream().anyMatch(record ->
-                expectedCardNo.equals(digits(text(record, "CardNo")))
-                        && userId.equalsIgnoreCase(blankToEmpty(text(record, "UserID"))));
+        var expectedUserId = digits(userId);
+        var associated = records.stream().anyMatch(record -> {
+            var rawCardNo = blankToEmpty(text(record, "CardNo"));
+            var rawUserId = blankToEmpty(text(record, "UserID"));
+            log.info("RECORD_FINDER_CARDNO_RAW host={} card_no_raw_masked={} card_no_length={} expected_card_no_masked={} expected_card_no_length={}",
+                    IntelbrasHttpSupport.maskHost(host), maskCardNo(rawCardNo), rawCardNo.length(),
+                    maskCardNo(expectedCardNo), expectedCardNo.length());
+            log.info("RECORD_FINDER_USERID_RAW host={} user_id_raw_masked={} user_id_length={} expected_user_id_masked={} expected_user_id_length={}",
+                    IntelbrasHttpSupport.maskHost(host), maskCardNo(rawUserId), rawUserId.length(),
+                    maskCardNo(expectedUserId), expectedUserId.length());
+            return expectedCardNo.equals(rawCardNo) && expectedUserId.equals(rawUserId);
+        });
         if (!associated && records.isEmpty()) {
             var topLevelCardNo = firstValue(values, "CardNo", "cardNo");
             var topLevelUserId = firstValue(values, "UserID", "userId");
-            associated = expectedCardNo.equals(digits(topLevelCardNo))
-                    && userId.equalsIgnoreCase(blankToEmpty(topLevelUserId));
+            associated = expectedCardNo.equals(blankToEmpty(topLevelCardNo))
+                    && expectedUserId.equals(blankToEmpty(topLevelUserId));
         }
         if (!associated) {
             var byUser = accessUserLookup(host, username, password, userId);
-            associated = byUser.found() && expectedCardNo.equals(digits(byUser.cardNo()));
+            associated = byUser.found() && expectedCardNo.equals(blankToEmpty(byUser.cardNo()));
         }
         log.info("CARD_VERIFY_RESPONSE host={} endpoint={} present={} records_count={}",
                 IntelbrasHttpSupport.maskHost(host), "/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&condition.CardNo=<redacted>",
@@ -726,10 +735,17 @@ public class IntelbrasCgiClient {
         log.info("ACCESS_USER_LOOKUP_RESPONSE host={} endpoint={} found_hint={} records_count={}",
                 IntelbrasHttpSupport.maskHost(host), accessUserLookupEndpoint(), found, records.size());
         for (Map<String, Object> record : records) {
-            if (userId.equalsIgnoreCase(text(record, "UserID"))) {
+            var rawUserId = blankToEmpty(text(record, "UserID"));
+            var rawCardNo = blankToEmpty(text(record, "CardNo"));
+            log.info("RECORD_FINDER_USERID_RAW host={} user_id_raw_masked={} user_id_length={} expected_user_id_masked={} expected_user_id_length={} source=lookup_by_userid",
+                    IntelbrasHttpSupport.maskHost(host), maskCardNo(rawUserId), rawUserId.length(),
+                    maskCardNo(userId), blankToEmpty(userId).length());
+            log.info("RECORD_FINDER_CARDNO_RAW host={} card_no_raw_masked={} card_no_length={} source=lookup_by_userid",
+                    IntelbrasHttpSupport.maskHost(host), maskCardNo(rawCardNo), rawCardNo.length());
+            if (userId.equals(rawUserId)) {
                 var recNo = text(record, "RecNo");
                 if (recNo != null && !recNo.isBlank()) {
-                    return new AccessUserLookup(true, recNo, blankToEmpty(text(record, "CardNo")));
+                    return new AccessUserLookup(true, recNo, rawCardNo);
                 }
                 found = true;
             }
@@ -743,7 +759,14 @@ public class IntelbrasCgiClient {
         }
         var topLevelRecNo = firstValue(values, "RecNo", "recno", "RecordNo", "recordNo");
         if (topLevelRecNo != null && !topLevelRecNo.isBlank()) {
-            return new AccessUserLookup(true, topLevelRecNo, blankToEmpty(firstValue(values, "CardNo", "cardNo")));
+            var rawCardNo = blankToEmpty(firstValue(values, "CardNo", "cardNo"));
+            var rawUserId = blankToEmpty(firstValue(values, "UserID", "userId"));
+            log.info("RECORD_FINDER_USERID_RAW host={} user_id_raw_masked={} user_id_length={} expected_user_id_masked={} expected_user_id_length={} source=top_level",
+                    IntelbrasHttpSupport.maskHost(host), maskCardNo(rawUserId), rawUserId.length(),
+                    maskCardNo(userId), blankToEmpty(userId).length());
+            log.info("RECORD_FINDER_CARDNO_RAW host={} card_no_raw_masked={} card_no_length={} source=top_level",
+                    IntelbrasHttpSupport.maskHost(host), maskCardNo(rawCardNo), rawCardNo.length());
+            return new AccessUserLookup(true, topLevelRecNo, rawCardNo);
         }
         return new AccessUserLookup(found, null, "");
     }
@@ -844,10 +867,11 @@ public class IntelbrasCgiClient {
         if (recNo != null && !recNo.isBlank()) {
             params.put("recno", recNo);
         }
-        // CardNo is either a real physical card or the 10-digit value derived from CPF.
-        if (cardNo != null && !cardNo.isBlank()) {
-            params.put("CardNo", cardNo);
+        // CardNo is required by this firmware. Without a physical card, use the full CPF.
+        if (cardNo == null || cardNo.isBlank()) {
+            throw new IntelbrasIntegrationException("Intelbras AccessControlCard payload cannot be sent without CardNo.");
         }
+        params.put("CardNo", cardNo);
         if (includeCardStatus) {
             params.put("CardStatus", "0");
         }
@@ -1229,7 +1253,7 @@ public class IntelbrasCgiClient {
     /**
      * Detects and removes a conflicting AccessControlCard record that uses the same CardNo
      * but belongs to a different UserID (stale record from a previous sync with the old
-     * CPF[0:10] strategy). Called as a fallback when INSERT fails with 400.
+     * document-derived strategy). Called as a fallback when INSERT fails with 400.
      *
      * @return true if a conflict was found and the stale record was deleted, false otherwise
      */
@@ -1272,23 +1296,22 @@ public class IntelbrasCgiClient {
         var cardNoDigits = digits(cardNo);
         var userIdDigits = digits(userId);
         if (!cardNoDigits.isBlank() && !(userIdDigits.length() == 11 && cardNoDigits.equals(userIdDigits))) {
-            // 6-digit CardNo = UUID_DERIVED (shortNumeric); longer = physical card
-            var source = cardNoDigits.length() == 6 ? "UUID_DERIVED" : "PHYSICAL_CARD";
+            var source = "PHYSICAL_CARD";
             log.info("CARDNO_SOURCE source={} user_id_present={} card_no_masked={} card_no_raw_masked={}",
                     source, hasText(userIdDigits), maskCardNo(cardNoDigits), maskCardNo(cardNo));
             return cardNoDigits;
         }
         var derived = cardNoForUserIdWithoutPhysicalCard(userId);
-        log.info("CARDNO_SOURCE source=DOCUMENT_DERIVED_FALLBACK user_id_present={} card_no_masked={} physical_card_raw_masked={}",
-                hasText(userIdDigits), maskCardNo(derived), maskCardNo(cardNo));
+        log.info("CARDNO_SOURCE source=DOCUMENT_FULL_CPF_FALLBACK user_id_present={} card_no_masked={} card_no_length={} physical_card_raw_masked={}",
+                hasText(userIdDigits), maskCardNo(derived), derived.length(), maskCardNo(cardNo));
         return derived;
     }
 
     private String cardNoForUserIdWithoutPhysicalCard(String userId) {
         var derived = IntelbrasIdentityCodec.cardNoFromDocument(userId);
         if (!derived.isBlank()) {
-            log.info("CARDNO_DERIVED_FROM_DOCUMENT user_id_present={} card_no_masked={}",
-                    hasText(digits(userId)), maskCardNo(derived));
+            log.info("CARDNO_DERIVED_FROM_DOCUMENT user_id_present={} card_no_masked={} card_no_length={}",
+                    hasText(digits(userId)), maskCardNo(derived), derived.length());
             return derived;
         }
         var userIdDigits = digits(userId);

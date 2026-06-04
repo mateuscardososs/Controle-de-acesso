@@ -98,7 +98,7 @@ class FacePhotoProcessorTests {
         // Centered face covering ~33% of a large, sharp, well-lit image.
         FaceDetector centeredFace = image ->
                 List.of(new FaceDetector.FaceBox(700, 700, 600, 600));
-        var processor = new FacePhotoProcessor(MAX_BYTES, 640, 480, centeredFace);
+        var processor = processorWithVisibleEyes(centeredFace);
 
         var processed = processor.process(noise(2000, 2000));
 
@@ -129,7 +129,7 @@ class FacePhotoProcessorTests {
     @Test
     void evaluateReturnsAllChecksApprovedForValidCenteredFace() throws IOException {
         FaceDetector centeredFace = image -> List.of(new FaceDetector.FaceBox(700, 700, 600, 600));
-        var processor = new FacePhotoProcessor(MAX_BYTES, 640, 480, centeredFace);
+        var processor = processorWithVisibleEyes(centeredFace);
 
         var v = processor.evaluate(noise(2000, 2000));
 
@@ -144,9 +144,51 @@ class FacePhotoProcessorTests {
         assertThat(v.centeredOk()).isTrue();
         assertThat(v.faceSizeOk()).isTrue();
         assertThat(v.sizeOk()).isTrue();
+        assertThat(v.eyesVisibleOk()).isTrue();
         assertThat(v.finalCompressedSizeOk()).isTrue();
         assertThat(v.compressedSizeBytes()).isLessThanOrEqualTo(MAX_BYTES);
         assertThat(v.maxAllowedBytes()).isEqualTo(MAX_BYTES);
+    }
+
+    @Test
+    void evaluateRejectsWhenEyesAreNotVisible() throws IOException {
+        FaceDetector centeredFace = image -> List.of(new FaceDetector.FaceBox(250, 250, 300, 300));
+        EyeDetector hiddenEyes = image -> List.of();
+        var processor = new FacePhotoProcessor(MAX_BYTES, 640, 480, centeredFace, hiddenEyes);
+
+        var v = processor.evaluate(noise(800, 800));
+
+        assertThat(v.faceDetected()).isTrue();
+        assertThat(v.singleFace()).isTrue();
+        assertThat(v.eyesVisibleOk()).isFalse();
+        assertThat(v.approved()).isFalse();
+        assertThat(v.message()).isEqualTo(FacePhotoRejectedException.EYES_NOT_VISIBLE);
+    }
+
+    @Test
+    void finalUploadRejectsWhenEyesAreNotVisible() throws IOException {
+        FaceDetector centeredFace = image -> List.of(new FaceDetector.FaceBox(250, 250, 300, 300));
+        EyeDetector hiddenEyes = image -> List.of();
+        var processor = new FacePhotoProcessor(MAX_BYTES, 640, 480, centeredFace, hiddenEyes);
+
+        assertThatThrownBy(() -> processor.process(noise(800, 800)))
+                .isInstanceOf(FacePhotoRejectedException.class)
+                .hasMessage(FacePhotoRejectedException.EYES_NOT_VISIBLE);
+    }
+
+    @Test
+    void rejectsWhenEyePairIsTooTilted() throws IOException {
+        FaceDetector centeredFace = image -> List.of(new FaceDetector.FaceBox(250, 250, 300, 300));
+        EyeDetector tiltedEyes = image -> List.of(
+                new FaceDetector.FaceBox((int) Math.round(image.getWidth() * 0.20), 10, 34, 28),
+                new FaceDetector.FaceBox((int) Math.round(image.getWidth() * 0.64), 80, 34, 28));
+        var processor = new FacePhotoProcessor(MAX_BYTES, 640, 480, centeredFace, tiltedEyes);
+
+        var v = processor.evaluate(noise(800, 800));
+
+        assertThat(v.eyesVisibleOk()).isFalse();
+        assertThat(v.approved()).isFalse();
+        assertThat(v.message()).isEqualTo(FacePhotoRejectedException.EYES_NOT_VISIBLE);
     }
 
     @Test
@@ -193,7 +235,7 @@ class FacePhotoProcessorTests {
         env.setActiveProfiles("prod");
         assertThatThrownBy(() -> new FacePhotoProcessor(
                 204800, 640, 480, 0.6, 0.18, 0.25, 50, 235, 55, 20,
-                0.065, 0.12, true, 12, 0.25, image -> List.of(), env))
+                0.065, 0.12, true, 12, 0.25, image -> List.of(), image -> List.of(), env))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("99328");
     }
@@ -204,7 +246,7 @@ class FacePhotoProcessorTests {
         env.setActiveProfiles("prod");
         assertThatCode(() -> new FacePhotoProcessor(
                 99328, 640, 480, 0.6, 0.18, 0.25, 50, 235, 55, 20,
-                0.065, 0.12, true, 12, 0.25, image -> List.of(), env))
+                0.065, 0.12, true, 12, 0.25, image -> List.of(), image -> List.of(), env))
                 .doesNotThrowAnyException();
     }
 
@@ -213,7 +255,7 @@ class FacePhotoProcessorTests {
         var env = new MockEnvironment(); // no "prod" profile
         assertThatCode(() -> new FacePhotoProcessor(
                 204800, 640, 480, 0.6, 0.18, 0.25, 50, 235, 55, 20,
-                0.065, 0.12, true, 12, 0.25, image -> List.of(), env))
+                0.065, 0.12, true, 12, 0.25, image -> List.of(), image -> List.of(), env))
                 .doesNotThrowAnyException();
     }
 
@@ -221,7 +263,7 @@ class FacePhotoProcessorTests {
     void cleanFaceWithTexturedLowerRegionIsNotFlaggedAsOccluded() throws IOException {
         // Centered face whose whole box is textured (no covering) -> occlusion heuristic stays OK.
         FaceDetector centeredFace = image -> List.of(new FaceDetector.FaceBox(250, 250, 300, 300));
-        var processor = new FacePhotoProcessor(MAX_BYTES, 640, 480, centeredFace);
+        var processor = processorWithVisibleEyes(centeredFace);
 
         var v = processor.evaluate(noise(800, 800));
 
@@ -233,7 +275,7 @@ class FacePhotoProcessorTests {
     void faceWithFlatCoveredLowerRegionIsRejectedAsOccluded() throws IOException {
         // Same valid box, but the lower part of the face is a flat patch (e.g. a hand over mouth/chin).
         FaceDetector centeredFace = image -> List.of(new FaceDetector.FaceBox(250, 250, 300, 300));
-        var processor = new FacePhotoProcessor(MAX_BYTES, 640, 480, centeredFace);
+        var processor = processorWithVisibleEyes(centeredFace);
 
         var image = noiseImage(800, 800);
         var graphics = image.createGraphics();
@@ -253,6 +295,21 @@ class FacePhotoProcessorTests {
 
     private static byte[] noise(int width, int height) throws IOException {
         return toPng(noiseImage(width, height));
+    }
+
+    private static FacePhotoProcessor processorWithVisibleEyes(FaceDetector faceDetector) {
+        return new FacePhotoProcessor(MAX_BYTES, 640, 480, faceDetector, visibleEyes());
+    }
+
+    private static EyeDetector visibleEyes() {
+        return image -> {
+            int eyeWidth = Math.max(8, (int) Math.round(image.getWidth() * 0.14));
+            int eyeHeight = Math.max(6, (int) Math.round(image.getHeight() * 0.18));
+            int y = Math.max(0, (int) Math.round(image.getHeight() * 0.28));
+            return List.of(
+                    new FaceDetector.FaceBox((int) Math.round(image.getWidth() * 0.20), y, eyeWidth, eyeHeight),
+                    new FaceDetector.FaceBox((int) Math.round(image.getWidth() * 0.64), y, eyeWidth, eyeHeight));
+        };
     }
 
     private static BufferedImage noiseImage(int width, int height) {

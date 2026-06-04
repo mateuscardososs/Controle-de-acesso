@@ -20,14 +20,14 @@ export default function PublicEmployeeRegistrationPage() {
     phone: "",
     email: ""
   });
-  const [facePhoto, setFacePhoto] = useState<File | null>(null);
   const [cpfStatus, setCpfStatus] = useState<CpfStatus>("idle");
   const [cpfMessage, setCpfMessage] = useState("");
+  const [facePhoto, setFacePhoto] = useState<File | null>(null);
   const [message, setMessage] = useState("");
 
   const register = useMutation({
     mutationFn: () => {
-      if (!facePhoto) throw new Error("Tire a foto pela câmera ou envie uma imagem para continuar.");
+      if (!facePhoto) throw new Error("Tire a foto pela câmera para continuar.");
       return employeeService.publicRegister({
         ...form,
         cpf: onlyCpfDigits(form.cpf),
@@ -89,7 +89,7 @@ export default function PublicEmployeeRegistrationPage() {
       return;
     }
     if (!facePhoto) {
-      setMessage("Tire a foto pela câmera ou envie uma imagem para continuar.");
+      setMessage("Tire a foto pela câmera para continuar.");
       return;
     }
     register.mutate();
@@ -205,6 +205,7 @@ export default function PublicEmployeeRegistrationPage() {
                 type="submit"
                 icon={register.isPending ? undefined : ArrowRight}
                 loading={register.isPending}
+                disabled={!facePhoto}
                 className="mt-1 h-11"
               >
                 {register.isPending ? "Finalizando..." : "Finalizar cadastro"}

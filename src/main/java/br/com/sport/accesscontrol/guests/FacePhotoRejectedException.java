@@ -20,6 +20,8 @@ public class FacePhotoRejectedException extends UnprocessableEntityException {
             "Não foi possível comprimir a foto dentro do limite exigido. Tente outra foto.";
     public static final String FACE_OCCLUDED =
             "Mantenha o rosto totalmente visível. Remova objetos ou mãos da frente do rosto.";
+    public static final String EYES_NOT_VISIBLE =
+            "Mantenha os olhos abertos e olhando para a câmera.";
 
     public FacePhotoRejectedException(String message) {
         super(message);

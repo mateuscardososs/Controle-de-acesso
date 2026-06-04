@@ -77,7 +77,7 @@ class IntelbrasProviderModeTests {
     }
 
     @Test
-    void documentIdentityStrategyUsesCpfAsUserIdAndUuidDerivedCardNo() {
+    void documentIdentityStrategyUsesCpfAsUserIdAndCardNo() {
         var personId = UUID.fromString("903956fa-6a1c-4ef8-aaf4-111111111111");
         var identity = IntelbrasIdentityCodec.resolve(
                 IntelbrasIdentityCodec.Strategy.DOCUMENT,
@@ -88,15 +88,13 @@ class IntelbrasProviderModeTests {
 
         assertThat(identity.strategy()).isEqualTo(IntelbrasIdentityCodec.Strategy.DOCUMENT);
         assertThat(identity.userId()).isEqualTo("05731650411");
-        // CardNo is now shortNumeric(personId) — unique per UUID, no collision between CPFs
-        assertThat(identity.cardNo()).isEqualTo(IntelbrasIdentityCodec.shortNumeric(personId));
-        assertThat(identity.cardNo()).matches("\\d{6}");  // shortNumeric always produces 6 digits
-        assertThat(identity.cardNo()).isNotEqualTo("0573165041"); // NOT the old CPF[0:10]
-        assertThat(identity.cardNo()).isNotEqualTo("05731650411"); // NOT the full CPF
+        assertThat(identity.cardNo()).isEqualTo("05731650411");
+        assertThat(identity.cardNo()).hasSize(11);
+        assertThat(identity.cardNo()).isNotEqualTo("0573165041");
     }
 
     @Test
-    void documentStrategyCardNoIsUuidDerivedNotCpfPrefix() {
+    void documentStrategyCardNoIsFullCpfNotCpfPrefix() {
         var personId = UUID.fromString("12345678-abcd-ef01-2345-6789abcdef01");
         var cpf = "06331315470";
         var identity = IntelbrasIdentityCodec.resolve(
@@ -107,12 +105,9 @@ class IntelbrasProviderModeTests {
         );
 
         assertThat(identity.userId()).isEqualTo(cpf);
-        // CardNo must be UUID-derived (6 digits), never the CPF or its prefix
-        assertThat(identity.cardNo()).isEqualTo(IntelbrasIdentityCodec.shortNumeric(personId));
-        assertThat(identity.cardNo()).matches("\\d{6}");
-        assertThat(identity.cardNo()).isNotEqualTo("0633131547"); // NOT CPF[0:10]
-        assertThat(identity.cardNo()).isNotEqualTo(cpf);          // NOT full CPF
-        // Two different CPFs with same prefix produce different CardNos (no collision)
+        assertThat(identity.cardNo()).isEqualTo(cpf);
+        assertThat(identity.cardNo()).hasSize(11);
+        assertThat(identity.cardNo()).isNotEqualTo("0633131547");
         var otherPersonId = UUID.fromString("99999999-abcd-ef01-2345-6789abcdef99");
         var collisionCandidate = IntelbrasIdentityCodec.resolve(
                 IntelbrasIdentityCodec.Strategy.DOCUMENT,

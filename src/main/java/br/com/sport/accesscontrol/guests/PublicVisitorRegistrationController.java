@@ -56,7 +56,7 @@ public class PublicVisitorRegistrationController {
         return guestService.validateCpfForCheckin(request.cpf());
     }
 
-    /** Feature 3 — completes a pre-registered guest with a facial photo and triggers sync. */
+    /** Feature 3 — completes a pre-registered guest check-in. */
     @PostMapping("/guests/complete-registration")
     CpfCheckinResponse completeRegistration(@RequestBody CpfCheckinRequest request) {
         return guestService.completeCheckinByCpf(request.cpf(), request.facePhoto());

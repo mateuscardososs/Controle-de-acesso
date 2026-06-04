@@ -35,6 +35,7 @@ class PublicFaceValidationControllerTests {
                 .andExpect(jsonPath("$.checks.faceDetected").value(true))
                 .andExpect(jsonPath("$.checks.secondaryFaceDetected").value(false))
                 .andExpect(jsonPath("$.checks.faceSizeOk").value(true))
+                .andExpect(jsonPath("$.checks.eyesVisibleOk").value(true))
                 .andExpect(jsonPath("$.checks.finalCompressedSizeOk").value(true))
                 .andExpect(jsonPath("$.checks.maxAllowedBytes").value(99328));
     }
@@ -58,6 +59,6 @@ class PublicFaceValidationControllerTests {
                                                                      boolean faceDetected, boolean singleFace) {
         return new FacePhotoProcessor.FacePhotoValidation(
                 approved, message, faceDetected, singleFace, !singleFace && faceDetected, true, true, true, true, true, true,
-                new byte[] {1}, "jpg", "image/jpeg", 480, 480, 1000L, 5000L, 99328L, true);
+                true, new byte[] {1}, "jpg", "image/jpeg", 480, 480, 1000L, 5000L, 99328L, true);
     }
 }

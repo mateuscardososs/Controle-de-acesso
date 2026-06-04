@@ -233,18 +233,28 @@ public class IntelbrasRpc2Client {
 
     public boolean isCardAssociatedWithUser(Session session, String userId, String cardNo) {
         var expected = digits(cardNo);
+        var expectedUserId = digits(userId);
         if (expected.isBlank()) {
             return true;
         }
         var response = postRpc(session, "AccessCard.startFind", Map.of(
                 "Condition", Map.of(
-                        "UserID", userId,
+                        "UserID", expectedUserId,
                         "CardNo", expected
                 )
         ));
         var records = extractRecords(response);
-        if (records.stream().anyMatch(record -> userId.equalsIgnoreCase(text(record.get("UserID")))
-                && expected.equals(digits(text(record.get("CardNo")))))) {
+        if (records.stream().anyMatch(record -> {
+            var rawUserId = blankToEmpty(text(record.get("UserID")));
+            var rawCardNo = blankToEmpty(text(record.get("CardNo")));
+            log.info("RECORD_FINDER_USERID_RAW rpc2=true host={} user_id_raw_masked={} user_id_length={} expected_user_id_masked={} expected_user_id_length={}",
+                    IntelbrasHttpSupport.maskHost(session.host()), mask(rawUserId), rawUserId.length(),
+                    mask(expectedUserId), expectedUserId.length());
+            log.info("RECORD_FINDER_CARDNO_RAW rpc2=true host={} card_no_raw_masked={} card_no_length={} expected_card_no_masked={} expected_card_no_length={}",
+                    IntelbrasHttpSupport.maskHost(session.host()), mask(rawCardNo), rawCardNo.length(),
+                    mask(expected), expected.length());
+            return expectedUserId.equals(rawUserId) && expected.equals(rawCardNo);
+        })) {
             return true;
         }
         var count = findLong(response, "count", "Count", "total", "Total", "found", "Found");
@@ -737,6 +747,10 @@ public class IntelbrasRpc2Client {
 
     private String digits(String value) {
         return value == null ? "" : value.replaceAll("\\D", "");
+    }
+
+    private static String blankToEmpty(String value) {
+        return value == null || value.isBlank() ? "" : value.trim();
     }
 
     private boolean hasText(String value) {

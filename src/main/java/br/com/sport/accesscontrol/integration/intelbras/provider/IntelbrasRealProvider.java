@@ -146,11 +146,15 @@ public class IntelbrasRealProvider implements AccessControlProvider {
             String recNo = null;
             boolean faceWriteAccepted = false;
             var cardNo = hasPhysicalCard ? identity.cardNo() : digits(identity.userId());
+            var cardSource = hasPhysicalCard ? "PHYSICAL_CARD" : "DOCUMENT_FALLBACK";
             var validFrom = localDeviceTime(person.validFrom(), LocalDateTime.now(properties.zoneId()).minusDays(1));
             var validUntil = localDeviceTime(person.validUntil(), LocalDateTime.of(2037, 12, 31, 23, 59, 59));
             log.info("SYNC_IDENTITY_CHOSEN device_id={} person_type={} person_id={} user_id_masked={} card_no_masked={} has_physical_card={} mode={}",
                     deviceId, person.personType(), person.personId(), mask(identity.userId()), mask(cardNo),
                     hasPhysicalCard, syncMode);
+            log.info("CARD_IDENTITY_CHOSEN device_id={} person_type={} person_id={} userIdMasked={} cardNoMasked={} cardNoLength={} cardSource={} hasPhysicalCard={}",
+                    deviceId, person.personType(), person.personId(), mask(identity.userId()), mask(cardNo),
+                    cardNo == null ? 0 : cardNo.length(), cardSource, hasPhysicalCard);
             try {
                 if (syncMode == null) {
                     throw new IllegalStateException("Sem método de autenticação (sem cartão e sem foto facial).");

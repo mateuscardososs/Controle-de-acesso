@@ -225,10 +225,13 @@ public class Guest extends TimestampedEntity {
         if (company != null && !company.isBlank()) {
             this.company = company;
         }
-        this.facePhotoUrl = facePhotoUrl;
+        if (facePhotoUrl != null && !facePhotoUrl.isBlank()) {
+            this.facePhotoUrl = facePhotoUrl;
+        }
         this.status = GuestStatus.COMPLETED;
         this.completedAt = Instant.now();
-        if (syncStatus != SyncStatus.SYNCED && syncStatus != SyncStatus.SYNCING) {
+        if (this.facePhotoUrl != null && !this.facePhotoUrl.isBlank()
+                && syncStatus != SyncStatus.SYNCED && syncStatus != SyncStatus.SYNCING) {
             markPendingSync();
         }
     }

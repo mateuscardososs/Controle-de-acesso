@@ -161,6 +161,9 @@ public class IntelbrasSyncReaperService {
 
     private void skip(PersonType type, UUID id, String category, String reason, Accumulator acc) {
         acc.skipped++;
+        if (type == PersonType.GUEST) {
+            log.info("GUEST_SYNC_SKIPPED person_type=GUEST person_id={} category={} reason={}", id, category, reason);
+        }
         log.info("SYNC_REAPER_SKIPPED personType={} personId={} category={} reason={}", type, id, category, reason);
     }
 

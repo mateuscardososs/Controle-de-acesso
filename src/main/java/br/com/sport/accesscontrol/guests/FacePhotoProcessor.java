@@ -25,8 +25,8 @@ import java.util.List;
  * Validates and normalises a face photo before it is stored / synced to an Intelbras controller.
  *
  * <p>Pipeline: read → quality gate (brightness + sharpness + contrast) → face detection (exactly one
- * face, large enough and centred) → crop around the face with margin → resize within the controller
- * limit → JPEG compression below the byte budget (97&nbsp;KB by default).
+ * face, large enough and centred) → visible-eye check → crop around the face with margin → resize
+ * within the controller limit → JPEG compression below the byte budget (97&nbsp;KB by default).
  *
  * <p>{@link #evaluate(byte[])} runs every check and returns a structured {@link FacePhotoValidation}
  * without throwing — it is the single source of truth used by both the preview endpoint and the final
@@ -61,6 +61,7 @@ public class FacePhotoProcessor {
     private final double occlusionMinLowerTexture;
     private final double occlusionLowerUpperRatio;
     private final FaceDetector faceDetector;
+    private final EyeDetector eyeDetector;
 
     @Autowired
     public FacePhotoProcessor(
@@ -80,6 +81,7 @@ public class FacePhotoProcessor {
             @Value("${app.uploads.faces.occlusion-min-lower-texture:12}") double occlusionMinLowerTexture,
             @Value("${app.uploads.faces.occlusion-lower-upper-ratio:0.25}") double occlusionLowerUpperRatio,
             FaceDetector faceDetector,
+            EyeDetector eyeDetector,
             Environment environment) {
         this.maxBytes = maxBytes;
         this.maxWidth = maxWidth;
@@ -97,6 +99,7 @@ public class FacePhotoProcessor {
         this.occlusionMinLowerTexture = occlusionMinLowerTexture;
         this.occlusionLowerUpperRatio = occlusionLowerUpperRatio;
         this.faceDetector = faceDetector;
+        this.eyeDetector = eyeDetector;
 
         log.info("FACE_UPLOAD_CONFIG maxBytes={} maxWidth={} maxHeight={} minBrightness={} maxBrightness={} minSharpness={} minContrast={} minFaceRatio={} maxCenterOffsetRatio={} faceMarginRatio={} secondaryFaceMinRatio={} secondaryFaceMinAreaRatio={}",
                 maxBytes, maxWidth, maxHeight, minBrightness, maxBrightness, minSharpness, minContrast,
@@ -116,7 +119,7 @@ public class FacePhotoProcessor {
      */
     FacePhotoProcessor(int maxBytes, int maxWidth, int maxHeight) {
         this(maxBytes, maxWidth, maxHeight, 0.6, 0.18, 0.25, 50, 235, 55, 20,
-                0.065, 0.12, true, 12, 0.25, null, null);
+                0.065, 0.12, true, 12, 0.25, null, null, null);
     }
 
     /**
@@ -125,7 +128,13 @@ public class FacePhotoProcessor {
      */
     FacePhotoProcessor(int maxBytes, int maxWidth, int maxHeight, FaceDetector faceDetector) {
         this(maxBytes, maxWidth, maxHeight, 0.6, 0.18, 0.25, 50, 235, 55, 20,
-                0.065, 0.12, true, 12, 0.25, faceDetector, null);
+                0.065, 0.12, true, 12, 0.25, faceDetector, null, null);
+    }
+
+    FacePhotoProcessor(int maxBytes, int maxWidth, int maxHeight, FaceDetector faceDetector,
+                       EyeDetector eyeDetector) {
+        this(maxBytes, maxWidth, maxHeight, 0.6, 0.18, 0.25, 50, 235, 55, 20,
+                0.065, 0.12, true, 12, 0.25, faceDetector, eyeDetector, null);
     }
 
     /** Final upload path: validate and return the processed photo, throwing 422 when not approved. */
@@ -165,6 +174,7 @@ public class FacePhotoProcessor {
                     || source.getHeight() != normalized.getHeight();
             return new FacePhotoValidation(true, APPROVED_MESSAGE,
                     true, true, false, true, true, true, true, true, true,
+                    true,
                     compressed, "jpg", "image/jpeg", normalized.getWidth(), normalized.getHeight(),
                     originalBytes.length, compressed.length, maxBytes, changed);
         }
@@ -187,7 +197,8 @@ public class FacePhotoProcessor {
         int imgH = rgb.getHeight();
         boolean sizeOk = false;
         boolean centeredOk = false;
-        boolean faceFullyVisibleOk = true; // assume visible unless the conservative heuristic flags it
+        boolean faceFullyVisibleOk = false;
+        boolean eyesVisibleOk = false;
         boolean secondaryFaceDetected = false;
         BufferedImage toCompress = rgb;
         if (faceDetected) {
@@ -200,9 +211,8 @@ public class FacePhotoProcessor {
             sizeOk = faceRatio >= minFaceRatio;
             centeredOk = offsetX <= maxCenterOffsetRatio && offsetY <= maxCenterOffsetRatio;
             if (singleFace && sizeOk && centeredOk) {
-                if (occlusionCheckEnabled) {
-                    faceFullyVisibleOk = !lowerFaceLooksOccluded(rgb, face);
-                }
+                eyesVisibleOk = eyesVisible(rgb, face);
+                faceFullyVisibleOk = !occlusionCheckEnabled || !lowerFaceLooksOccluded(rgb, face);
                 toCompress = cropAroundFace(rgb, face);
             }
         }
@@ -213,16 +223,16 @@ public class FacePhotoProcessor {
         boolean sizeBytesOk = compressed.length <= maxBytes;
 
         boolean approved = brightnessOk && sharpnessOk && contrastOk
-                && faceDetected && singleFace && sizeOk && centeredOk && faceFullyVisibleOk && sizeBytesOk;
+                && faceDetected && singleFace && sizeOk && centeredOk && faceFullyVisibleOk && eyesVisibleOk && sizeBytesOk;
         String message = approved ? APPROVED_MESSAGE
                 : firstFailureMessage(brightnessOk, sharpnessOk, contrastOk, faceDetected, singleFace,
-                        sizeOk, centeredOk, faceFullyVisibleOk, sizeBytesOk);
+                        sizeOk, centeredOk, faceFullyVisibleOk, eyesVisibleOk, sizeBytesOk);
 
         if (!approved) {
-            log.info("FACE_VALIDATION_REJECTED brightness={} sharpness={} contrast={} brightness_ok={} sharpness_ok={} contrast_ok={} faces={} single={} secondary_face_detected={} size_ok={} centered_ok={} face_visible_ok={} bytes={} max_bytes={} final_size_ok={}",
+            log.info("FACE_VALIDATION_REJECTED brightness={} sharpness={} contrast={} brightness_ok={} sharpness_ok={} contrast_ok={} faces={} single={} secondary_face_detected={} size_ok={} centered_ok={} face_visible_ok={} eyes_visible_ok={} bytes={} max_bytes={} final_size_ok={}",
                     Math.round(brightness), Math.round(sharpness), Math.round(contrast),
                     brightnessOk, sharpnessOk, contrastOk, faces.size(), singleFace, secondaryFaceDetected,
-                    sizeOk, centeredOk, faceFullyVisibleOk, compressed.length, maxBytes, sizeBytesOk);
+                    sizeOk, centeredOk, faceFullyVisibleOk, eyesVisibleOk, compressed.length, maxBytes, sizeBytesOk);
         }
 
         boolean changed = compressed.length != originalBytes.length
@@ -230,7 +240,7 @@ public class FacePhotoProcessor {
                 || source.getHeight() != normalized.getHeight();
         return new FacePhotoValidation(approved, message,
                 faceDetected, singleFace, secondaryFaceDetected, brightnessOk, sharpnessOk, contrastOk, centeredOk, sizeOk,
-                faceFullyVisibleOk,
+                faceFullyVisibleOk, eyesVisibleOk,
                 compressed, "jpg", "image/jpeg", normalized.getWidth(), normalized.getHeight(),
                 originalBytes.length, compressed.length, maxBytes, changed);
     }
@@ -266,6 +276,99 @@ public class FacePhotoProcessor {
         double intersection = (double) intersectionW * intersectionH;
         double union = (double) a.area() + b.area() - intersection;
         return union <= 0 ? 0 : intersection / union;
+    }
+
+    /**
+     * Haar eyes are treated as "visible eyes", not a definitive open-eye/liveness proof. We require
+     * two plausible, separated detections in the upper face with limited vertical skew.
+     */
+    private boolean eyesVisible(BufferedImage image, FaceDetector.FaceBox face) {
+        if (eyeDetector == null) {
+            log.warn("FACE_EYE_CHECK_UNAVAILABLE detector_missing=true");
+            return false;
+        }
+        try {
+            int fx = Math.max(0, face.x());
+            int fy = Math.max(0, face.y());
+            int fw = Math.min(image.getWidth() - fx, face.width());
+            int fh = Math.min(image.getHeight() - fy, face.height());
+            if (fw < 40 || fh < 40) {
+                return false;
+            }
+
+            int marginX = Math.max(0, (int) Math.round(fw * 0.06));
+            int regionX = fx + marginX;
+            int regionY = fy + Math.max(0, (int) Math.round(fh * 0.08));
+            int regionRight = Math.min(image.getWidth(), fx + fw - marginX);
+            int regionBottom = Math.min(image.getHeight(), fy + (int) Math.round(fh * 0.68));
+            int regionW = regionRight - regionX;
+            int regionH = regionBottom - regionY;
+            if (regionW < 24 || regionH < 24) {
+                return false;
+            }
+
+            var eyeRegion = image.getSubimage(regionX, regionY, regionW, regionH);
+            List<FaceDetector.FaceBox> eyes = eyeDetector.detect(eyeRegion).stream()
+                    .filter(eye -> eye != null && eye.width() > 0 && eye.height() > 0)
+                    .map(eye -> new FaceDetector.FaceBox(
+                            regionX + eye.x(), regionY + eye.y(), eye.width(), eye.height()))
+                    .filter(eye -> plausibleEyeBox(eye, face))
+                    .sorted(Comparator.comparingInt(FaceDetector.FaceBox::area).reversed())
+                    .limit(8)
+                    .toList();
+            boolean visible = hasValidEyePair(eyes, face);
+            if (!visible) {
+                log.info("FACE_EYES_NOT_VISIBLE candidates={}", eyes.size());
+            }
+            return visible;
+        } catch (RuntimeException exception) {
+            log.debug("FACE_EYE_CHECK_FAILED reason={}", exception.getMessage());
+            return false;
+        }
+    }
+
+    private boolean plausibleEyeBox(FaceDetector.FaceBox eye, FaceDetector.FaceBox face) {
+        double widthRatio = eye.width() / (double) face.width();
+        double heightRatio = eye.height() / (double) face.height();
+        double centerXRatio = (eye.centerX() - face.x()) / (double) face.width();
+        double centerYRatio = (eye.centerY() - face.y()) / (double) face.height();
+        return widthRatio >= 0.06 && widthRatio <= 0.36
+                && heightRatio >= 0.04 && heightRatio <= 0.28
+                && centerXRatio >= 0.05 && centerXRatio <= 0.95
+                && centerYRatio >= 0.12 && centerYRatio <= 0.62;
+    }
+
+    private boolean hasValidEyePair(List<FaceDetector.FaceBox> eyes, FaceDetector.FaceBox face) {
+        for (int i = 0; i < eyes.size(); i++) {
+            for (int j = i + 1; j < eyes.size(); j++) {
+                var first = eyes.get(i);
+                var second = eyes.get(j);
+                double separation = Math.abs(first.centerX() - second.centerX()) / (double) face.width();
+                if (separation < 0.20 || separation > 0.75) {
+                    continue;
+                }
+                double verticalDelta = Math.abs(first.centerY() - second.centerY()) / (double) face.height();
+                if (verticalDelta > 0.12) {
+                    continue;
+                }
+                int leftEyeCenter = Math.min(first.centerX(), second.centerX());
+                int rightEyeCenter = Math.max(first.centerX(), second.centerX());
+                if (leftEyeCenter >= face.centerX() || rightEyeCenter <= face.centerX()) {
+                    continue;
+                }
+                double averageYRatio = ((first.centerY() + second.centerY()) / 2.0 - face.y()) / face.height();
+                if (averageYRatio < 0.18 || averageYRatio > 0.55) {
+                    continue;
+                }
+                double pairCenterOffset = Math.abs((first.centerX() + second.centerX()) / 2.0 - face.centerX())
+                        / face.width();
+                if (pairCenterOffset > 0.20) {
+                    continue;
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -310,7 +413,7 @@ public class FacePhotoProcessor {
 
     private String firstFailureMessage(boolean brightnessOk, boolean sharpnessOk, boolean contrastOk,
                                        boolean faceDetected, boolean singleFace, boolean sizeOk, boolean centeredOk,
-                                       boolean faceFullyVisibleOk, boolean sizeBytesOk) {
+                                       boolean faceFullyVisibleOk, boolean eyesVisibleOk, boolean sizeBytesOk) {
         if (!brightnessOk || !sharpnessOk || !contrastOk) {
             return FacePhotoRejectedException.LOW_QUALITY;
         }
@@ -325,6 +428,9 @@ public class FacePhotoProcessor {
         }
         if (!faceFullyVisibleOk) {
             return FacePhotoRejectedException.FACE_OCCLUDED;
+        }
+        if (!eyesVisibleOk) {
+            return FacePhotoRejectedException.EYES_NOT_VISIBLE;
         }
         if (!sizeBytesOk) {
             return FacePhotoRejectedException.COMPRESSION_FAILED;
@@ -563,6 +669,7 @@ public class FacePhotoProcessor {
             boolean centeredOk,
             boolean sizeOk,
             boolean faceFullyVisibleOk,
+            boolean eyesVisibleOk,
             byte[] bytes,
             String extension,
             String contentType,

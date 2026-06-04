@@ -11,6 +11,7 @@ export type FaceValidationChecks = {
   faceSizeOk: boolean;
   sizeOk: boolean;
   faceFullyVisibleOk: boolean;
+  eyesVisibleOk: boolean;
   finalCompressedSizeOk: boolean;
   compressedSizeBytes: number;
   maxAllowedBytes: number;

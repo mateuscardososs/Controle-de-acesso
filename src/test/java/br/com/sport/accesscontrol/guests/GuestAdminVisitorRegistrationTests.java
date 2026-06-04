@@ -49,6 +49,27 @@ class GuestAdminVisitorRegistrationTests {
     }
 
     @Test
+    void adminVisitorRegistrationWithPhotoPublishesAutomaticSyncEvent() {
+        var guestRepository = mock(GuestRepository.class);
+        var publisher = mock(ApplicationEventPublisher.class);
+        var service = serviceWithAreas(guestRepository, publisher, "Portaria", "Front 1");
+
+        var response = service.adminVisitorRegistration(
+                "Visitante Sync Auto",
+                "52998224725",
+                "sync.auto@empresa.local",
+                "81999990000",
+                LocalDate.of(2026, 6, 10),
+                "Front 1",
+                photo()
+        );
+
+        assertThat(response.status()).isEqualTo(GuestStatus.COMPLETED);
+        assertThat(response.syncStatus()).isEqualTo(SyncStatus.PENDING_SYNC);
+        verify(publisher).publishEvent(new GuestReadyForSyncEvent(response.id()));
+    }
+
+    @Test
     void adminRegistrationMapsOfficialLoungesToPortariaAndSelectedLounge() {
         var service = serviceWithAreas("Portaria", "Front 1", "Front 2", "Institucional 1", "Institucional Vereadores");
 
@@ -336,6 +357,68 @@ class GuestAdminVisitorRegistrationTests {
         verify(publisher).publishEvent(any(GuestReadyForSyncEvent.class));
     }
 
+    @Test
+    void cpfCheckinWithFaceStoresPhotoAndPublishesAutomaticSyncEvent() {
+        var guestRepository = mock(GuestRepository.class);
+        var publisher = mock(ApplicationEventPublisher.class);
+        var service = serviceWithAreas(guestRepository, publisher, "Portaria", "Front 1");
+        var guest = new Guest(
+                "Visitante CPF",
+                "52998224725",
+                null,
+                "81999990000",
+                null,
+                "Evento",
+                "Host",
+                Instant.parse("2026-06-10T18:00:00Z"),
+                Instant.parse("2026-06-11T07:00:00Z"),
+                LocalDate.of(2026, 6, 10),
+                "Front 1"
+        );
+        ReflectionTestUtils.setField(guest, "id", UUID.randomUUID());
+        when(guestRepository.findFirstByCpfAndStatusOrderByVisitStartDesc("52998224725", GuestStatus.PENDING_REGISTRATION))
+                .thenReturn(Optional.of(guest));
+
+        var response = service.completeCheckinByCpf("529.982.247-25", "data:image/jpeg;base64,Zm90bw==");
+
+        assertThat(response.success()).isTrue();
+        assertThat(guest.getStatus()).isEqualTo(GuestStatus.COMPLETED);
+        assertThat(guest.getFacePhotoUrl()).isEqualTo("/uploads/faces/admin.png");
+        assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.PENDING_SYNC);
+        verify(publisher).publishEvent(new GuestReadyForSyncEvent(guest.getId()));
+    }
+
+    @Test
+    void cpfCheckinWithoutFaceDoesNotPublishSyncEvent() {
+        var guestRepository = mock(GuestRepository.class);
+        var publisher = mock(ApplicationEventPublisher.class);
+        var service = serviceWithAreas(guestRepository, publisher, "Portaria", "Front 1");
+        var guest = new Guest(
+                "Visitante Sem Foto",
+                "52998224725",
+                null,
+                "81999990000",
+                null,
+                "Evento",
+                "Host",
+                Instant.parse("2026-06-10T18:00:00Z"),
+                Instant.parse("2026-06-11T07:00:00Z"),
+                LocalDate.of(2026, 6, 10),
+                "Front 1"
+        );
+        ReflectionTestUtils.setField(guest, "id", UUID.randomUUID());
+        when(guestRepository.findFirstByCpfAndStatusOrderByVisitStartDesc("52998224725", GuestStatus.PENDING_REGISTRATION))
+                .thenReturn(Optional.of(guest));
+
+        var response = service.completeCheckinByCpf("529.982.247-25", null);
+
+        assertThat(response.success()).isTrue();
+        assertThat(guest.getStatus()).isEqualTo(GuestStatus.COMPLETED);
+        assertThat(guest.getFacePhotoUrl()).isNull();
+        assertThat(guest.getSyncStatus()).isEqualTo(SyncStatus.NOT_REQUIRED);
+        verify(publisher, never()).publishEvent(any(GuestReadyForSyncEvent.class));
+    }
+
     private GuestService serviceWithAreas(String... areaNames) {
         var guestRepository = mock(GuestRepository.class);
         when(guestRepository.save(any(Guest.class))).thenAnswer(invocation -> {
@@ -358,6 +441,7 @@ class GuestAdminVisitorRegistrationTests {
 
         var faceStorage = mock(FaceStorageService.class);
         when(faceStorage.store(any(), any())).thenReturn("/uploads/faces/admin.png");
+        when(faceStorage.storeBase64(anyString(), any())).thenReturn("/uploads/faces/admin.png");
 
         var areaRepository = mock(AreaRepository.class);
         var areas = new java.util.LinkedHashMap<String, Area>();

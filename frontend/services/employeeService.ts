@@ -56,7 +56,7 @@ export type PublicEmployeeRegistrationPayload = {
   cpf: string;
   phone: string;
   email: string;
-  facePhoto: File;
+  facePhoto?: File | null;
 };
 
 export type PublicEmployeeRegistrationResponse = {
@@ -115,7 +115,7 @@ export const employeeService = {
     formData.append("cpf", payload.cpf);
     formData.append("phone", payload.phone);
     formData.append("email", payload.email);
-    formData.append("face_photo", payload.facePhoto);
+    if (payload.facePhoto) formData.append("face_photo", payload.facePhoto);
     const { data } = await api.post<PublicEmployeeRegistrationResponse>("/api/public/employees/register", formData);
     return data;
   }

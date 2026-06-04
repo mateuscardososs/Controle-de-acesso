@@ -7,7 +7,6 @@ import br.com.sport.accesscontrol.common.ResourceNotFoundException;
 import br.com.sport.accesscontrol.common.events.EmployeeCreatedEvent;
 import br.com.sport.accesscontrol.common.events.EmployeeDeactivatedEvent;
 import br.com.sport.accesscontrol.common.events.EmployeeUpdatedEvent;
-import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasCardNoGenerator;
 import br.com.sport.accesscontrol.integration.sync.EmployeeReadyForSyncEvent;
 import br.com.sport.accesscontrol.guests.FaceStorageService;
 import br.com.sport.accesscontrol.users.User;
@@ -42,7 +41,6 @@ public class EmployeeService {
     private final ApplicationEventPublisher eventPublisher;
     private final AuditService auditService;
     private final LoungeAreaResolver loungeAreaResolver;
-    private final IntelbrasCardNoGenerator cardNoGenerator;
     private static final Duration DEFAULT_EMPLOYEE_VALIDITY = Duration.ofDays(45);
 
     /** Backward-compatible constructor (testes legados sem LoungeAreaResolver nem generator). */
@@ -51,26 +49,16 @@ public class EmployeeService {
                            ApplicationEventPublisher eventPublisher,
                            AuditService auditService) {
         this(employeeRepository, userRepository, passwordEncoder, faceStorageService, eventPublisher,
-                auditService, null, null);
+                auditService, null);
     }
 
-    /** Backward-compatible constructor (testes com LoungeAreaResolver mas sem generator). */
-    public EmployeeService(EmployeeRepository employeeRepository, UserRepository userRepository,
-                           PasswordEncoder passwordEncoder, FaceStorageService faceStorageService,
-                           ApplicationEventPublisher eventPublisher,
-                           AuditService auditService,
-                           LoungeAreaResolver loungeAreaResolver) {
-        this(employeeRepository, userRepository, passwordEncoder, faceStorageService, eventPublisher,
-                auditService, loungeAreaResolver, null);
-    }
-
+    /** Backward-compatible constructor (testes com LoungeAreaResolver). */
     @org.springframework.beans.factory.annotation.Autowired
     public EmployeeService(EmployeeRepository employeeRepository, UserRepository userRepository,
                            PasswordEncoder passwordEncoder, FaceStorageService faceStorageService,
                            ApplicationEventPublisher eventPublisher,
                            AuditService auditService,
-                           LoungeAreaResolver loungeAreaResolver,
-                           IntelbrasCardNoGenerator cardNoGenerator) {
+                           LoungeAreaResolver loungeAreaResolver) {
         this.employeeRepository = employeeRepository;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
@@ -78,7 +66,6 @@ public class EmployeeService {
         this.eventPublisher = eventPublisher;
         this.auditService = auditService;
         this.loungeAreaResolver = loungeAreaResolver;
-        this.cardNoGenerator = cardNoGenerator;
     }
 
     private void applyFullAccessAreas(Employee employee) {
@@ -128,12 +115,6 @@ public class EmployeeService {
             saved = employeeRepository.save(saved);
         }
         applyFullAccessAreas(saved);
-        if (cardNoGenerator != null && saved.getIntelbrasCardNo() == null) {
-            var cardNo = cardNoGenerator.generateUnique();
-            saved.setIntelbrasCardNo(cardNo);
-            saved = employeeRepository.save(saved);
-            log.info("CARDNO_ASSIGNED person_type=EMPLOYEE person_id={} card_no={}", saved.getId(), cardNo);
-        }
         auditService.record("EMPLOYEE_CREATED", "Employee", saved.getId(), Map.of("cpf", saved.getCpf(), "role", saved.getRole()),
                 Map.of(), employeeSnapshot(saved));
         eventPublisher.publishEvent(new EmployeeCreatedEvent(saved.getId()));
@@ -172,13 +153,10 @@ public class EmployeeService {
                 validUntil
         );
         var saved = employeeRepository.save(employee);
-        saved.setFacePhotoUrl(storePublicEmployeeFace(facePhoto, facePhotoBase64, saved.getId()));
-        saved = employeeRepository.save(saved);
-        if (cardNoGenerator != null && saved.getIntelbrasCardNo() == null) {
-            var cardNo = cardNoGenerator.generateUnique();
-            saved.setIntelbrasCardNo(cardNo);
+        var facePhotoUrl = storePublicEmployeeFace(facePhoto, facePhotoBase64, saved.getId());
+        if (hasText(facePhotoUrl)) {
+            saved.setFacePhotoUrl(facePhotoUrl);
             saved = employeeRepository.save(saved);
-            log.info("CARDNO_ASSIGNED person_type=EMPLOYEE person_id={} card_no={}", saved.getId(), cardNo);
         }
         auditService.record("PUBLIC_EMPLOYEE_REGISTERED", "Employee", saved.getId(),
                 Map.of(
@@ -188,7 +166,12 @@ public class EmployeeService {
                 ),
                 Map.of(),
                 employeeSnapshot(saved));
-        triggerEmployeeAutoSyncAfterRegistration(saved, "PUBLIC_REGISTRATION");
+        if (hasText(saved.getFacePhotoUrl()) || hasText(saved.getCardNo())) {
+            triggerEmployeeAutoSyncAfterRegistration(saved, "PUBLIC_REGISTRATION");
+        } else {
+            log.info("EMPLOYEE_AUTO_SYNC_SKIPPED employee_id={} source=PUBLIC_REGISTRATION sync_status={} reason=credential_missing",
+                    saved.getId(), saved.getSyncStatus());
+        }
         log.info("PUBLIC_EMPLOYEE_REGISTRATION_CREATED employee_id={} cpf={} valid_until={} sync_status={}",
                 saved.getId(), saved.getCpf(), saved.getAccessValidUntil(), saved.getSyncStatus());
         return PublicEmployeeRegistrationDtos.PublicEmployeeRegistrationResponse.from(saved);
@@ -274,10 +257,9 @@ public class EmployeeService {
         if (employee.getStatus() != EmployeeStatus.ACTIVE) {
             throw new IllegalArgumentException("Colaborador precisa estar ativo para sincronizar.");
         }
-        // Aceita: foto facial, cartão RFID físico OU intelbrasCardNo (gerado automaticamente)
+        // Aceita: foto facial ou cartão RFID físico. Sem cartão físico, a Intelbras usa CPF completo como CardNo.
         if (!hasText(employee.getFacePhotoUrl())
-                && !hasText(employee.getCardNo())
-                && !hasText(employee.getIntelbrasCardNo())) {
+                && !hasText(employee.getCardNo())) {
             throw new IllegalArgumentException(
                     "Informe foto facial ou tag/cartão antes da sincronização.");
         }
@@ -286,11 +268,6 @@ public class EmployeeService {
     private void queueEmployeeSync(Employee employee, Map<String, Object> oldData) {
         if (employee.getAllowedAreas() == null || employee.getAllowedAreas().isEmpty()) {
             applyFullAccessAreas(employee);
-        }
-        if (cardNoGenerator != null && employee.getIntelbrasCardNo() == null) {
-            var cardNo = cardNoGenerator.generateUnique();
-            employee.setIntelbrasCardNo(cardNo);
-            log.info("CARDNO_ASSIGNED person_type=EMPLOYEE person_id={} card_no={}", employee.getId(), cardNo);
         }
         employee.markPendingSync();
         employeeRepository.save(employee);
@@ -374,14 +351,14 @@ public class EmployeeService {
         if (!hasText(email)) {
             throw new IllegalArgumentException("E-mail é obrigatório.");
         }
-        if ((facePhoto == null || facePhoto.isEmpty()) && !hasText(facePhotoBase64)) {
-            throw new IllegalArgumentException("Foto facial é obrigatória.");
-        }
     }
 
     private String storePublicEmployeeFace(MultipartFile facePhoto, String facePhotoBase64, UUID employeeId) {
         if (facePhoto != null && !facePhoto.isEmpty()) {
             return faceStorageService.store(facePhoto, employeeId);
+        }
+        if (!hasText(facePhotoBase64)) {
+            return null;
         }
         return faceStorageService.storeBase64(facePhotoBase64, employeeId);
     }

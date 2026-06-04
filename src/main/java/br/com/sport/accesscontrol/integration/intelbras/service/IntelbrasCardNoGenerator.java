@@ -9,10 +9,9 @@ import org.springframework.stereotype.Component;
 import java.security.SecureRandom;
 
 /**
- * Gera CardNo aleatório único de 10 dígitos para uso na Intelbras.
- * Substitui a abordagem anterior de derivar CardNo a partir do CPF (CPF[0:10]),
- * que causava colisões e rejeição 400 nas controladoras quando dois usuários
- * compartilhavam os mesmos 10 primeiros dígitos do CPF.
+ * Gera CardNo aleatório único de 10 dígitos para fluxos legados que ainda armazenam
+ * um identificador Intelbras dedicado. O fluxo CGI atual usa o cartão físico real
+ * quando ele existe; sem cartão físico, usa o CPF completo como CardNo.
  */
 @Component
 public class IntelbrasCardNoGenerator {

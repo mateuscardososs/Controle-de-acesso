@@ -50,7 +50,7 @@ public class GuestController {
             @RequestParam String phone,
             @RequestParam LocalDate invitedDay,
             @RequestParam String invitedLounge,
-            @RequestPart("facePhoto") MultipartFile facePhoto
+            @RequestPart(name = "facePhoto", required = false) MultipartFile facePhoto
     ) {
         return guestService.adminVisitorRegistration(fullName, cpf, email, phone, invitedDay, invitedLounge, facePhoto);
     }
@@ -119,7 +119,7 @@ public class GuestController {
     GuestResponse completeRegistration(@PathVariable UUID id, @RequestParam String token,
                                        @RequestParam(required = false) String phone,
                                        @RequestParam(required = false) String company,
-                                       @RequestPart("facePhoto") MultipartFile facePhoto) {
+                                       @RequestPart(name = "facePhoto", required = false) MultipartFile facePhoto) {
         var response = guestService.completeRegistration(token, phone, company, facePhoto);
         if (!response.id().equals(id)) {
             throw new IllegalArgumentException("Invite token does not belong to guest.");

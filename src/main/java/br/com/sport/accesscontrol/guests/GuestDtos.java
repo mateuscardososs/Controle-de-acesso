@@ -185,7 +185,7 @@ public final class GuestDtos {
                     guest.getInvitedDay(),
                     guest.getInvitedLounge(),
                     guest.getStatus(),
-                    guest.getFacePhotoUrl() == null || guest.getFacePhotoUrl().isBlank()
+                    false
             );
         }
     }

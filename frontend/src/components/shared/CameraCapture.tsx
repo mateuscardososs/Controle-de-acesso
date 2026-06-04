@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Camera, CheckCircle2, Image, Loader2, RotateCcw, Upload, Video, X, XCircle } from "lucide-react";
+import { AlertCircle, Camera, CheckCircle2, Loader2, RotateCcw, Video, XCircle } from "lucide-react";
 import { Button } from "@/src/components/ui/Button";
 import { faceService, type FaceValidationChecks } from "@/services/faceService";
 
@@ -13,7 +13,6 @@ type CameraCaptureProps = {
   disabled?: boolean;
 };
 
-type ActiveTab = "camera" | "upload";
 type QualityStatus = "idle" | "validating" | "approved" | "rejected" | "error";
 type QualityState = {
   status: QualityStatus;
@@ -21,12 +20,10 @@ type QualityState = {
   checks?: FaceValidationChecks;
 };
 
-const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
-const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
-const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB — alinhado com FaceStorageService
 const VALIDATING_MESSAGE = "Validando a foto no servidor...";
 const BACKEND_ERROR_MESSAGE = "Não foi possível validar a foto agora. Tente novamente.";
 const MULTIPLE_PEOPLE_MESSAGE = "Detectamos mais de uma pessoa na imagem. Tire uma foto individual, com apenas o rosto da pessoa cadastrada.";
+const EYES_NOT_VISIBLE_MESSAGE = "Mantenha os olhos abertos e olhando para a câmera.";
 
 // Rótulos das checagens reais retornadas pelo backend (sem decisão no client).
 const CHECK_LABELS: { key: keyof FaceValidationChecks; label: string }[] = [
@@ -37,9 +34,14 @@ const CHECK_LABELS: { key: keyof FaceValidationChecks; label: string }[] = [
   { key: "contrastOk", label: "Contraste" },
   { key: "centeredOk", label: "Centralização" },
   { key: "faceSizeOk", label: "Tamanho do rosto" },
-  { key: "faceFullyVisibleOk", label: "Rosto descoberto" },
+  { key: "faceFullyVisibleOk", label: "Rosto visível" },
+  { key: "eyesVisibleOk", label: "Olhos visíveis" },
   { key: "finalCompressedSizeOk", label: "Arquivo final" }
 ];
+
+function hasBooleanCheck(checks: FaceValidationChecks | undefined, key: keyof FaceValidationChecks): boolean {
+  return !!checks && Object.prototype.hasOwnProperty.call(checks, key) && typeof checks[key] === "boolean";
+}
 
 function isCameraAvailable(): boolean {
   if (typeof window === "undefined") return false;
@@ -49,15 +51,12 @@ function isCameraAvailable(): boolean {
 
 export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps) {
   const cameraSupported = useMemo(() => isCameraAvailable(), []);
-  const [activeTab, setActiveTab] = useState<ActiveTab>(cameraSupported ? "camera" : "upload");
   const [cameraActive, setCameraActive] = useState(false);
   const [candidateFile, setCandidateFile] = useState<File | null>(null);
   const [quality, setQuality] = useState<QualityState>({ status: "idle", message: "" });
   const [error, setError] = useState("");
-  const [uploadError, setUploadError] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const validationRunRef = useRef(0);
 
   const previewFile = candidateFile ?? value;
@@ -72,13 +71,6 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
   useEffect(() => {
     return () => stopCamera();
   }, []);
-
-  function handleTabChange(tab: ActiveTab) {
-    if (tab === "upload") stopCamera();
-    setActiveTab(tab);
-    setError("");
-    setUploadError("");
-  }
 
   // ─── Câmera ao vivo ───────────────────────────────────────────────
 
@@ -140,35 +132,6 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
     void startCamera();
   }
 
-  // ─── Upload / câmera nativa ───────────────────────────────────────
-
-  function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    setUploadError("");
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    // Pré-checagem visual apenas (formato/tamanho). A DECISÃO de aprovação é do backend.
-    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-    if (!ALLOWED_TYPES.includes(file.type) && !ALLOWED_EXTENSIONS.includes(ext)) {
-      setUploadError("Formato inválido. Use JPG, PNG ou WEBP.");
-      event.target.value = "";
-      return;
-    }
-    if (file.size > MAX_SIZE_BYTES) {
-      setUploadError("Imagem muito grande. O tamanho máximo é 5 MB.");
-      event.target.value = "";
-      return;
-    }
-
-    void validateAndAcceptPhoto(file);
-    event.target.value = "";
-  }
-
-  function removeUpload() {
-    clearPhoto();
-    setUploadError("");
-  }
-
   async function validateAndAcceptPhoto(file: File) {
     const runId = validationRunRef.current + 1;
     validationRunRef.current = runId;
@@ -181,7 +144,8 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
       if (validationRunRef.current !== runId) return;
 
       const multiplePeopleDetected = result.checks.secondaryFaceDetected || !result.checks.singleFace;
-      if (result.approved && !multiplePeopleDetected) {
+      const eyesVisible = result.checks.eyesVisibleOk === true;
+      if (result.approved && !multiplePeopleDetected && eyesVisible) {
         setQuality({ status: "approved", message: result.message, checks: result.checks });
         setCandidateFile(null);
         onChange(file);
@@ -190,7 +154,11 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
       // Reprovado pelo backend — mostra o motivo real e NÃO aceita a foto.
       setQuality({
         status: "rejected",
-        message: multiplePeopleDetected ? MULTIPLE_PEOPLE_MESSAGE : result.message,
+        message: multiplePeopleDetected
+          ? MULTIPLE_PEOPLE_MESSAGE
+          : result.approved && !eyesVisible
+            ? EYES_NOT_VISIBLE_MESSAGE
+            : result.message,
         checks: result.checks
       });
       onChange(null);
@@ -216,26 +184,19 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
-      {cameraSupported && (
-        <div className="mb-3 flex gap-1 rounded-xl bg-white/5 p-1">
-          <TabButton active={activeTab === "camera"} onClick={() => handleTabChange("camera")} icon={Video} label="Câmera ao vivo" />
-          <TabButton active={activeTab === "upload"} onClick={() => handleTabChange("upload")} icon={Image} label="Foto / Galeria" />
-        </div>
-      )}
-
       {!cameraSupported && (
         <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-300/20 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-100">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
           <span>
             A câmera ao vivo não está disponível neste navegador.
             <br />
-            Você ainda pode <strong>tirar uma foto</strong> ou <strong>selecionar uma imagem da galeria</strong> abaixo.
+            Use HTTPS ou localhost e permita o acesso à câmera para continuar.
           </span>
         </div>
       )}
 
       {/* ─── ABA CÂMERA AO VIVO ─── */}
-      {activeTab === "camera" && (
+      {cameraSupported && (
         <>
           <div className="relative overflow-hidden rounded-xl border border-white/10 bg-slate-950">
             {preview ? (
@@ -283,80 +244,6 @@ export function CameraCapture({ value, onChange, disabled }: CameraCaptureProps)
           </div>
         </>
       )}
-
-      {/* ─── ABA UPLOAD / CÂMERA NATIVA ─── */}
-      {(activeTab === "upload" || !cameraSupported) && (
-        <>
-          {preview ? (
-            <div className="relative overflow-hidden rounded-xl border border-white/10 bg-slate-950">
-              <img src={preview} alt="Foto selecionada" className="h-64 w-full object-cover" />
-              {!disabled && (
-                <button
-                  type="button"
-                  onClick={removeUpload}
-                  className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black/80"
-                  aria-label="Remover foto"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-          ) : (
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() => fileInputRef.current?.click()}
-              className="flex h-64 w-full flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-white/15 bg-white/[0.025] text-slate-400 transition hover:border-white/30 hover:bg-white/5 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <div className="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/5">
-                <Upload className="h-5 w-5" />
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-medium text-slate-200">Toque para tirar foto ou escolher da galeria</p>
-                <p className="mt-1 text-xs text-slate-500">JPG, PNG ou WEBP · máx. 5 MB</p>
-              </div>
-            </button>
-          )}
-
-          {preview ? <QualityFeedback quality={quality} /> : null}
-
-          {uploadError && (
-            <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-300/20 bg-red-500/12 px-3 py-2 text-sm font-medium text-red-100">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>{uploadError}</span>
-            </div>
-          )}
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-            capture="user"
-            className="sr-only"
-            onChange={handleFileChange}
-            disabled={disabled}
-          />
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            {preview ? (
-              <Button
-                type="button"
-                variant={rejectedOrError ? "danger" : "secondary"}
-                icon={RotateCcw}
-                className={rejectedOrError ? "ring-1 ring-red-300/30" : undefined}
-                disabled={disabled || quality.status === "validating"}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                {rejectedOrError ? "Tirar nova foto" : "Trocar foto"}
-              </Button>
-            ) : (
-              <Button type="button" variant="secondary" icon={Upload} disabled={disabled} onClick={() => fileInputRef.current?.click()}>
-                Selecionar imagem
-              </Button>
-            )}
-          </div>
-        </>
-      )}
     </div>
   );
 }
@@ -365,7 +252,7 @@ function CameraGuide() {
   return (
     <>
       <div className="pointer-events-none absolute inset-x-3 top-3 rounded-xl border border-white/10 bg-black/45 px-3 py-2 text-center text-xs font-bold text-red-400 shadow-lg">
-        Tire a foto com fundo neutro e boa iluminação, sem objetos e pessoas ao redor
+        Tire uma foto individual, de frente, com boa iluminação, fundo limpo, olhos abertos e rosto totalmente visível.
       </div>
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
         <div className="h-44 w-36 rounded-[50%] border-2 border-white/70 shadow-[0_0_0_999px_rgba(2,6,23,0.22)]" />
@@ -381,6 +268,9 @@ function QualityFeedback({ quality }: { quality: QualityState }) {
 
   const approved = quality.status === "approved";
   const validating = quality.status === "validating";
+  const visibleChecks = quality.checks
+    ? CHECK_LABELS.filter(({ key }) => hasBooleanCheck(quality.checks, key))
+    : [];
 
   return (
     <div className={`mt-3 rounded-xl border p-3 ${
@@ -400,10 +290,10 @@ function QualityFeedback({ quality }: { quality: QualityState }) {
         )}
         <span>{quality.message}</span>
       </div>
-      {quality.checks && !validating ? (
+      {visibleChecks.length > 0 && !validating ? (
         <div className="mt-3 grid gap-2 text-xs font-medium text-slate-300 sm:grid-cols-2">
-          {CHECK_LABELS.map(({ key, label }) => (
-            <CheckPill key={key} label={label} ok={Boolean(quality.checks?.[key])} />
+          {visibleChecks.map(({ key, label }) => (
+            <CheckPill key={key} label={label} ok={quality.checks?.[key] === true} />
           ))}
         </div>
       ) : null}
@@ -421,35 +311,6 @@ function CheckPill({ label, ok }: { label: string; ok: boolean }) {
       )}
       <span>{label}: {ok ? "OK" : "ajustar"}</span>
     </div>
-  );
-}
-
-// ─── Sub-componente tab ────────────────────────────────────────────────────────
-
-function TabButton({
-  active,
-  onClick,
-  icon: Icon,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ElementType;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
-        active
-          ? "bg-white/10 text-slate-50 shadow-sm"
-          : "text-slate-400 hover:text-slate-200"
-      }`}
-    >
-      <Icon className="h-4 w-4" />
-      <span>{label}</span>
-    </button>
   );
 }
 

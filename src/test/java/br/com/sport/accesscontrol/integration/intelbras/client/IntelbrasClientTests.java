@@ -254,14 +254,14 @@ class IntelbrasClientTests {
                 .contains("action=insert")
                 .contains("name=AccessControlCard")
                 .contains("CardNo=8765432109")        // physical card, NOT CPF
-                .doesNotContain("CardNo=05731650411") // CPF must NEVER be the CardNo
+                .doesNotContain("CardNo=05731650411") // physical card overrides document fallback
                 .contains("CardStatus=0")
                 .contains("CardName=mateus%20da%20silva%20cardoso")
                 .contains("UserID=05731650411");
     }
 
     @Test
-    void cgiClientDerivesCardNoFromCpfWhenNoPhysicalCard() throws Exception {
+    void cgiClientUsesFullCpfAsCardNoWhenNoPhysicalCard() throws Exception {
         var httpClient = mock(HttpClient.class);
         var properties = properties();
         var challenge = stringResponse(401, "", Map.of(
@@ -275,10 +275,10 @@ class IntelbrasClientTests {
 
         var client = new IntelbrasCgiClient(httpClient, properties, new ObjectMapper());
 
-        // Guest with CPF as userId but no physical card uses CPF without the last digit as CardNo.
+        // Guest with CPF as userId but no physical card uses the full CPF as CardNo.
         client.upsertAccessUser(
                 "192.168.15.5", "admin", "admin123",
-                "06331315470",  // userId = CPF
+                "05731650411",  // userId = CPF
                 "",              // cardNo = blank → no physical card
                 "Visitante Real",
                 LocalDateTime.of(2026, 5, 20, 8, 0),
@@ -290,14 +290,14 @@ class IntelbrasClientTests {
         var requests = requestCaptor.getAllValues();
         var insertUri = requests.get(3).uri().toString();
         assertThat(insertUri)
-                .contains("UserID=06331315470")
-                .contains("CardNo=0633131547")
-                .doesNotContain("CardNo=06331315470")
+                .contains("UserID=05731650411")
+                .contains("CardNo=05731650411")
+                .doesNotContain("CardNo=0573165041&")
                 .contains("CardName=Visitante%20Real");
     }
 
     @Test
-    void faceOnlyBaseInsertUsesCpf10CardNoDifferentFromFullCpf() throws Exception {
+    void faceOnlyBaseInsertUsesFullCpfCardNo() throws Exception {
         var httpClient = mock(HttpClient.class);
         var notFound = stringResponse(200, "found=0", Map.of());
         var ok = stringResponse(200, "OK", Map.of());
@@ -309,23 +309,23 @@ class IntelbrasClientTests {
 
         var result = client.upsertFaceOnlyAccessUser(
                 "192.168.15.5", "admin", "admin123",
-                "06331315470",
+                "05731650411",
                 "Visitante Real",
                 LocalDateTime.of(2026, 5, 20, 8, 0),
                 LocalDateTime.of(2037, 12, 31, 23, 59, 59)
         );
 
         assertThat(result.usedTemporaryCardNo()).isFalse();
-        assertThat(result.temporaryCardNo()).isEqualTo("0633131547");
+        assertThat(result.temporaryCardNo()).isEqualTo("05731650411");
         var requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
         verify(httpClient, times(2)).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
         var insertUri = requestCaptor.getAllValues().get(1).uri().toString();
         assertThat(insertUri)
                 .contains("/cgi-bin/recordUpdater.cgi?action=insert&name=AccessControlCard")
-                .contains("CardNo=0633131547")
+                .contains("CardNo=05731650411")
                 .contains("CardName=Visitante%20Real")
-                .contains("UserID=06331315470")
-                .doesNotContain("CardNo=06331315470");
+                .contains("UserID=05731650411")
+                .doesNotContain("CardNo=0573165041&");
     }
 
     @Test
@@ -334,7 +334,7 @@ class IntelbrasClientTests {
         var existing = stringResponse(200, """
                 found=1
                 records[0].RecNo=22
-                records[0].UserID=06331315470
+                records[0].UserID=05731650411
                 records[0].CardNo=2391496943
                 """, Map.of());
         var ok = stringResponse(200, "OK", Map.of());
@@ -346,7 +346,7 @@ class IntelbrasClientTests {
 
         var result = client.upsertFaceOnlyAccessUser(
                 "192.168.15.5", "admin", "admin123",
-                "06331315470",
+                "05731650411",
                 "Visitante Real",
                 LocalDateTime.of(2026, 5, 20, 8, 0),
                 LocalDateTime.of(2037, 12, 31, 23, 59, 59)
@@ -360,10 +360,10 @@ class IntelbrasClientTests {
         assertThat(updateUri)
                 .contains("/cgi-bin/recordUpdater.cgi?action=update&name=AccessControlCard")
                 .contains("recno=22")
-                .contains("CardNo=0633131547")
-                .contains("UserID=06331315470")
+                .contains("CardNo=05731650411")
+                .contains("UserID=05731650411")
                 .doesNotContain("action=insert")
-                .doesNotContain("CardNo=06331315470");
+                .doesNotContain("CardNo=0573165041&");
     }
 
     @Test
@@ -384,7 +384,7 @@ class IntelbrasClientTests {
 
         assertThatThrownBy(() -> client.upsertFaceOnlyAccessUser(
                 "192.168.15.5", "admin", "admin123",
-                "06331315470",
+                "05731650411",
                 "Visitante Real",
                 LocalDateTime.of(2026, 5, 20, 8, 0),
                 LocalDateTime.of(2037, 12, 31, 23, 59, 59)
@@ -401,7 +401,7 @@ class IntelbrasClientTests {
                 found=1
                 records[0].RecNo=88
                 records[0].UserID=00000000001
-                records[0].CardNo=0633131547
+                records[0].CardNo=05731650411
                 """, Map.of());
         var ok = stringResponse(200, "OK", Map.of());
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
@@ -419,7 +419,7 @@ class IntelbrasClientTests {
 
         var result = client.upsertFaceOnlyAccessUser(
                 "192.168.15.5", "admin", "admin123",
-                "06331315470",
+                "05731650411",
                 "Visitante Real",
                 LocalDateTime.of(2026, 5, 20, 8, 0),
                 LocalDateTime.of(2037, 12, 31, 23, 59, 59)
@@ -433,7 +433,7 @@ class IntelbrasClientTests {
                 .toList();
         assertThat(urls).anySatisfy(url -> assertThat(url)
                 .contains("recordFinder.cgi")
-                .contains("condition.CardNo=0633131547"));
+                .contains("condition.CardNo=05731650411"));
         assertThat(urls).anySatisfy(url -> assertThat(url)
                 .contains("recordUpdater.cgi?action=remove")
                 .contains("recno=88"));
@@ -557,10 +557,12 @@ class IntelbrasClientTests {
         var body = """
                 found=2
                 records[0].CardName=Mateus
-                records[0].UserID=123
+                records[0].UserID=05731650411
+                records[0].CardNo=05731650411
                 records[0].Status=1
                 records[1].CardName=Visitante
                 records[1].UserID=456
+                records[1].CardNo=5731650411
                 records[1].Status=0
                 """;
 
@@ -568,8 +570,31 @@ class IntelbrasClientTests {
 
         assertThat(records).hasSize(2);
         assertThat(records.getFirst()).containsEntry("CardName", "Mateus");
-        assertThat(records.getFirst()).containsEntry("UserID", 123L);
+        assertThat(records.getFirst()).containsEntry("UserID", "05731650411");
+        assertThat(records.getFirst()).containsEntry("CardNo", "05731650411");
+        assertThat(records.getFirst()).containsEntry("Status", 1L);
+        assertThat(records.get(1)).containsEntry("UserID", "456");
+        assertThat(records.get(1)).containsEntry("CardNo", "5731650411");
         assertThat(records.get(1)).containsEntry("Status", 0L);
+    }
+
+    @Test
+    void cardVerificationComparesExactStringPreservingLeadingZero() throws Exception {
+        var httpClient = mock(HttpClient.class);
+        var response = stringResponse(200, """
+                found=1
+                records[0].RecNo=22
+                records[0].UserID=05731650411
+                records[0].CardNo=05731650411
+                """, Map.of());
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+
+        var client = new IntelbrasCgiClient(httpClient, properties(), new ObjectMapper());
+
+        assertThat(client.isCardAssociatedWithUser(
+                "192.168.15.5", "admin", "admin123", "05731650411", "05731650411"
+        )).isTrue();
     }
 
     @Test

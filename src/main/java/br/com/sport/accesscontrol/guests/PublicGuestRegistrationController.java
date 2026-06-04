@@ -24,7 +24,7 @@ public class PublicGuestRegistrationController {
     GuestResponse complete(@PathVariable String token,
                            @RequestParam(required = false) String phone,
                            @RequestParam(required = false) String company,
-                           @RequestPart("facePhoto") MultipartFile facePhoto) {
+                           @RequestPart(name = "facePhoto", required = false) MultipartFile facePhoto) {
         return guestService.completeRegistration(token, phone, company, facePhoto);
     }
 

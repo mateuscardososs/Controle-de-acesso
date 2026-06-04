@@ -18,10 +18,9 @@ public final class IntelbrasIdentityCodec {
         if (strategy == Strategy.DOCUMENT) {
             var documentDigits = digits(document);
             if (!documentDigits.isBlank()) {
-                // UserID = full CPF (11 digits, unchanged).
-                // CardNo = shortNumeric(personId): UUID-derived 6-digit number — guaranteed unique,
-                // no collision between two CPFs sharing the same prefix.
-                return new IntelbrasIdentity(Strategy.DOCUMENT, documentDigits, shortNumeric(personId));
+                // SS 5531 MF W accepts and preserves 11-digit CPFs, including a leading zero.
+                // For people without a real physical card, UserID and CardNo must both be the full CPF.
+                return new IntelbrasIdentity(Strategy.DOCUMENT, documentDigits, documentDigits);
             }
             return new IntelbrasIdentity(Strategy.DOCUMENT, "", "");
         }
@@ -51,7 +50,7 @@ public final class IntelbrasIdentityCodec {
         if (documentDigits.length() != 11) {
             return "";
         }
-        return documentDigits.substring(0, 10);
+        return documentDigits;
     }
 
     private static String prefix(PersonType personType) {

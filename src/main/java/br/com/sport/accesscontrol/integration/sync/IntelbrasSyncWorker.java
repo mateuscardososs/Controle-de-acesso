@@ -1,7 +1,6 @@
 package br.com.sport.accesscontrol.integration.sync;
 
 import br.com.sport.accesscontrol.audit.AuditService;
-import br.com.sport.accesscontrol.integration.intelbras.service.IntelbrasCardNoGenerator;
 import br.com.sport.accesscontrol.common.PersonType;
 import br.com.sport.accesscontrol.common.messaging.IntegrationEventPublisher;
 import br.com.sport.accesscontrol.config.RabbitMqConfig;
@@ -53,7 +52,6 @@ public class IntelbrasSyncWorker {
     private final MeterRegistry meterRegistry;
     private final int maxAttempts;
     private final br.com.sport.accesscontrol.areas.LoungeAreaResolver loungeAreaResolver;
-    private final IntelbrasCardNoGenerator cardNoGenerator;
     private final Object[] personSyncLocks = createPersonSyncLocks();
 
     /** Legacy / test constructor without LoungeAreaResolver or generator. */
@@ -67,23 +65,7 @@ public class IntelbrasSyncWorker {
                                MeterRegistry meterRegistry,
                                @Value("${app.integration.intelbras.sync.max-attempts:3}") int maxAttempts) {
         this(employeeRepository, guestRepository, deviceRepository, provider, auditService, eventPublisher,
-                realtimePublisher, systemRealtimePublisher, mailService, meterRegistry, maxAttempts, null, null);
-    }
-
-    /** Constructor with LoungeAreaResolver but without generator (kept for backward compatibility). */
-    public IntelbrasSyncWorker(EmployeeRepository employeeRepository, GuestRepository guestRepository,
-                               DeviceRepository deviceRepository,
-                               AccessControlProvider provider, AuditService auditService,
-                               IntegrationEventPublisher eventPublisher,
-                               IntegrationSyncRealtimePublisher realtimePublisher,
-                               RealtimePublisherService systemRealtimePublisher,
-                               MailService mailService,
-                               MeterRegistry meterRegistry,
-                               @Value("${app.integration.intelbras.sync.max-attempts:3}") int maxAttempts,
-                               br.com.sport.accesscontrol.areas.LoungeAreaResolver loungeAreaResolver) {
-        this(employeeRepository, guestRepository, deviceRepository, provider, auditService, eventPublisher,
-                realtimePublisher, systemRealtimePublisher, mailService, meterRegistry, maxAttempts,
-                loungeAreaResolver, null);
+                realtimePublisher, systemRealtimePublisher, mailService, meterRegistry, maxAttempts, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -96,8 +78,7 @@ public class IntelbrasSyncWorker {
                                MailService mailService,
                                MeterRegistry meterRegistry,
                                @Value("${app.integration.intelbras.sync.max-attempts:3}") int maxAttempts,
-                               br.com.sport.accesscontrol.areas.LoungeAreaResolver loungeAreaResolver,
-                               IntelbrasCardNoGenerator cardNoGenerator) {
+                               br.com.sport.accesscontrol.areas.LoungeAreaResolver loungeAreaResolver) {
         this.employeeRepository = employeeRepository;
         this.guestRepository = guestRepository;
         this.deviceRepository = deviceRepository;
@@ -110,7 +91,6 @@ public class IntelbrasSyncWorker {
         this.meterRegistry = meterRegistry;
         this.maxAttempts = maxAttempts;
         this.loungeAreaResolver = loungeAreaResolver;
-        this.cardNoGenerator = cardNoGenerator;
     }
 
     @RabbitListener(queues = RabbitMqConfig.INTELBRAS_SYNC_QUEUE)
@@ -180,15 +160,6 @@ public class IntelbrasSyncWorker {
             log.info("intelbras_sync_employee_retry_skipped_already_synced employee_id={} attempt={}", employeeId, attempt);
             return new ProviderSyncResult(ProviderSyncStatus.SUCCESS, "Employee already synced.", java.time.Duration.ZERO);
         }
-        // Garante que intelbrasCardNo está populado antes de enviar à controladora.
-        // Evita a colisão que ocorria quando cardNoFromDocument(CPF) gerava o mesmo CardNo
-        // para dois colaboradores com os mesmos 10 primeiros dígitos de CPF.
-        if (cardNoGenerator != null && employee.getIntelbrasCardNo() == null) {
-            var cardNo = cardNoGenerator.generateUnique();
-            employee.setIntelbrasCardNo(cardNo);
-            employeeRepository.save(employee);
-            log.info("CARDNO_ASSIGNED person_type=EMPLOYEE person_id={} card_no={}", employeeId, cardNo);
-        }
         employee.markSyncing();
         auditStart(PersonType.EMPLOYEE, employeeId, employee.getSyncAttempts());
         realtimePublisher.publish(PersonType.EMPLOYEE, employeeId, SyncStatus.SYNCING, "Sincronizando Intelbras");
@@ -203,7 +174,7 @@ public class IntelbrasSyncWorker {
                 PersonType.EMPLOYEE,
                 employee.getId(),
                 employee.getCpf(),
-                employee.getIntelbrasCardNo(),
+                employee.getCardNo(),
                 employee.getFullName(),
                 employee.getFacePhotoUrl(),
                 employee.getStatus() == br.com.sport.accesscontrol.employees.EmployeeStatus.ACTIVE,

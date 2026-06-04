@@ -175,7 +175,7 @@ export default function GuestsPage() {
       setToast({ tone: "info", message: "Sincronização enfileirada. O status atualiza automaticamente." });
       await queryClient.cancelQueries({ queryKey: ["guests"] });
       queryClient.setQueryData<Guest[]>(["guests"], (current) =>
-        current?.map((guest) => guest.id === id ? { ...guest, syncStatus: "SYNCING", lastSyncError: undefined } : guest)
+        current?.map((guest) => guest.id === id ? { ...guest, syncStatus: "PENDING_SYNC", lastSyncError: undefined } : guest)
       );
     },
     onSuccess: () => {
@@ -318,7 +318,7 @@ export default function GuestsPage() {
   }
 
   function requestSync(guest: Guest) {
-    const reason = syncDisabledReason(guest, syncEnabled, intelbrasStatus.isLoading, false);
+    const reason = syncDisabledReason(guest, false);
     if (reason) {
       setToast({ tone: "error", message: reason });
       return;
@@ -419,8 +419,8 @@ export default function GuestsPage() {
               headerClassName: "min-w-[460px]",
               className: "min-w-[460px]",
               render: (guest) => {
-                const syncReason = syncDisabledReason(guest, syncEnabled, intelbrasStatus.isLoading, false);
-                const retryReason = syncDisabledReason(guest, syncEnabled, intelbrasStatus.isLoading, true);
+                const syncReason = syncDisabledReason(guest, false);
+                const retryReason = syncDisabledReason(guest, true);
                 const isSyncing = activeSyncId === guest.id && sync.isPending;
                 const syncButtonLabel = guest.syncStatus === "SYNCED" ? "Atualizar na Intelbras" : "Sincronizar com controladora";
                 const syncButtonTitle = guest.syncStatus === "SYNCED" ? "Atualizar cadastro e face na Intelbras" : "Sincronizar visitante com Intelbras";
@@ -627,7 +627,7 @@ function ActionButton({
 }
 
 function SyncBadge({ guest }: { guest: Guest }) {
-  const status = guest.syncStatus ?? "NOT_REQUIRED";
+  const status = syncDisplayStatus(guest);
   const title = (status === "SYNC_FAILED" || status === "SYNCED_WITH_WARNINGS") && guest.lastSyncError ? guest.lastSyncError : syncSummary(guest);
   return (
     <Badge tone={syncTone(status)} title={title} className="gap-1.5">
@@ -694,14 +694,17 @@ function cleanupPayload(form: CleanupForm) {
   };
 }
 
-function syncDisabledReason(guest: Guest, syncEnabled: boolean, modeLoading: boolean, retry: boolean) {
-  if (modeLoading) return "Verificando modo Intelbras.";
-  if (!syncEnabled) return "Modo de desenvolvimento ativo";
+function syncDisabledReason(guest: Guest, retry: boolean) {
   if (guest.status !== "COMPLETED") return "Visitante precisa estar completo para sincronizar.";
   if (!guest.facePhotoUrl) return "Visitante precisa enviar foto facial antes da sincronização.";
   if (guest.syncStatus === "SYNCING") return "Sincronização em andamento.";
+  if (guest.syncStatus === "PENDING_SYNC") return "Sincronização já está pendente.";
   if (retry && guest.syncStatus !== "SYNC_FAILED" && guest.syncStatus !== "SYNCED_WITH_WARNINGS") return "Tentar novamente fica disponível apenas quando a sincronização falhar ou ficar parcial.";
   return "";
+}
+
+function isGuestSyncEligible(guest: Guest) {
+  return guest.status === "COMPLETED" && Boolean(guest.facePhotoUrl);
 }
 
 function isIntelbrasDevice(device: Device) {
@@ -760,7 +763,7 @@ function syncLabel(status?: string) {
 }
 
 function syncSummary(guest: Guest) {
-  const status = guest.syncStatus ?? "NOT_REQUIRED";
+  const status = syncDisplayStatus(guest);
   const total = guest.syncTargetCount ?? 0;
   const success = guest.syncSuccessCount ?? 0;
   if (status === "SYNCED" && total > 0) return `Sincronizado em ${success} de ${total}`;
@@ -768,6 +771,12 @@ function syncSummary(guest: Guest) {
   if (status === "SYNC_FAILED" && total > 0) return `Falha: ${success} de ${total}`;
   if (status === "SYNC_FAILED") return "Falha: 0 controladoras";
   return syncLabel(status);
+}
+
+function syncDisplayStatus(guest: Guest) {
+  const status = guest.syncStatus ?? "NOT_REQUIRED";
+  if (status === "NOT_REQUIRED" && isGuestSyncEligible(guest)) return "PENDING_SYNC";
+  return status;
 }
 
 function syncTone(status?: string): "slate" | "red" | "green" | "amber" | "blue" {

@@ -9,7 +9,7 @@ import { guestService } from "@/services/guestService";
 import { Button } from "@/src/components/ui/Button";
 import { Card, CardContent } from "@/src/components/ui/Card";
 import { Input } from "@/src/components/ui/Input";
-import { EmptyState, ErrorState, LoadingState } from "@/src/components/shared/AsyncState";
+import { ErrorState, LoadingState } from "@/src/components/shared/AsyncState";
 import { CameraCapture } from "@/src/components/shared/CameraCapture";
 
 export default function GuestRegistrationPage() {
@@ -23,7 +23,7 @@ export default function GuestRegistrationPage() {
 
   const complete = useMutation({
     mutationFn: () => {
-      if (!facePhoto) throw new Error("Envie uma foto facial.");
+      if (!facePhoto) throw new Error("Tire a foto pela câmera para continuar.");
       return guestService.completeRegistration(token, { phone, company, facePhoto });
     },
     onSuccess: () => setMessage("Cadastro concluido com sucesso. Obrigado!"),
@@ -76,9 +76,8 @@ export default function GuestRegistrationPage() {
                 <span className="mb-2 block text-sm font-semibold text-slate-300">Foto facial</span>
                 <CameraCapture value={facePhoto} onChange={setFacePhoto} disabled={complete.isPending} />
               </div>
-              {message && complete.isError ? <ErrorState label={message} /> : null}
-              {!registration.data.requiresFacePhoto ? <EmptyState label="Foto já enviada." /> : null}
-              <Button type="submit" icon={Camera} loading={complete.isPending}>Concluir cadastro</Button>
+              {message ? <ErrorState label={message} /> : null}
+              <Button type="submit" icon={Camera} loading={complete.isPending} disabled={!facePhoto}>Concluir cadastro</Button>
             </form>
           ) : null}
         </CardContent>

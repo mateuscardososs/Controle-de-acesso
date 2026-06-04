@@ -116,7 +116,7 @@ public class GuestService {
         auditService.record("GUEST_CREATED", "Guest", guest.getId(), Map.of("status", guest.getStatus()), Map.of(), snapshot(guest));
         realtimePublisherService.publishSystemAlert(SystemAlertMessage.warning(
                 "Novo visitante pendente",
-                "Visitante " + guest.getFullName() + " precisa completar o cadastro facial.",
+                "Visitante " + guest.getFullName() + " precisa completar o cadastro.",
                 "guest-workflow"
         ));
         return GuestResponse.from(guest, invite, inviteUrl, delivery.status(), delivery.message());
@@ -153,8 +153,10 @@ public class GuestService {
                 true
         );
         var guest = registration.guest();
-        auditService.record("PUBLIC_GUEST_FACE_UPLOADED", "Guest", guest.getId(),
-                Map.of("facePhotoUrl", registration.facePhotoUrl()), registration.oldData(), snapshot(guest));
+        if (!isBlank(registration.facePhotoUrl())) {
+            auditService.record("PUBLIC_GUEST_FACE_UPLOADED", "Guest", guest.getId(),
+                    Map.of("facePhotoUrl", registration.facePhotoUrl()), registration.oldData(), snapshot(guest));
+        }
 
         if (loungeAreaResolver != null && loungeAreaResolver.isCollaboratorLounge(guest.getInvitedLounge())) {
             log.info("PUBLIC_GUEST_REGISTERED_AS_COLLABORATOR guest_id={} cpf={}",
@@ -171,7 +173,7 @@ public class GuestService {
                 Instant.now()
         ));
         triggerGuestAutoSyncAfterRegistration(guest, "PUBLIC_REGISTRATION", false);
-        var message = "Cadastro recebido com foto facial. A equipe responsável foi notificada.";
+        var message = "Cadastro recebido. A equipe responsável foi notificada.";
         return PublicVisitorRegistrationResponse.from(guest, message);
     }
 
@@ -201,17 +203,20 @@ public class GuestService {
                 false
         );
         var guest = registration.guest();
-        auditService.record("ADMIN_GUEST_FACE_UPLOADED", "Guest", guest.getId(),
-                Map.of("facePhotoUrl", registration.facePhotoUrl()), registration.oldData(), snapshot(guest));
+        if (!isBlank(registration.facePhotoUrl())) {
+            auditService.record("ADMIN_GUEST_FACE_UPLOADED", "Guest", guest.getId(),
+                    Map.of("facePhotoUrl", registration.facePhotoUrl()), registration.oldData(), snapshot(guest));
+        }
         auditService.record("ADMIN_GUEST_CREATED", "Guest", guest.getId(), Map.of("source", "admin-guests"), Map.of(), snapshot(guest));
         realtimePublisherService.publishSystemAlert(new SystemAlertMessage(
                 UUID.randomUUID(),
                 SystemAlertMessage.Severity.INFO,
                 "Visitante criado pela administração",
-                "Visitante " + guest.getFullName() + " foi cadastrado com foto facial.",
+                "Visitante " + guest.getFullName() + " foi cadastrado.",
                 "admin-visitor-registration",
                 Instant.now()
         ));
+        triggerGuestAutoSyncAfterRegistration(guest, "ADMIN_VISITOR_REGISTRATION", false);
         return GuestResponse.from(guest, null);
     }
 
@@ -418,7 +423,7 @@ public class GuestService {
 
     /**
      * Feature 3 — public CPF check-in: validates whether a pre-registered guest exists for this CPF
-     * and is still awaiting the facial photo (status PENDING_REGISTRATION). Returns only the minimum
+     * and is still awaiting completion (status PENDING_REGISTRATION). Returns only the minimum
      * data needed for the welcome screen — no email/phone/other sensitive fields.
      */
     @Transactional(readOnly = true)
@@ -446,8 +451,8 @@ public class GuestService {
     }
 
     /**
-     * Feature 3 — public CPF check-in completion: stores the facial photo on the existing
-     * pre-registered guest, marks it COMPLETED and triggers automatic Intelbras sync.
+     * Feature 3 — public CPF check-in completion: marks the existing pre-registered guest
+     * COMPLETED. Automatic Intelbras sync only runs when the guest has a usable credential.
      */
     @Transactional
     public CpfCheckinResponse completeCheckinByCpf(String cpf, String facePhotoBase64) {
@@ -463,19 +468,21 @@ public class GuestService {
         applyAllowedAreas(guest);
         validateResolvedAllowedAreas(guest);
 
-        var facePhotoUrl = faceStorageService.storeBase64(facePhotoBase64, guest.getId());
-        guest.completeRegistration(null, null, facePhotoUrl); // sets COMPLETED + markPendingSync
+        var facePhotoUrl = isBlank(facePhotoBase64) ? null : faceStorageService.storeBase64(facePhotoBase64, guest.getId());
+        guest.completeRegistration(null, null, facePhotoUrl);
         guestRepository.save(guest);
+        if (!isBlank(facePhotoUrl)) {
+            auditService.record("GUEST_FACE_UPLOADED", "Guest", guest.getId(),
+                    Map.of("facePhotoUrl", facePhotoUrl, "source", "cpf-checkin"), oldData, snapshot(guest));
+        }
 
-        auditService.record("PUBLIC_CPF_CHECKIN_FACE_UPLOADED", "Guest", guest.getId(),
-                Map.of("facePhotoUrl", facePhotoUrl), oldData, snapshot(guest));
         auditService.record("PUBLIC_CPF_CHECKIN_COMPLETED", "Guest", guest.getId(),
                 Map.of("source", "cpf-checkin"), oldData, snapshot(guest));
         realtimePublisherService.publishSystemAlert(new SystemAlertMessage(
                 UUID.randomUUID(),
                 SystemAlertMessage.Severity.INFO,
-                "Check-in facial concluído",
-                "Visitante " + guest.getFullName() + " concluiu o check-in facial por CPF.",
+                "Check-in concluído",
+                "Visitante " + guest.getFullName() + " concluiu o check-in por CPF.",
                 "public-cpf-checkin",
                 Instant.now()
         ));
@@ -490,10 +497,12 @@ public class GuestService {
         var guest = invite.getGuest();
         var oldData = snapshot(guest);
         var autoSyncAlreadyDoneOrRunning = isAutoSyncAlreadyDoneOrRunning(guest.getSyncStatus());
-        var facePhotoUrl = faceStorageService.store(facePhoto, guest.getId());
+        var facePhotoUrl = facePhoto == null || facePhoto.isEmpty() ? null : faceStorageService.store(facePhoto, guest.getId());
         guest.completeRegistration(phone, company, facePhotoUrl);
         invite.markUsed();
-        auditService.record("GUEST_FACE_UPLOADED", "Guest", guest.getId(), Map.of("facePhotoUrl", facePhotoUrl), oldData, snapshot(guest));
+        if (!isBlank(facePhotoUrl)) {
+            auditService.record("GUEST_FACE_UPLOADED", "Guest", guest.getId(), Map.of("facePhotoUrl", facePhotoUrl), oldData, snapshot(guest));
+        }
         auditService.record("GUEST_REGISTRATION_COMPLETED", "Guest", guest.getId(), Map.of(), oldData, snapshot(guest));
         var delivery = mailService.sendGuestRegistrationCompleted(guest);
         auditMailResult(guest, "GUEST_REGISTRATION_CONFIRMATION_EMAIL", delivery);
@@ -501,7 +510,7 @@ public class GuestService {
                 UUID.randomUUID(),
                 SystemAlertMessage.Severity.INFO,
                 "Visitante cadastrado",
-                "Visitante " + guest.getFullName() + " concluiu o cadastro facial.",
+                "Visitante " + guest.getFullName() + " concluiu o cadastro.",
                 "guest-workflow",
                 Instant.now()
         ));
@@ -513,6 +522,11 @@ public class GuestService {
     public GuestResponse requestSync(UUID id) {
         var guest = guestRepository.findByIdWithAllowedAreas(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Guest not found: " + id));
+        return queueGuestSync(guest, true, "MANUAL");
+    }
+
+    private GuestResponse queueGuestSync(Guest guest, boolean manual, String source) {
+        var id = guest.getId();
         log.info("GUEST_SYNC_AREAS_LOADED guest_id={} area_count={}",
                 id, guest.getAllowedAreas() == null ? 0 : guest.getAllowedAreas().size());
         var facePresent = !isBlank(guest.getFacePhotoUrl());
@@ -524,18 +538,32 @@ public class GuestService {
                 id, guest.getStatus(), guest.getSyncStatus(), facePresent,
                 guest.getInvitedLounge(), areasCount, eligible, eligibilityReason);
         if (guest.getStatus() != GuestStatus.COMPLETED) {
+            log.info("GUEST_SYNC_SKIPPED guest_id={} source={} reason=status_not_completed status={} sync_status={}",
+                    id, source, guest.getStatus(), guest.getSyncStatus());
             throw new IllegalArgumentException("Visitante precisa estar completo para sincronizar.");
         }
         if (!facePresent) {
+            log.info("GUEST_SYNC_SKIPPED guest_id={} source={} reason=face_photo_missing status={} sync_status={}",
+                    id, source, guest.getStatus(), guest.getSyncStatus());
             throw new IllegalArgumentException("Visitante precisa enviar foto facial antes da sincronização.");
         }
         var oldData = snapshot(guest);
         applyAllowedAreas(guest);
         validateResolvedAllowedAreas(guest);
-        log.info("manual_sync_requested person_type=GUEST person_id={} cpf={} invited_lounge={} allowed_area_ids=[{}] allowed_area_names=[{}] operator={}",
-                guest.getId(), guest.getCpf(), guest.getInvitedLounge(),
-                activeAllowedAreaIds(guest), activeAllowedAreaNames(guest),
-                authenticatedUser());
+        if (manual) {
+            log.info("GUEST_SYNC_MANUAL_REQUESTED guest_id={} cpf={} invited_lounge={} allowed_area_ids=[{}] allowed_area_names=[{}] operator={}",
+                    guest.getId(), guest.getCpf(), guest.getInvitedLounge(),
+                    activeAllowedAreaIds(guest), activeAllowedAreaNames(guest),
+                    authenticatedUser());
+            log.info("manual_sync_requested person_type=GUEST person_id={} cpf={} invited_lounge={} allowed_area_ids=[{}] allowed_area_names=[{}] operator={}",
+                    guest.getId(), guest.getCpf(), guest.getInvitedLounge(),
+                    activeAllowedAreaIds(guest), activeAllowedAreaNames(guest),
+                    authenticatedUser());
+        } else {
+            log.info("GUEST_SYNC_AUTO_REQUESTED guest_id={} source={} cpf={} invited_lounge={} allowed_area_ids=[{}] allowed_area_names=[{}]",
+                    guest.getId(), source, guest.getCpf(), guest.getInvitedLounge(),
+                    activeAllowedAreaIds(guest), activeAllowedAreaNames(guest));
+        }
         guest.markPendingSync();
         guestRepository.save(guest);
         auditService.record("GUEST_SYNC_REQUESTED", "Guest", guest.getId(),
@@ -558,14 +586,23 @@ public class GuestService {
         if (guest == null || guest.getId() == null) {
             return;
         }
+        if (isBlank(guest.getFacePhotoUrl())) {
+            log.info("GUEST_SYNC_SKIPPED guest_id={} source={} sync_status={} reason=face_photo_missing",
+                    guest.getId(), source, guest.getSyncStatus());
+            log.info("GUEST_AUTO_SYNC_SKIPPED guest_id={} source={} sync_status={} reason=face_photo_missing",
+                    guest.getId(), source, guest.getSyncStatus());
+            return;
+        }
         if (alreadyDoneOrRunning || isAutoSyncAlreadyDoneOrRunning(guest.getSyncStatus())) {
+            log.info("GUEST_SYNC_SKIPPED guest_id={} source={} sync_status={} reason=already_synced_or_syncing",
+                    guest.getId(), source, guest.getSyncStatus());
             log.info("GUEST_AUTO_SYNC_SKIPPED guest_id={} source={} sync_status={} reason=already_synced_or_syncing",
                     guest.getId(), source, guest.getSyncStatus());
             return;
         }
         try {
             log.info("GUEST_AUTO_SYNC_TRIGGERED guest_id={} source={}", guest.getId(), source);
-            requestSync(guest.getId());
+            queueGuestSync(guest, false, source);
         } catch (Exception exception) {
             log.warn("AUTO_SYNC_FAILED_AFTER_REGISTRATION person_type=GUEST guest_id={} source={} error={}",
                     guest.getId(), source, exception.getMessage(), exception);
@@ -655,7 +692,7 @@ public class GuestService {
             MultipartFile facePhoto,
             boolean createInvite
     ) {
-        validateVisitorRegistration(fullName, cpf, email, phone, invitedDay, invitedLounge, visitStart, visitEnd, facePhoto);
+        validateVisitorRegistration(fullName, cpf, email, phone, invitedDay, invitedLounge, visitStart, visitEnd);
         var resolvedInvitedDay = resolveInvitedDay(invitedDay, visitStart);
         var guest = guestRepository.save(new Guest(
                 fullName.trim(),
@@ -677,22 +714,19 @@ public class GuestService {
         }
 
         var oldData = snapshot(guest);
-        var facePhotoUrl = faceStorageService.store(facePhoto, guest.getId());
+        var facePhotoUrl = facePhoto == null || facePhoto.isEmpty() ? null : faceStorageService.store(facePhoto, guest.getId());
         guest.completeRegistration(phone, company, facePhotoUrl);
         return new CompletedVisitorRegistration(guest, oldData, facePhotoUrl);
     }
 
     private void validateVisitorRegistration(String fullName, String cpf, String email, String phone,
                                              LocalDate invitedDay, String invitedLounge, Instant visitStart,
-                                             Instant visitEnd, MultipartFile facePhoto) {
+                                             Instant visitEnd) {
         if (isBlank(fullName) || isBlank(cpf) || isBlank(phone) || isBlank(invitedLounge)) {
             throw new IllegalArgumentException("Required visitor registration fields are missing.");
         }
         if (invitedDay == null && visitStart == null) {
             throw new IllegalArgumentException("Visitor invited day is required.");
-        }
-        if (facePhoto == null || facePhoto.isEmpty()) {
-            throw new IllegalArgumentException("Face photo is required.");
         }
         CpfValidator.normalizeOrThrow(cpf);
         if (!isBlank(email) && !EMAIL.matcher(email.trim()).matches()) {

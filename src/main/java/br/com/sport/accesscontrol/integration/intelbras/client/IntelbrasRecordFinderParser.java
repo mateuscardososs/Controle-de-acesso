@@ -39,14 +39,17 @@ public final class IntelbrasRecordFinderParser {
             }
             var index = Integer.parseInt(matcher.group(1));
             var field = matcher.group(2);
-            recordsByIndex.computeIfAbsent(index, ignored -> new LinkedHashMap<>()).put(field, parseScalar(value));
+            recordsByIndex.computeIfAbsent(index, ignored -> new LinkedHashMap<>()).put(field, parseScalar(field, value));
         });
         return new ArrayList<>(recordsByIndex.values());
     }
 
-    private static Object parseScalar(String value) {
+    private static Object parseScalar(String field, String value) {
         if (value == null) {
             return null;
+        }
+        if ("UserID".equalsIgnoreCase(field) || "CardNo".equalsIgnoreCase(field)) {
+            return value;
         }
         if (value.matches("-?\\d+")) {
             try {
