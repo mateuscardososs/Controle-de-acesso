@@ -6,6 +6,7 @@ import { Button } from "@/src/components/ui/Button";
 import { Input } from "@/src/components/ui/Input";
 import { Modal } from "@/src/components/ui/Modal";
 import { StatusBadge } from "@/src/components/shared/StatusBadge";
+import { displayAreaName } from "@/lib/areaLabels";
 import { formatCpfDisplay } from "@/lib/cpf";
 import { AxiosError } from "axios";
 import { Maximize2, X } from "lucide-react";
@@ -246,7 +247,7 @@ export function EmployeeEditModal({ employee, areas, open, onClose, onSave, onSe
                       onChange={() => toggleArea(area.id)}
                       className="h-4 w-4 accent-brand-wine"
                     />
-                    <span>{area.name}</span>
+                    <span>{displayAreaName(area.name)}</span>
                   </label>
                 ))
               )}

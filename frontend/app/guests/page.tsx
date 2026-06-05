@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
+import { displayAreaList, displayAreaName, displayAreaText } from "@/lib/areaLabels";
 import { formatCpfDisplay, formatCpfInput, isValidCpf } from "@/lib/cpf";
 import { apiErrorMessage } from "@/lib/errors";
 import { configService } from "@/services/configService";
@@ -402,13 +403,14 @@ export default function GuestsPage() {
             { key: "phone", header: "Telefone", className: "whitespace-nowrap", render: (guest) => guest.phone ?? "Não informado" },
             { key: "email", header: "E-mail", className: "min-w-[180px]", render: (guest) => guest.email ?? "Opcional" },
             { key: "day", header: "Dia", className: "whitespace-nowrap", render: (guest) => <span className="inline-flex items-center gap-2"><CalendarDays className="h-4 w-4 text-slate-400" />{formatGuestDay(guest.invitedDay)}</span> },
-            { key: "lounge", header: "Camarote", className: "min-w-[170px]", render: (guest) => guest.invitedLounge ?? "Não informado" },
+            { key: "lounge", header: "Camarote", className: "min-w-[170px]", render: (guest) => guest.invitedLounge ? displayAreaName(guest.invitedLounge) : "Não informado" },
             { key: "areas", header: "Áreas permitidas", className: "min-w-[200px]", render: (guest) => (
               <span className="text-xs text-slate-300">
                 {guest.displayAllowedAreas
-                  ?? (guest.allowedAreaNames && guest.allowedAreaNames.length > 0
-                    ? guest.allowedAreaNames.join(" / ")
-                    : (guest.invitedLounge ? `Portaria / ${guest.invitedLounge}` : "—"))}
+                  ? displayAreaText(guest.displayAllowedAreas)
+                  : (guest.allowedAreaNames && guest.allowedAreaNames.length > 0
+                    ? displayAreaList(guest.allowedAreaNames)
+                    : (guest.invitedLounge ? `Portaria / ${displayAreaName(guest.invitedLounge)}` : "—"))}
               </span>
             ) },
             { key: "status", header: "Status", render: (guest) => <StatusBadge value={guest.status} /> },
@@ -463,7 +465,7 @@ export default function GuestsPage() {
             required
           >
             <option value="">Selecione</option>
-            {(lounges.data ?? []).map((lounge) => <option key={lounge} value={lounge}>{lounge}</option>)}
+            {(lounges.data ?? []).map((lounge) => <option key={lounge} value={lounge}>{displayAreaName(lounge)}</option>)}
           </Select>
           {loungeError ? <p className="text-xs text-rose-400">{loungeError}</p> : null}
           {cpfError ? <p className="text-xs text-rose-400">{cpfError}</p> : null}

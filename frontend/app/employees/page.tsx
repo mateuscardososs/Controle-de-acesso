@@ -3,6 +3,7 @@
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
+import { displayAreaText } from "@/lib/areaLabels";
 import { formatCpfDisplay, formatCpfInput } from "@/lib/cpf";
 import { apiErrorMessage } from "@/lib/errors";
 import { Button } from "@/src/components/ui/Button";
@@ -214,7 +215,7 @@ export default function EmployeesPage() {
             { key: "role", header: "Perfil", render: (employee) => employee.role ? <StatusBadge value={employee.role} /> : "Sem acesso" },
             { key: "areas", header: "Áreas", render: (employee) => (
               <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 ring-1 ring-inset ring-emerald-500/30">
-                {employee.fullAccess ? "Acesso Total" : (employee.displayAllowedAreas ?? "—")}
+                {employee.fullAccess ? "Acesso Total" : (employee.displayAllowedAreas ? displayAreaText(employee.displayAllowedAreas) : "—")}
               </span>
             ) },
             { key: "status", header: "Status", render: (employee) => <StatusBadge value={employee.status} /> },

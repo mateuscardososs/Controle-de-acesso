@@ -3,6 +3,7 @@
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
+import { displayAreaName } from "@/lib/areaLabels";
 import { apiErrorMessage } from "@/lib/errors";
 import { Button } from "@/src/components/ui/Button";
 import { Card, CardContent } from "@/src/components/ui/Card";
@@ -237,7 +238,7 @@ export default function DevicesPage() {
                 <div className="mt-5 grid gap-3 text-sm text-slate-400">
                   <p className="flex items-center gap-2"><Wifi className="h-4 w-4 text-slate-400" /> {formatAddress(device.ipAddress, device.httpPort)}</p>
                   <p className="flex items-center gap-2"><Hash className="h-4 w-4 text-slate-400" /> Serial: {device.serialNumber ?? "nao informado"}</p>
-                  <p className="flex items-center gap-2"><MapPin className="h-4 w-4 text-slate-400" /> {device.areaName} · {device.location ?? "Sem local"}</p>
+                  <p className="flex items-center gap-2"><MapPin className="h-4 w-4 text-slate-400" /> {displayAreaName(device.areaName)} · {device.location ?? "Sem local"}</p>
                   <p className="flex items-center gap-2"><KeyRound className="h-4 w-4 text-slate-400" /> Credenciais: {hasIntelbrasCredentials(device) ? "configuradas" : "nao configuradas"}</p>
                   <p className="flex items-center gap-2"><Cpu className="h-4 w-4 text-slate-400" /> Ultimo heartbeat: {formatDate(device.lastHeartbeatAt)}</p>
                   {device.lastSuccessAt ? (
@@ -356,7 +357,7 @@ function DeviceForm({ form, formError, areas, isPending, onSubmit, onCancel, upd
           <Input label="Número de série" value={form.serialNumber} onChange={(e) => updateForm("serialNumber", e.target.value)} placeholder="DRWL3903457HU" />
           <Select label="Área" value={form.areaId} onChange={(e) => updateForm("areaId", e.target.value)} required>
             <option value="">Selecione</option>
-            {areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
+            {areas.map((area) => <option key={area.id} value={area.id}>{displayAreaName(area.name)}</option>)}
           </Select>
         </div>
       </div>

@@ -6,6 +6,7 @@ import { AlertCircle, ArrowLeft, CheckCircle2, Download, FileSpreadsheet, Loader
 import { useRouter } from "next/navigation";
 import { AdminShell } from "@/components/AdminShell";
 import { PageHeader } from "@/components/PageHeader";
+import { displayAreaName } from "@/lib/areaLabels";
 import { apiErrorMessage } from "@/lib/errors";
 import { formatCpfDisplay } from "@/lib/cpf";
 import { guestService, GuestImportPreviewResponse, GuestImportReport } from "@/services/guestService";
@@ -199,7 +200,7 @@ export default function GuestImportPage() {
                             <td className="px-3 py-2 font-medium text-slate-100">{row.fullName || "—"}</td>
                             <td className="px-3 py-2 font-mono text-xs">{formatCpfDisplay(row.cpf)}</td>
                             <td className="px-3 py-2">{row.phone || "—"}</td>
-                            <td className="px-3 py-2">{row.invitedLounge || "—"}</td>
+                            <td className="px-3 py-2">{row.invitedLounge ? displayAreaName(row.invitedLounge) : "—"}</td>
                           </tr>
                         ))}
                       </tbody>

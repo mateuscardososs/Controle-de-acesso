@@ -1,5 +1,6 @@
 import { Activity, ShieldAlert } from "lucide-react";
 import { motion } from "framer-motion";
+import { displayAreaName } from "@/lib/areaLabels";
 import { AccessEvent } from "@/services/accessEventService";
 import { RealtimeAccessEvent } from "@/services/realtimeTypes";
 import { Card, CardContent, CardHeader } from "@/src/components/ui/Card";
@@ -32,7 +33,7 @@ function eventDescription(event: AccessEvent | RealtimeAccessEvent) {
     const richPieces = [
       "eventType" in event ? event.eventType : undefined,
       "deviceName" in event ? event.deviceName : undefined,
-      "areaName" in event ? event.areaName : undefined,
+      "areaName" in event && event.areaName ? displayAreaName(event.areaName) : undefined,
       "personCpf" in event ? formatCpf(event.personCpf) : undefined
     ].filter(Boolean);
     if (richPieces.length > 0) return richPieces.join(" · ");

@@ -6,6 +6,7 @@ import { Activity, AlertTriangle, DownloadCloud, MonitorCog, RadioTower, RotateC
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
+import { displayAreaName } from "@/lib/areaLabels";
 import { authService } from "@/services/authService";
 import { accessEventService } from "@/services/accessEventService";
 import { deviceService } from "@/services/deviceService";
@@ -229,7 +230,7 @@ export default function OperationsPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-slate-100">{device.name}</p>
-                      <p className="mt-1 text-xs text-slate-500">{device.areaName} · {device.ipAddress}</p>
+                      <p className="mt-1 text-xs text-slate-500">{displayAreaName(device.areaName)} · {device.ipAddress}</p>
                     </div>
                     <StatusBadge value={device.status} />
                   </div>

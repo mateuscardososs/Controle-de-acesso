@@ -6,6 +6,7 @@ import { ArrowRight, CheckCircle2, ShieldCheck } from "lucide-react";
 import type { AxiosError } from "axios";
 import { apiErrorMessage } from "@/lib/errors";
 import { formatCpfInput, isValidCpf } from "@/lib/cpf";
+import { displayAreaName } from "@/lib/areaLabels";
 import { configService } from "@/services/configService";
 import { guestService } from "@/services/guestService";
 import { CameraCapture } from "@/src/components/shared/CameraCapture";
@@ -123,7 +124,7 @@ export default function PublicVisitorRegistrationPage() {
               </div>
               <Select label="Camarote / Função" value={form.invitedLounge} onChange={(event) => setForm({ ...form, invitedLounge: event.target.value })} required>
                 <option value="">Selecione</option>
-                {(lounges.data ?? []).map((lounge) => <option key={lounge} value={lounge}>{loungeDisplayLabel(lounge)}</option>)}
+                {(lounges.data ?? []).map((lounge) => <option key={lounge} value={lounge}>{displayAreaName(lounge)}</option>)}
               </Select>
               <div>
                 <span className="mb-2 block text-sm font-medium text-slate-300">Foto facial</span>
@@ -146,14 +147,6 @@ export default function PublicVisitorRegistrationPage() {
       <footer className="pb-2 text-center text-xs text-slate-700">Cadastro seguro</footer>
     </main>
   );
-}
-
-/** Maps internal lounge values to user-facing display labels.
- *  The value submitted to the backend stays unchanged — only the visible text differs.
- *  "Front 2" displays as "Front 3" (visual-only rename, no backend or DB change). */
-function loungeDisplayLabel(lounge: string): string {
-  if (lounge === "Front 2") return "Front 3";
-  return lounge;
 }
 
 function publicRegistrationErrorMessage(error: unknown) {

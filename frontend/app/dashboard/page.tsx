@@ -3,6 +3,7 @@
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
+import { displayAreaName } from "@/lib/areaLabels";
 import { StatCard } from "@/components/StatCard";
 import { Card, CardContent, CardHeader } from "@/src/components/ui/Card";
 import { Button } from "@/src/components/ui/Button";
@@ -197,7 +198,7 @@ export default function DashboardPage() {
                     <div key={device.id} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.045] px-3 py-2">
                       <div>
                         <p className="text-sm font-semibold text-slate-100">{device.name}</p>
-                        <p className="text-xs text-slate-500">{device.areaName} · {device.ipAddress}</p>
+                        <p className="text-xs text-slate-500">{displayAreaName(device.areaName)} · {device.ipAddress}</p>
                       </div>
                       <StatusBadge value={device.status} />
                     </div>

@@ -6,6 +6,7 @@ import { RefreshCw, Search, UserCheck } from "lucide-react";
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
+import { displayAreaName } from "@/lib/areaLabels";
 import { formatCpfDisplay, formatCpfInput } from "@/lib/cpf";
 import { accessEventService, AccessEventFilters } from "@/services/accessEventService";
 import { configService } from "@/services/configService";
@@ -74,7 +75,7 @@ export default function VisitorLogsPage() {
             <Input label="CPF" value={draftFilters.personCpf ?? ""} onChange={(event) => setDraftFilters((current) => ({ ...current, personCpf: formatCpfInput(event.target.value) }))} inputMode="numeric" />
             <Select label="Camarote" value={draftFilters.invitedLounge ?? ""} onChange={(event) => setDraftFilters((current) => ({ ...current, invitedLounge: event.target.value }))}>
               <option value="">Todos</option>
-              {(lounges.data ?? []).map((lounge) => <option key={lounge} value={lounge}>{lounge}</option>)}
+              {(lounges.data ?? []).map((lounge) => <option key={lounge} value={lounge}>{displayAreaName(lounge)}</option>)}
             </Select>
             <div className="flex gap-2">
               <Button type="submit" icon={Search} className="h-10 px-4">Buscar</Button>
@@ -110,7 +111,7 @@ export default function VisitorLogsPage() {
                     <td className="whitespace-nowrap px-5 py-5 font-medium text-slate-100">{formatDate(event.occurredAt ?? event.eventTime)}</td>
                     <td className="px-5 py-5 text-lg font-semibold text-slate-50">{personLabel(event)}</td>
                     <td className="whitespace-nowrap px-5 py-5 font-mono text-sm text-slate-200">{formatCpfDisplay(event.personCpf)}</td>
-                    <td className="whitespace-nowrap px-5 py-5 text-slate-200">{event.invitedLounge ?? "Não informado"}</td>
+                    <td className="whitespace-nowrap px-5 py-5 text-slate-200">{event.invitedLounge ? displayAreaName(event.invitedLounge) : "Não informado"}</td>
                     <td className="px-5 py-5"><StatusBadge value={event.passageStatus} /></td>
                     <td className="px-5 py-5"><StatusBadge value={event.recognitionStatus} /></td>
                   </tr>

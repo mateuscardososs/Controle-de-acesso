@@ -1,4 +1,4 @@
-import { Activity, AreaChart, Gauge, IdCard, ListChecks, MapPinned, MonitorCog, UserRoundPlus, type LucideIcon } from "lucide-react";
+import { Activity, AreaChart, Gauge, IdCard, ListChecks, MapPinned, MonitorCog, TrendingUp, UserRoundPlus, type LucideIcon } from "lucide-react";
 import { type Role } from "@/services/authService";
 
 export type NavigationItem = {
@@ -16,5 +16,6 @@ export const navigationItems: NavigationItem[] = [
   { href: "/devices", label: "Dispositivos", icon: MonitorCog, roles: ["ADMIN", "HR", "SECURITY_VIEWER"] },
   { href: "/logs", label: "Logs de Eventos", icon: AreaChart, roles: ["ADMIN", "HR", "SECURITY_VIEWER"] },
   { href: "/logsvisitante", label: "Consulta Entrada", icon: ListChecks, roles: ["ADMIN", "HR", "SECURITY_VIEWER"] },
-  { href: "/areas", label: "Áreas", icon: MapPinned, roles: ["ADMIN", "HR"] }
+  { href: "/areas", label: "Áreas", icon: MapPinned, roles: ["ADMIN", "HR"] },
+  { href: "/analytics", label: "Analytics", icon: TrendingUp, roles: ["ADMIN", "HR", "SECURITY_VIEWER"] }
 ];

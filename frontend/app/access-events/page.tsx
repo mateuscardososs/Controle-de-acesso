@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, Eraser, FileClock, FileDown, Plus, RefreshCc
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
+import { displayAreaName } from "@/lib/areaLabels";
 import { formatCpfDisplay, formatCpfInput } from "@/lib/cpf";
 import { apiErrorMessage } from "@/lib/errors";
 import { accessEventService, AccessEvent, AccessEventFilters, ManualReleasePayload } from "@/services/accessEventService";
@@ -192,7 +193,7 @@ export default function AccessEventsPage() {
               <Input label="Dia convidado" type="date" value={draftFilters.invitedDay ?? ""} onChange={(event) => setDraftFilters((current) => ({ ...current, invitedDay: event.target.value }))} />
               <Select label="Camarote" value={draftFilters.invitedLounge ?? ""} onChange={(event) => setDraftFilters((current) => ({ ...current, invitedLounge: event.target.value }))}>
                 <option value="">Todos</option>
-                {(lounges.data ?? []).map((lounge) => <option key={lounge} value={lounge}>{lounge}</option>)}
+                {(lounges.data ?? []).map((lounge) => <option key={lounge} value={lounge}>{displayAreaName(lounge)}</option>)}
               </Select>
               <Input label="Data inicial" type="datetime-local" value={draftFilters.startDate ?? ""} onChange={(event) => setDraftFilters((current) => ({ ...current, startDate: event.target.value }))} />
               <Input label="Data final" type="datetime-local" value={draftFilters.endDate ?? ""} onChange={(event) => setDraftFilters((current) => ({ ...current, endDate: event.target.value }))} />
@@ -205,7 +206,7 @@ export default function AccessEventsPage() {
               <Select label="Área" value={draftFilters.areaId ?? ""} onChange={(event) => setDraftFilters((current) => ({ ...current, areaId: event.target.value }))}>
                 <option value="">Todas</option>
                 {(areas.data ?? []).map((area) => (
-                  <option key={area.id} value={area.id}>{area.name}</option>
+                  <option key={area.id} value={area.id}>{displayAreaName(area.name)}</option>
                 ))}
               </Select>
               <EnumSelect label="Tipo de evento" value={draftFilters.eventType ?? ""} options={eventTypeOptions} onChange={(value) => setDraftFilters((current) => ({ ...current, eventType: value }))} />
@@ -254,9 +255,9 @@ export default function AccessEventsPage() {
               { key: "phone", header: "Telefone", className: "min-w-[130px] whitespace-nowrap", render: (event) => event.personPhone ?? "Não informado" },
               { key: "email", header: "E-mail", className: "min-w-[190px]", render: (event) => event.personEmail ?? "Não informado" },
               { key: "invitedDay", header: "Dia", render: (event) => formatDateOnly(event.invitedDay) },
-              { key: "lounge", header: "Camarote", render: (event) => event.invitedLounge ?? "Não informado" },
+              { key: "lounge", header: "Camarote", render: (event) => event.invitedLounge ? displayAreaName(event.invitedLounge) : "Não informado" },
               { key: "device", header: "Catraca/controladora", className: "min-w-[180px]", render: (event) => event.deviceName ?? deviceById.get(event.deviceId)?.name ?? event.deviceId.slice(0, 8) },
-              { key: "area", header: "Entrada/local", className: "min-w-[160px]", render: (event) => event.areaName ?? areaById.get(event.areaId)?.name ?? event.areaId.slice(0, 8) },
+              { key: "area", header: "Entrada/local", className: "min-w-[160px]", render: (event) => event.areaName ? displayAreaName(event.areaName) : (areaById.get(event.areaId)?.name ? displayAreaName(areaById.get(event.areaId)?.name) : event.areaId.slice(0, 8)) },
               { key: "result", header: "Resultado", className: "min-w-[140px]", render: (event) => (
                 <div className="flex flex-wrap items-center gap-1">
                   <StatusBadge value={event.accessResult} />

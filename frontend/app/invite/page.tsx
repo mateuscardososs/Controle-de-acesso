@@ -3,6 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, Loader2, MapPin, ShieldCheck } from "lucide-react";
+import { displayAreaName } from "@/lib/areaLabels";
 import { apiErrorMessage } from "@/lib/errors";
 import { formatCpfInput, isValidCpf, onlyCpfDigits } from "@/lib/cpf";
 import { checkinService } from "@/services/checkinService";
@@ -126,7 +127,7 @@ export default function InviteCheckinPage() {
                 {lounge ? (
                   <span className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-sky-300/20 bg-sky-400/12 px-3 py-1 text-sm font-semibold text-sky-200">
                     <MapPin className="h-3.5 w-3.5" />
-                    Camarote: {lounge}
+                    Camarote: {displayAreaName(lounge)}
                   </span>
                 ) : null}
               </div>
@@ -158,7 +159,7 @@ export default function InviteCheckinPage() {
               {lounge ? (
                 <span className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-sky-300/20 bg-sky-400/12 px-3 py-1 text-sm font-semibold text-sky-200">
                   <MapPin className="h-3.5 w-3.5" />
-                  Camarote: {lounge}
+                  Camarote: {displayAreaName(lounge)}
                 </span>
               ) : null}
               <p className="mt-6 max-w-xs text-base leading-7 text-slate-400">

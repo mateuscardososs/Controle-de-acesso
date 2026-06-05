@@ -3,6 +3,7 @@
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState, LoadingState } from "@/components/AsyncState";
 import { PageHeader } from "@/components/PageHeader";
+import { displayAreaName } from "@/lib/areaLabels";
 import { apiErrorMessage } from "@/lib/errors";
 import { Button } from "@/src/components/ui/Button";
 import { Card, CardContent } from "@/src/components/ui/Card";
@@ -63,7 +64,7 @@ export default function AreasPage() {
                       <MapPinned className="h-5 w-5" />
                     </div>
                     <div>
-                      <p className="font-semibold text-slate-50">{area.name}</p>
+                      <p className="font-semibold text-slate-50">{displayAreaName(area.name)}</p>
                       <p className="mt-2 text-sm leading-6 text-slate-400">{area.description ?? "Sem descricao"}</p>
                     </div>
                   </div>
