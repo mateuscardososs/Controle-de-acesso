@@ -36,6 +36,7 @@ const CHECK_LABELS: { key: keyof FaceValidationChecks; label: string }[] = [
   { key: "faceSizeOk", label: "Tamanho do rosto" },
   { key: "faceFullyVisibleOk", label: "Rosto visível" },
   { key: "eyesVisibleOk", label: "Olhos visíveis" },
+  { key: "qualityAfterCompressionOk", label: "Qualidade após compressão" },
   { key: "finalCompressedSizeOk", label: "Arquivo final" }
 ];
 

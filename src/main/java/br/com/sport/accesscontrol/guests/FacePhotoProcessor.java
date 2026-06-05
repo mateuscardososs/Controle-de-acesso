@@ -45,6 +45,17 @@ public class FacePhotoProcessor {
     /** Intelbras controllers accept ~100 KB; refuse to start in prod above this hard ceiling. */
     public static final int INTELBRAS_HARD_LIMIT_BYTES = 100_000;
 
+    /** Ordered list of (width, height, quality) attempts for adaptive compression. */
+    private record CompressionStep(int width, int height, float quality) {}
+    private static final java.util.List<CompressionStep> ADAPTIVE_STEPS = java.util.List.of(
+            new CompressionStep(640, 480, 0.90f),
+            new CompressionStep(640, 480, 0.85f),
+            new CompressionStep(600, 450, 0.85f),
+            new CompressionStep(560, 420, 0.82f),
+            new CompressionStep(520, 390, 0.80f),
+            new CompressionStep(480, 360, 0.78f)
+    );
+
     private final int maxBytes;
     private final int maxWidth;
     private final int maxHeight;
@@ -140,6 +151,8 @@ public class FacePhotoProcessor {
     /** Final upload path: validate and return the processed photo, throwing 422 when not approved. */
     public ProcessedFacePhoto process(byte[] originalBytes) {
         var validation = evaluate(originalBytes);
+        log.info("FACE_COMPRESSED originalBytes={} compressedBytes={} maxAllowedBytes={} approved={}",
+                originalBytes.length, validation.compressedSizeBytes(), maxBytes, validation.approved());
         if (!validation.approved()) {
             throw new FacePhotoRejectedException(validation.message());
         }
@@ -154,9 +167,19 @@ public class FacePhotoProcessor {
                 validation.compressed());
     }
 
+    public int getMaxBytes() {
+        return maxBytes;
+    }
+
     /**
      * Runs the full validation pipeline and returns every check result plus the compressed bytes.
      * Never throws on a "bad photo" — only on an unreadable/invalid image. Does not persist anything.
+     *
+     * <p>Flow: quality gates on the original → face crop → adaptive compression loop. Each compression
+     * attempt re-evaluates brightness/sharpness/contrast/face/eyes/occlusion on the decoded JPEG.
+     * The first attempt that fits within the byte budget AND passes all re-checks is accepted.
+     * If every attempt degrades quality below thresholds the photo is rejected with
+     * {@link FacePhotoRejectedException#COMPRESSION_DEGRADED}.
      */
     public FacePhotoValidation evaluate(byte[] originalBytes) {
         if (originalBytes == null || originalBytes.length == 0) {
@@ -166,19 +189,42 @@ public class FacePhotoProcessor {
         var rgb = toRgb(source);
 
         if (faceDetector == null) {
-            // Legacy/no-detector mode: normalise + compress only, no validation.
-            var normalized = resizeWithinBox(rgb);
-            var compressed = compress(normalized);
-            boolean changed = compressed.length != originalBytes.length
-                    || source.getWidth() != normalized.getWidth()
-                    || source.getHeight() != normalized.getHeight();
-            return new FacePhotoValidation(true, APPROVED_MESSAGE,
-                    true, true, false, true, true, true, true, true, true,
-                    true,
-                    compressed, "jpg", "image/jpeg", normalized.getWidth(), normalized.getHeight(),
-                    originalBytes.length, compressed.length, maxBytes, changed);
+            // Legacy/no-detector mode: try adaptive steps, return first within limit (no re-evaluation).
+            int legacyAttempts = 0;
+            for (var step : ADAPTIVE_STEPS) {
+                legacyAttempts++;
+                var resized = resizeWithinStepBox(rgb, step.width(), step.height());
+                try {
+                    var encoded = encodeJpeg(resized, step.quality());
+                    if (encoded.length <= maxBytes) {
+                        boolean changed = encoded.length != originalBytes.length
+                                || source.getWidth() != resized.getWidth()
+                                || source.getHeight() != resized.getHeight();
+                        return new FacePhotoValidation(true, APPROVED_MESSAGE,
+                                true, true, false, true, true, true, true, true, true, true,
+                                true, true, legacyAttempts,
+                                encoded, "jpg", "image/jpeg", resized.getWidth(), resized.getHeight(),
+                                originalBytes.length, encoded.length, maxBytes, changed);
+                    }
+                } catch (IOException ignored) {
+                }
+            }
+            // Fallback: last step regardless of size.
+            var last = ADAPTIVE_STEPS.get(ADAPTIVE_STEPS.size() - 1);
+            var resized = resizeWithinStepBox(rgb, last.width(), last.height());
+            try {
+                var encoded = encodeJpeg(resized, last.quality());
+                return new FacePhotoValidation(true, APPROVED_MESSAGE,
+                        true, true, false, true, true, true, true, true, true, true,
+                        true, encoded.length <= maxBytes, ADAPTIVE_STEPS.size(),
+                        encoded, "jpg", "image/jpeg", resized.getWidth(), resized.getHeight(),
+                        originalBytes.length, encoded.length, maxBytes, true);
+            } catch (IOException e) {
+                throw new IllegalArgumentException("Could not process face photo.");
+            }
         }
 
+        // ── Step 1: quality/geometry gates on the original ───────────────────
         int[][] gray = toGrayscale(rgb);
         double brightness = meanBrightness(gray);
         double sharpness = laplacianVariance(gray);
@@ -200,49 +246,155 @@ public class FacePhotoProcessor {
         boolean faceFullyVisibleOk = false;
         boolean eyesVisibleOk = false;
         boolean secondaryFaceDetected = false;
-        BufferedImage toCompress = rgb;
+        BufferedImage cropped = rgb;
+
         if (faceDetected) {
             var face = faces.get(0);
             secondaryFaceDetected = hasRelevantSecondaryFace(faces, face, imgW, imgH);
-            boolean singleFace = !secondaryFaceDetected;
+            boolean singleFaceNow = !secondaryFaceDetected;
             double faceRatio = Math.min(face.width() / (double) imgW, face.height() / (double) imgH);
             double offsetX = Math.abs(face.centerX() - imgW / 2.0) / imgW;
             double offsetY = Math.abs(face.centerY() - imgH / 2.0) / imgH;
             sizeOk = faceRatio >= minFaceRatio;
             centeredOk = offsetX <= maxCenterOffsetRatio && offsetY <= maxCenterOffsetRatio;
-            if (singleFace && sizeOk && centeredOk) {
+            if (singleFaceNow && sizeOk && centeredOk) {
                 eyesVisibleOk = eyesVisible(rgb, face);
                 faceFullyVisibleOk = !occlusionCheckEnabled || !lowerFaceLooksOccluded(rgb, face);
-                toCompress = cropAroundFace(rgb, face);
+                cropped = cropAroundFace(rgb, face);
             }
         }
         boolean singleFace = faceDetected && !secondaryFaceDetected;
 
-        var normalized = resizeWithinBox(toCompress);
-        var compressed = compress(normalized);
-        boolean sizeBytesOk = compressed.length <= maxBytes;
+        boolean initialOk = brightnessOk && sharpnessOk && contrastOk
+                && faceDetected && singleFace && sizeOk && centeredOk && faceFullyVisibleOk && eyesVisibleOk;
 
-        boolean approved = brightnessOk && sharpnessOk && contrastOk
-                && faceDetected && singleFace && sizeOk && centeredOk && faceFullyVisibleOk && eyesVisibleOk && sizeBytesOk;
-        String message = approved ? APPROVED_MESSAGE
-                : firstFailureMessage(brightnessOk, sharpnessOk, contrastOk, faceDetected, singleFace,
-                        sizeOk, centeredOk, faceFullyVisibleOk, eyesVisibleOk, sizeBytesOk);
-
-        if (!approved) {
-            log.info("FACE_VALIDATION_REJECTED brightness={} sharpness={} contrast={} brightness_ok={} sharpness_ok={} contrast_ok={} faces={} single={} secondary_face_detected={} size_ok={} centered_ok={} face_visible_ok={} eyes_visible_ok={} bytes={} max_bytes={} final_size_ok={}",
+        if (!initialOk) {
+            String message = firstFailureMessage(brightnessOk, sharpnessOk, contrastOk, faceDetected,
+                    singleFace, sizeOk, centeredOk, faceFullyVisibleOk, eyesVisibleOk, true);
+            log.info("FACE_VALIDATION_REJECTED brightness={} sharpness={} contrast={} brightness_ok={} sharpness_ok={} contrast_ok={} faces={} single={} secondary_face_detected={} size_ok={} centered_ok={} face_visible_ok={} eyes_visible_ok={}",
                     Math.round(brightness), Math.round(sharpness), Math.round(contrast),
                     brightnessOk, sharpnessOk, contrastOk, faces.size(), singleFace, secondaryFaceDetected,
-                    sizeOk, centeredOk, faceFullyVisibleOk, eyesVisibleOk, compressed.length, maxBytes, sizeBytesOk);
+                    sizeOk, centeredOk, faceFullyVisibleOk, eyesVisibleOk);
+            var fallback = resizeWithinStepBox(cropped, ADAPTIVE_STEPS.get(0).width(), ADAPTIVE_STEPS.get(0).height());
+            byte[] fallbackBytes;
+            try {
+                fallbackBytes = encodeJpeg(fallback, ADAPTIVE_STEPS.get(0).quality());
+            } catch (IOException e) {
+                fallbackBytes = originalBytes;
+                fallback = rgb;
+            }
+            // Initial gate failed (the real reason is one of the booleans above). Compression never ran,
+            // so it is not the cause — report it as OK to avoid a spurious second red check.
+            return new FacePhotoValidation(false, message,
+                    faceDetected, singleFace, secondaryFaceDetected,
+                    brightnessOk, sharpnessOk, contrastOk, centeredOk, sizeOk, faceFullyVisibleOk, eyesVisibleOk,
+                    true, false, 0,
+                    fallbackBytes, "jpg", "image/jpeg", fallback.getWidth(), fallback.getHeight(),
+                    originalBytes.length, fallbackBytes.length, maxBytes, true);
         }
 
-        boolean changed = compressed.length != originalBytes.length
-                || source.getWidth() != normalized.getWidth()
-                || source.getHeight() != normalized.getHeight();
-        return new FacePhotoValidation(approved, message,
-                faceDetected, singleFace, secondaryFaceDetected, brightnessOk, sharpnessOk, contrastOk, centeredOk, sizeOk,
-                faceFullyVisibleOk, eyesVisibleOk,
-                compressed, "jpg", "image/jpeg", normalized.getWidth(), normalized.getHeight(),
-                originalBytes.length, compressed.length, maxBytes, changed);
+        // ── Step 2: adaptive compression with quality re-evaluation ──────────
+        String lastReason = FacePhotoRejectedException.COMPRESSION_FAILED;
+        byte[] lastBytes = null;
+        int lastW = cropped.getWidth();
+        int lastH = cropped.getHeight();
+        int attempts = 0;
+
+        for (var step : ADAPTIVE_STEPS) {
+            attempts++;
+            var resized = resizeWithinStepBox(cropped, step.width(), step.height());
+            byte[] encoded;
+            try {
+                encoded = encodeJpeg(resized, step.quality());
+            } catch (IOException e) {
+                continue;
+            }
+
+            boolean withinLimit = encoded.length <= maxBytes;
+            if (!withinLimit) {
+                log.info("FACE_COMPRESSION_ATTEMPT width={} height={} quality={} bytes={} approvedBySize=false approvedByQuality=false",
+                        resized.getWidth(), resized.getHeight(), step.quality(), encoded.length);
+                lastBytes = encoded;
+                lastW = resized.getWidth();
+                lastH = resized.getHeight();
+                continue;
+            }
+
+            // Re-evaluate quality on the decoded JPEG to detect compression-induced degradation.
+            BufferedImage decoded;
+            try {
+                decoded = ImageIO.read(new ByteArrayInputStream(encoded));
+            } catch (IOException e) {
+                continue;
+            }
+            if (decoded == null) continue;
+
+            int[][] grayD = toGrayscale(decoded);
+            double brightnessD = meanBrightness(grayD);
+            double sharpnessD = laplacianVariance(grayD);
+            double contrastD = standardDeviation(grayD);
+            boolean brightOkD = brightnessD >= minBrightness && brightnessD <= maxBrightness;
+            boolean sharpOkD = sharpnessD >= minSharpness;
+            boolean contrastOkD = contrastD >= minContrast;
+
+            List<FaceDetector.FaceBox> facesD = faceDetector.detect(decoded).stream()
+                    .filter(f -> f != null && f.width() > 0 && f.height() > 0)
+                    .sorted(Comparator.comparingInt(FaceDetector.FaceBox::area).reversed())
+                    .toList();
+            boolean faceOkD = !facesD.isEmpty();
+            boolean eyesOkD = faceOkD && eyesVisible(decoded, facesD.get(0));
+            boolean occlusionOkD = !faceOkD || !occlusionCheckEnabled
+                    || !lowerFaceLooksOccluded(decoded, facesD.get(0));
+
+            boolean qualityOk = brightOkD && sharpOkD && contrastOkD && faceOkD && eyesOkD && occlusionOkD;
+
+            log.info("FACE_COMPRESSION_ATTEMPT width={} height={} quality={} bytes={} approvedBySize=true approvedByQuality={} brightness_ok={} sharpness={} sharpness_ok={} contrast_ok={} face_ok={} eyes_ok={} occlusion_ok={}",
+                    decoded.getWidth(), decoded.getHeight(), step.quality(), encoded.length,
+                    qualityOk, brightOkD, Math.round(sharpnessD), sharpOkD, contrastOkD, faceOkD, eyesOkD, occlusionOkD);
+
+            lastBytes = encoded;
+            lastW = decoded.getWidth();
+            lastH = decoded.getHeight();
+
+            if (qualityOk) {
+                log.info("FACE_COMPRESSION_SELECTED width={} height={} quality={} bytes={} attempts={}",
+                        decoded.getWidth(), decoded.getHeight(), step.quality(), encoded.length, attempts);
+                return new FacePhotoValidation(true, APPROVED_MESSAGE,
+                        true, true, false, brightOkD, sharpOkD, contrastOkD, true, true,
+                        occlusionOkD, eyesOkD,
+                        true, true, attempts,
+                        encoded, "jpg", "image/jpeg", decoded.getWidth(), decoded.getHeight(),
+                        originalBytes.length, encoded.length, maxBytes, true);
+            }
+
+            lastReason = FacePhotoRejectedException.COMPRESSION_DEGRADED;
+        }
+
+        log.info("FACE_COMPRESSION_REJECTED reason={} last_bytes={} attempts={}",
+                lastReason, lastBytes == null ? 0 : lastBytes.length, attempts);
+        if (lastBytes == null) {
+            var fb = resizeWithinStepBox(cropped, ADAPTIVE_STEPS.get(ADAPTIVE_STEPS.size() - 1).width(),
+                    ADAPTIVE_STEPS.get(ADAPTIVE_STEPS.size() - 1).height());
+            try {
+                lastBytes = encodeJpeg(fb, ADAPTIVE_STEPS.get(ADAPTIVE_STEPS.size() - 1).quality());
+                lastW = fb.getWidth();
+                lastH = fb.getHeight();
+            } catch (IOException e) {
+                lastBytes = originalBytes;
+                lastW = rgb.getWidth();
+                lastH = rgb.getHeight();
+            }
+        }
+        // COMPRESSION_DEGRADED → a step fit within bytes but lost facial quality (qualityAfterCompressionOk=false).
+        // COMPRESSION_FAILED   → no step fit within bytes; quality was never the problem, the size was
+        //                        (finalCompressedSizeOk=false carries the failing check instead).
+        boolean degraded = FacePhotoRejectedException.COMPRESSION_DEGRADED.equals(lastReason);
+        return new FacePhotoValidation(false, lastReason,
+                faceDetected, singleFace, secondaryFaceDetected,
+                brightnessOk, sharpnessOk, contrastOk, centeredOk, sizeOk, faceFullyVisibleOk, eyesVisibleOk,
+                !degraded, false, attempts,
+                lastBytes, "jpg", "image/jpeg", lastW, lastH,
+                originalBytes.length, lastBytes.length, maxBytes, true);
     }
 
     private boolean hasRelevantSecondaryFace(List<FaceDetector.FaceBox> faces, FaceDetector.FaceBox primary,
@@ -438,14 +590,6 @@ public class FacePhotoProcessor {
         return FacePhotoRejectedException.FACE_TOO_SMALL_OR_OFFSET;
     }
 
-    private byte[] compress(BufferedImage normalized) {
-        try {
-            return encodeJpegWithinLimit(normalized);
-        } catch (IOException exception) {
-            throw new IllegalArgumentException("Could not process face photo.");
-        }
-    }
-
     private BufferedImage cropAroundFace(BufferedImage image, FaceDetector.FaceBox face) {
         int imgW = image.getWidth();
         int imgH = image.getHeight();
@@ -495,36 +639,16 @@ public class FacePhotoProcessor {
         return rgb;
     }
 
-    private BufferedImage resizeWithinBox(BufferedImage rgb) {
-        var scale = Math.min((double) maxWidth / rgb.getWidth(), (double) maxHeight / rgb.getHeight());
+    /** Resizes {@code image} to fit within {@code targetW}×{@code targetH} without upscaling. */
+    private BufferedImage resizeWithinStepBox(BufferedImage image, int targetW, int targetH) {
+        double scale = Math.min((double) targetW / image.getWidth(), (double) targetH / image.getHeight());
         scale = Math.min(scale, 1.0);
         if (scale >= 1.0) {
-            return rgb;
+            return image;
         }
-        var width = Math.max(1, (int) Math.round(rgb.getWidth() * scale));
-        var height = Math.max(1, (int) Math.round(rgb.getHeight() * scale));
-        return resize(rgb, width, height);
-    }
-
-    private byte[] encodeJpegWithinLimit(BufferedImage image) throws IOException {
-        var current = image;
-        for (int resizeAttempt = 0; resizeAttempt < 6; resizeAttempt++) {
-            byte[] smallest = null;
-            for (float quality = 0.88f; quality >= 0.48f; quality -= 0.08f) {
-                var encoded = encodeJpeg(current, quality);
-                smallest = encoded;
-                if (encoded.length <= maxBytes) {
-                    return encoded;
-                }
-            }
-            if (current.getWidth() <= 160 || current.getHeight() <= 120) {
-                return smallest == null ? encodeJpeg(current, 0.48f) : smallest;
-            }
-            current = resize(current,
-                    Math.max(160, (int) Math.round(current.getWidth() * 0.85)),
-                    Math.max(120, (int) Math.round(current.getHeight() * 0.85)));
-        }
-        return encodeJpeg(current, 0.45f);
+        int w = Math.max(1, (int) Math.round(image.getWidth() * scale));
+        int h = Math.max(1, (int) Math.round(image.getHeight() * scale));
+        return resize(image, w, h);
     }
 
     private BufferedImage resize(BufferedImage source, int width, int height) {
@@ -670,6 +794,12 @@ public class FacePhotoProcessor {
             boolean sizeOk,
             boolean faceFullyVisibleOk,
             boolean eyesVisibleOk,
+            // Quality re-evaluated on the *compressed* JPEG (false only when adaptive compression degraded the photo).
+            boolean qualityAfterCompressionOk,
+            // Whether the adaptive compression produced an accepted result (within bytes AND quality maintained).
+            boolean compressionOk,
+            // Number of adaptive (width, height, quality) combinations tried before settling.
+            int compressionAttempts,
             byte[] bytes,
             String extension,
             String contentType,
@@ -686,6 +816,16 @@ public class FacePhotoProcessor {
 
         public boolean finalCompressedSizeOk() {
             return compressedSizeBytes <= maxAllowedBytes;
+        }
+
+        /** Bytes of the JPEG actually selected/last produced by adaptive compression. */
+        public long selectedCompressedBytes() {
+            return compressedSizeBytes;
+        }
+
+        /** The user-facing rejection reason, or {@code null} when the photo was approved. */
+        public String rejectionReason() {
+            return approved ? null : message;
         }
     }
 }

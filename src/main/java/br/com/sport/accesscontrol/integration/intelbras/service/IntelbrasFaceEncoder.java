@@ -61,6 +61,14 @@ public class IntelbrasFaceEncoder {
             var bytes = encodeJpeg(normalized);
             log.info("FACE_ENCODE_DONE photo_url={} input_size_bytes={} output_size_bytes={} normalized_width={} normalized_height={} within_limit={}",
                     facePhotoUrl, inputSizeBytes, bytes.length, normalized.getWidth(), normalized.getHeight(), bytes.length <= maxBytes);
+            if (bytes.length > maxBytes) {
+                log.error("FACE_SENT_TO_INTELBRAS_BLOCKED photo_url={} sentBytes={} maxAllowedBytes={} — rejecting, will not send oversized photo to device",
+                        facePhotoUrl, bytes.length, maxBytes);
+                throw new IllegalArgumentException(
+                        "Face photo could not be compressed within Intelbras limit (" + maxBytes + " bytes). Actual: " + bytes.length + " bytes. Photo not sent.");
+            }
+            log.info("FACE_SENT_TO_INTELBRAS photo_url={} sentBytes={} maxAllowedBytes={} within_limit=true",
+                    facePhotoUrl, bytes.length, maxBytes);
             return Base64.getEncoder().encodeToString(bytes);
         } catch (IOException exception) {
             throw new IllegalArgumentException("Could not convert face photo to JPEG.");

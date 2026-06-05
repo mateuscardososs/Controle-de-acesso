@@ -170,6 +170,12 @@ public class IntelbrasRealProvider implements AccessControlProvider {
 
                 if (hasFace) {
                     try {
+                        // Compute decoded byte count from base64 length — avoids decoding the full image just to log.
+                        int padCount = photoData == null ? 0 : (int) photoData.chars().filter(c -> c == '=').count();
+                        int photoBytes = photoData == null ? 0 : photoData.length() * 3 / 4 - padCount;
+                        log.info("INTELBRAS_FACE_UPLOAD device_id={} person_type={} person_id={} userId={} cardNo={} photoBytes={}",
+                                deviceId, person.personType(), person.personId(),
+                                mask(identity.userId()), mask(cardNo), photoBytes);
                         logStep(connection, "SEND_FACE", "/cgi-bin/FaceInfoManager.cgi?action=add", "sending");
                         var faceResponse = cgiClient.replaceFace(connection.host(), connection.username(),
                                 connection.password(), identity.userId(), photoData);

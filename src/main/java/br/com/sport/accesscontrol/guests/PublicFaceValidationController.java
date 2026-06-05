@@ -29,20 +29,23 @@ public class PublicFaceValidationController {
     @PostMapping(value = "/validate", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     FaceValidationResponse validate(@RequestPart("file") MultipartFile file) {
         var result = faceStorageService.validate(file);
-        log.info("FACE_PREVIEW_VALIDATED approved={} face_detected={} single_face={} secondary_face_detected={} face_size_ok={} centered_ok={} face_visible_ok={} eyes_visible_ok={} brightness_ok={} sharpness_ok={} contrast_ok={} bytes={} max_bytes={} final_size_ok={}",
+        log.info("FACE_PREVIEW_VALIDATED approved={} face_detected={} single_face={} secondary_face_detected={} face_size_ok={} centered_ok={} face_visible_ok={} eyes_visible_ok={} brightness_ok={} sharpness_ok={} contrast_ok={} quality_after_compression_ok={} compression_ok={} compression_attempts={} bytes={} max_bytes={} final_size_ok={} rejection_reason={}",
                 result.approved(), result.faceDetected(), result.singleFace(), result.secondaryFaceDetected(), result.faceSizeOk(),
                 result.centeredOk(), result.faceFullyVisibleOk(), result.eyesVisibleOk(), result.brightnessOk(), result.sharpnessOk(),
-                result.contrastOk(), result.compressedSizeBytes(), result.maxAllowedBytes(), result.finalCompressedSizeOk());
+                result.contrastOk(), result.qualityAfterCompressionOk(), result.compressionOk(), result.compressionAttempts(),
+                result.compressedSizeBytes(), result.maxAllowedBytes(), result.finalCompressedSizeOk(), result.rejectionReason());
         return FaceValidationResponse.from(result);
     }
 
-    record FaceValidationResponse(boolean approved, String message, Checks checks) {
+    record FaceValidationResponse(boolean approved, String message, String rejectionReason, Checks checks) {
         static FaceValidationResponse from(FacePhotoProcessor.FacePhotoValidation v) {
-            return new FaceValidationResponse(v.approved(), v.message(), new Checks(
+            return new FaceValidationResponse(v.approved(), v.message(), v.rejectionReason(), new Checks(
                     v.faceDetected(), v.singleFace(), v.secondaryFaceDetected(), v.brightnessOk(), v.sharpnessOk(),
                     v.contrastOk(), v.centeredOk(), v.faceSizeOk(), v.sizeOk(), v.faceFullyVisibleOk(),
                     v.eyesVisibleOk(),
+                    v.qualityAfterCompressionOk(), v.compressionOk(),
                     v.finalCompressedSizeOk(),
+                    v.compressionAttempts(), v.selectedCompressedBytes(),
                     v.compressedSizeBytes(), v.maxAllowedBytes()));
         }
     }
@@ -59,7 +62,11 @@ public class PublicFaceValidationController {
             boolean sizeOk,
             boolean faceFullyVisibleOk,
             boolean eyesVisibleOk,
+            boolean qualityAfterCompressionOk,
+            boolean compressionOk,
             boolean finalCompressedSizeOk,
+            int compressionAttempts,
+            long selectedCompressedBytes,
             long compressedSizeBytes,
             long maxAllowedBytes
     ) {

@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, CalendarDays, CheckCircle2, Copy, Eye, Loader2, Mail, Plus, RefreshCw, RotateCcw, Search, Trash2, UploadCloud, XCircle, type LucideIcon } from "lucide-react";
+import { AlertCircle, CalendarDays, CheckCircle2, Copy, Eye, Loader2, Mail, Maximize2, Plus, RefreshCw, RotateCcw, Search, Trash2, UploadCloud, X, XCircle, type LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { AdminShell } from "@/components/AdminShell";
 import { EmptyState, ErrorState } from "@/components/AsyncState";
@@ -75,6 +75,8 @@ export default function GuestsPage() {
   const [facePhoto, setFacePhoto] = useState<File | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [activeSyncId, setActiveSyncId] = useState<string | null>(null);
+  const [guestImageFailed, setGuestImageFailed] = useState(false);
+  const [guestLightboxOpen, setGuestLightboxOpen] = useState(false);
   const [cleanupForm, setCleanupForm] = useState<CleanupForm>({
     mode: "CANCELLED",
     confirmationPhrase: ""
@@ -115,6 +117,9 @@ export default function GuestsPage() {
   }, [guests.data, realtime.integrationSync]);
 
   const selectedDetails = details ? guestsWithRealtime.find((guest) => guest.id === details.id) ?? details : null;
+  const guestPhotoUrl = resolvePhotoUrl(selectedDetails?.facePhotoUrl);
+  const hasGuestPhoto = !guestImageFailed && !!guestPhotoUrl;
+  const guestInitials = selectedDetails ? getInitials(selectedDetails.fullName) : "";
 
   const pendingSyncCount = useMemo(
     () => guestsWithRealtime.filter(
@@ -240,6 +245,11 @@ export default function GuestsPage() {
     if (!realtime.integrationSync.some((event) => event.personType === "GUEST")) return;
     queryClient.invalidateQueries({ queryKey: ["guests"] });
   }, [queryClient, realtime.integrationSync]);
+
+  useEffect(() => {
+    setGuestImageFailed(false);
+    setGuestLightboxOpen(false);
+  }, [details]);
 
   const filteredGuests = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -481,12 +491,39 @@ export default function GuestsPage() {
       <Modal title="Detalhes do visitante" open={!!selectedDetails} onClose={() => setDetails(null)}>
         {selectedDetails ? (
           <div className="space-y-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-50">{selectedDetails.fullName}</h2>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+              <button
+                type="button"
+                disabled={!hasGuestPhoto}
+                onClick={() => { if (hasGuestPhoto) setGuestLightboxOpen(true); }}
+                className="group relative h-20 w-20 shrink-0 overflow-hidden rounded-full border border-white/15 bg-white/[0.055] shadow-sm disabled:cursor-default"
+                aria-label={hasGuestPhoto ? "Ampliar foto" : "Sem foto cadastrada"}
+              >
+                {hasGuestPhoto ? (
+                  <>
+                    <img
+                      src={guestPhotoUrl}
+                      alt={`Foto de ${selectedDetails.fullName}`}
+                      className="h-full w-full object-cover"
+                      onError={() => setGuestImageFailed(true)}
+                    />
+                    <span className="absolute inset-0 grid place-items-center bg-slate-950/0 opacity-0 transition group-hover:bg-slate-950/45 group-hover:opacity-100">
+                      <Maximize2 className="h-5 w-5 text-white" />
+                    </span>
+                  </>
+                ) : (
+                  <span className="grid h-full w-full place-items-center text-lg font-bold text-slate-400 select-none">
+                    {guestInitials || "?"}
+                  </span>
+                )}
+              </button>
+              <div className="flex flex-col gap-1.5">
+                <h2 className="text-base font-semibold text-slate-100">{selectedDetails.fullName}</h2>
                 <p className="text-sm text-slate-500">{selectedDetails.company ?? "Sem empresa"} · {selectedDetails.hostName}</p>
+                <div className="flex flex-wrap gap-2">
+                  <StatusBadge value={selectedDetails.status} />
+                </div>
               </div>
-              <StatusBadge value={selectedDetails.status} />
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-3">
@@ -590,6 +627,28 @@ export default function GuestsPage() {
           </div>
         </div>
       </Modal>
+
+      {guestLightboxOpen && hasGuestPhoto && selectedDetails ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-sm"
+          onClick={() => setGuestLightboxOpen(false)}
+        >
+          <button
+            type="button"
+            aria-label="Fechar foto"
+            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white transition hover:bg-white/20"
+            onClick={() => setGuestLightboxOpen(false)}
+          >
+            <X className="h-5 w-5" />
+          </button>
+          <img
+            src={guestPhotoUrl}
+            alt={`Foto de ${selectedDetails.fullName}`}
+            className="max-h-[86vh] max-w-[92vw] rounded-xl object-contain shadow-enterprise"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      ) : null}
     </AdminShell>
   );
 }
@@ -788,4 +847,21 @@ function syncTone(status?: string): "slate" | "red" | "green" | "amber" | "blue"
   if (status === "SYNC_FAILED") return "red";
   if (status === "PENDING_SYNC") return "amber";
   return "slate";
+}
+
+function getInitials(name: string) {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+function resolvePhotoUrl(value?: string) {
+  if (!value) return "";
+  if (/^https?:\/\//i.test(value)) return value;
+  const base = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080").replace(/\/+$/, "");
+  if (value.startsWith("/")) return `${base}${value}`;
+  return value;
 }

@@ -40,6 +40,25 @@ class FaceStorageServiceTests {
     }
 
     @Test
+    void storeExtremeLargeFilesAlwaysUnder99328() throws Exception {
+        var storage = new FaceStorageService(tempDir.toString());
+        // Simulate 500KB to ~4MB input images (random noise = worst case for PNG size).
+        // 3840×2160 random noise exceeds the 5MB input gate — use dims that stay within it.
+        for (int[] dims : new int[][] {{800, 600}, {1280, 720}, {1600, 900}}) {
+            int w = dims[0];
+            int h = dims[1];
+            var input = randomPng(w, h);
+            var url = storage.store(
+                    new MockMultipartFile("facePhoto", "face.png", "image/png", input),
+                    UUID.randomUUID());
+            var saved = tempDir.resolve(url.substring("/uploads/faces/".length()));
+            assertThat(Files.size(saved))
+                    .as("stored file for %dx%d input (inputBytes=%d) must be <= 99328", w, h, input.length)
+                    .isLessThanOrEqualTo(99328);
+        }
+    }
+
+    @Test
     void storeRejectsInvalidImageBytes() {
         var storage = new FaceStorageService(tempDir.toString());
         var invalid = new MockMultipartFile("facePhoto", "face.jpg", "image/jpeg", "not-an-image".getBytes());

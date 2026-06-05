@@ -12,7 +12,11 @@ export type FaceValidationChecks = {
   sizeOk: boolean;
   faceFullyVisibleOk: boolean;
   eyesVisibleOk: boolean;
+  qualityAfterCompressionOk: boolean;
+  compressionOk: boolean;
   finalCompressedSizeOk: boolean;
+  compressionAttempts: number;
+  selectedCompressedBytes: number;
   compressedSizeBytes: number;
   maxAllowedBytes: number;
 };
@@ -20,6 +24,7 @@ export type FaceValidationChecks = {
 export type FaceValidationResponse = {
   approved: boolean;
   message: string;
+  rejectionReason: string | null;
   checks: FaceValidationChecks;
 };
 

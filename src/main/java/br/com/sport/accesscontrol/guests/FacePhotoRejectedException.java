@@ -18,6 +18,8 @@ public class FacePhotoRejectedException extends UnprocessableEntityException {
             "Aproxime o rosto e use um fundo mais limpo.";
     public static final String COMPRESSION_FAILED =
             "Não foi possível comprimir a foto dentro do limite exigido. Tente outra foto.";
+    public static final String COMPRESSION_DEGRADED =
+            "A foto perdeu qualidade ao ser comprimida. Tire uma nova foto mais próxima, nítida e bem iluminada.";
     public static final String FACE_OCCLUDED =
             "Mantenha o rosto totalmente visível. Remova objetos ou mãos da frente do rosto.";
     public static final String EYES_NOT_VISIBLE =

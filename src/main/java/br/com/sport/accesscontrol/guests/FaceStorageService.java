@@ -59,6 +59,8 @@ public class FaceStorageService {
 
         try {
             var bytes = file.getBytes();
+            log.info("FACE_UPLOAD_RECEIVED guest_id={} original_filename={} originalBytes={} maxInputBytes={}",
+                    guestId, file.getOriginalFilename(), bytes.length, MAX_BYTES);
             var processed = processor.process(bytes);
             validateFace(processed, guestId, file.getOriginalFilename());
             return storeBytes(processed, guestId, file.getOriginalFilename(), file.getContentType());
@@ -99,6 +101,8 @@ public class FaceStorageService {
             throw new IllegalArgumentException("Face photo exceeds maximum size of 5MB.");
         }
         try {
+            log.info("FACE_UPLOAD_RECEIVED guest_id={} original_filename=base64 originalBytes={} maxInputBytes={}",
+                    guestId, parsed.bytes().length, MAX_BYTES);
             var processed = processor.process(parsed.bytes());
             validateFace(processed, guestId, "face-photo-base64." + parsed.extension());
             return storeBytes(processed, guestId, "face-photo-base64." + parsed.extension(), parsed.contentType());
@@ -134,6 +138,8 @@ public class FaceStorageService {
         log.info("FACE_UPLOAD_STORED guest_id={} original_filename={} content_type={} original_size_bytes={} saved_path={} saved_size_bytes={} output_width={} output_height={} compressed={}",
                 guestId, originalFilename, contentType, photo.originalSizeBytes(), url, savedSizeBytes,
                 photo.width(), photo.height(), photo.compressed());
+        log.info("FACE_SAVED guest_id={} saved_path={} savedBytes={} maxAllowedBytes={} within_limit={}",
+                guestId, url, savedSizeBytes, processor.getMaxBytes(), savedSizeBytes <= processor.getMaxBytes());
         return url;
     }
 
